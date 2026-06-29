@@ -1,0 +1,168 @@
+name: ResearchReel CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_GATEWAY: ghcr.io/${{ github.repository }}/api-gateway
+  IMAGE_WORKER: ghcr.io/${{ github.repository }}/video-worker
+  IMAGE_RAG: ghcr.io/${{ github.repository }}/rag-service
+  IMAGE_FRONTEND: ghcr.io/${{ github.repository }}/frontend
+
+jobs:
+  audit-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install Gateway Dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Run Gateway Audit
+        run: |
+          cd backend
+          npm audit --audit-level=high
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Frontend Lint
+        run: |
+          cd frontend
+          npm run lint
+
+      - name: Run Frontend Build
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Run Backend Tests
+        run: |
+          cd backend
+          npm test
+
+  build-and-push:
+    needs: audit-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and push API Gateway
+      - name: Build and Push API Gateway Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_GATEWAY }}:${{ github.sha }}
+            ${{ env.IMAGE_GATEWAY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Build and push Video Transcoding Worker
+      - name: Build and Push Video Worker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_WORKER }}:${{ github.sha }}
+            ${{ env.IMAGE_WORKER }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Build and push Python RAG Microservice
+      - name: Build and Push RAG Service Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend/research_rag
+          file: ./backend/research_rag/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_RAG }}:${{ github.sha }}
+            ${{ env.IMAGE_RAG }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Build and push Next.js Frontend Web Application
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+            ${{ env.IMAGE_FRONTEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-to-kubernetes:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Kubeconfig Context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Deploy Kubernetes Manifests
+        run: |
+          # Apply manifest configurations
+          kubectl apply -f k8s/secrets.yml
+          kubectl apply -f k8s/postgres-deployment.yml
+          kubectl apply -f k8s/redis-deployment.yml
+          kubectl apply -f k8s/elasticsearch-deployment.yml
+          kubectl apply -f k8s/rag-deployment.yml
+          kubectl apply -f k8s/gateway-deployment.yml
+          kubectl apply -f k8s/worker-deployment.yml
+          kubectl apply -f k8s/frontend-deployment.yml
+          kubectl apply -f k8s/microservices-deployments.yml
+          kubectl apply -f k8s/ingress.yml
+          kubectl apply -f k8s/hpa.yml
+
+          # Rolling update with new docker hashes
+          kubectl set image deployment/researchreel-gateway-deployment gateway=${{ env.IMAGE_GATEWAY }}:${{ github.sha }}
+          kubectl set image deployment/researchreel-worker-deployment worker=${{ env.IMAGE_WORKER }}:${{ github.sha }}
+          kubectl set image deployment/researchreel-rag-deployment rag=${{ env.IMAGE_RAG }}:${{ github.sha }}
+          kubectl set image deployment/researchreel-web-deployment frontend=${{ env.IMAGE_FRONTEND }}:${{ github.sha }}

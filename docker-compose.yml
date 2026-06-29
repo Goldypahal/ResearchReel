@@ -1,0 +1,178 @@
+version: '3.8'
+
+services:
+  # Database Service (Section 9.0)
+  postgres:
+    image: postgres:15-alpine
+    container_name: researchreel-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_password_placeholder}
+      POSTGRES_DB: ${POSTGRES_DB:-researchreel}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docs/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - researchreel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-researchreel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & OTP Broker (Section 9.1)
+  redis:
+    image: redis:7-alpine
+    container_name: researchreel-cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - researchreel-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Search Engine Service (Section 5.0)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+    container_name: researchreel-search
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - researchreel-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Python RAG Microservice (Section 4.0)
+  rag-service:
+    build:
+      context: ./backend/research_rag
+      dockerfile: Dockerfile
+    container_name: researchreel-rag
+    environment:
+      - PORT=8000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
+      - REDIS_URL=redis://redis:6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - QDRANT_URL=${QDRANT_URL}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - researchreel-network
+
+  # Node.js API Gateway & Main Backend (Section 2.0)
+  api-gateway:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: researchreel-gateway
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
+      - REDIS_URL=redis://redis:6379
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - RAG_SERVICE_URL=http://rag-service:8000
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
+      - START_WORKER=false
+    ports:
+      - "5000:5000"
+    volumes:
+      - media_uploads:/app/public/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      rag-service:
+        condition: service_started
+    networks:
+      - researchreel-network
+
+  # Dedicated Background Task Worker (BullMQ + FFmpeg)
+  video-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: researchreel-worker
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
+      - REDIS_URL=redis://redis:6379
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - START_WORKER=true
+    volumes:
+      - media_uploads:/app/public/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - researchreel-network
+
+  # Next.js Frontend Web Application (Section 2.0)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: researchreel-web
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:5000/api
+      - NEXT_PUBLIC_WSS_URL=ws://localhost:5000
+      - NEXT_PUBLIC_CROSSREF_MAILTO=${NEXT_PUBLIC_CROSSREF_MAILTO}
+      - NEXT_PUBLIC_ORCID_CLIENT_ID=${NEXT_PUBLIC_ORCID_CLIENT_ID}
+      - NEXT_PUBLIC_ENABLE_AI_CHAT=${NEXT_PUBLIC_ENABLE_AI_CHAT:-true}
+      - NEXT_PUBLIC_ENABLE_REALTIME_NOTIFS=${NEXT_PUBLIC_ENABLE_REALTIME_NOTIFS:-true}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - researchreel-network
+
+networks:
+  researchreel-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  media_uploads:
+    driver: local
+

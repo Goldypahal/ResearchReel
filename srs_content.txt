@@ -1,0 +1,429 @@
+ResearchReel
+Academic Research Video Collaboration Platform
+Software Requirements Specification (SRS)
+Version 1.0
+April 2, 2026
+1. Introduction
+1.1 Purpose
+ResearchReel is a mobile-first academic collaboration platform that combines short-form video content with advanced research tools. The platform enables researchers, students, and scholars to share their work through 30-60 second video reels, collaborate on projects, and access research documents directly within the app. Unlike traditional academic platforms, ResearchReel leverages familiar social media patterns (Instagram-style navigation) to make research discovery engaging and accessible to the general public.
+1.2 Target Audience
+Verified Researchers: PhD students, professors, and scholars with ORCID IDs or institutional email verification
+Students: University students verified through student ID upload and faculty approval
+General Public: Anyone interested in research content can view, engage, and learn
+Industry R&D Teams: Corporate researchers seeking academic partnerships
+1.3 Scope
+ResearchReel provides a complete ecosystem for academic collaboration with the following core features:
+Short-form video platform (reels) for research dissemination
+Traditional feed with images, text posts, and document sharing
+In-app document reader supporting PDF, Word, LaTeX, PowerPoint, Excel, and GitHub repositories
+Real-time messaging (1-on-1 and group chats) with file sharing
+Trending/Explore section with quality-weighted algorithm
+Advanced collaboration tools: project boards, version control, co-authorship tracking
+AI-powered features: auto-summarization, Q&A on documents, cross-paper recommendations
+User profiles with research interests, publications, and credentials
+2. System Architecture
+2.1 Technology Stack
+2.1.1 Mobile Application
+Framework: Flutter 3.x (iOS + Android from single codebase)
+State Management: Riverpod / Provider
+Video Player: video_player package with custom controls
+Real-time Communication: Socket.IO client for messaging
+Document Rendering: flutter_pdfview, docx_reader, flutter_markdown
+2.1.2 Web Application
+Framework: Next.js 14 with App Router
+Language: TypeScript
+Styling: Tailwind CSS
+State: React Context + SWR for data fetching
+2.1.3 Backend Services
+API Server: Node.js with Express.js
+Authentication: JWT tokens + OAuth 2.0 (Google, ORCID)
+Real-time: Socket.IO server for messaging and notifications
+Video Processing: FFmpeg for transcoding, thumbnail generation
+Document Processing: PyMuPDF, Grobid, Pandoc
+2.1.4 Database Layer
+Primary Database: PostgreSQL 16 (user data, metadata, relationships)
+Vector Database: Qdrant (document embeddings for AI features)
+Cache Layer: Redis (session management, feed caching, rate limiting)
+Search Engine: Elasticsearch (full-text search across documents and profiles)
+2.1.5 Storage & CDN
+Object Storage: AWS S3 / Cloudflare R2 (videos, documents, images)
+CDN: Cloudflare (global video delivery, static assets)
+Backup: Automated daily snapshots with 30-day retention
+2.1.6 AI/ML Services
+LLM API: Claude 3.5 Sonnet (summarization, Q&A, recommendations)
+Embeddings: text-embedding-3-large (semantic search)
+Local Fallback: Mistral 7B via Ollama (cost optimization)
+Content Moderation: Perspective API + custom ML models
+3. User Interface Specification
+3.1 Bottom Navigation Bar (Instagram-Style)
+The app features a fixed bottom navigation bar with 5 primary tabs:
+3.2 Home Feed
+3.2.1 Top Bar Components
+App Logo: Top-left, tappable to scroll to top
+Notification Bell: Top-right with red badge count for unread notifications
+Add Post Button: Top-right (+ icon) to create text/image/document posts
+3.2.2 Feed Content Types
+Text Posts: Research updates, announcements, questions (max 2000 characters)
+Image Posts: Figures, graphs, lab photos (up to 10 images per post)
+Document Posts: PDF, DOCX, PPTX, XLSX files with inline preview
+Code Snippets: GitHub repository links with embedded preview
+Shared Reels: Reposted videos from Reels tab with original author credit
+3.2.3 Post Interaction Controls
+Reactions: 🤔 Interesting (blue), 💡 Novel (yellow), ⚠️ Needs Discussion (orange)
+Comment: Threaded discussions with @mentions and LaTeX equation support
+Share: Repost to feed, share to chat, or external platforms
+Bookmark: Save post to private collections
+Ask Claude: AI-powered Q&A button on document posts
+3.3 Reels Tab
+3.3.1 Video Player Interface
+Full-Screen Vertical Layout: Videos fill entire screen (9:16 aspect ratio)
+Swipe Navigation: Swipe up for next video, swipe down for previous
+Auto-Play: Videos auto-play on scroll with muted audio by default
+Duration Limit: 30-60 seconds enforced at upload
+3.3.2 Video Overlay Components
+Left Side (Information Panel):
+Researcher Name + Verified Badge (if applicable)
+Video Title/Caption (first 100 chars shown, tap to expand)
+Research Field Tags (#MachineLearning, #Neuroscience, etc.)
+Interactive Timestamps: Tap to jump to specific equations/figures
+Right Side (Action Buttons - Vertical Stack):
+Profile Picture: Tap to view researcher's profile
+🤔 Interesting: Reaction counter
+💬 Comments: Open comment drawer
+🔗 Share: Repost or external share
+📄 Paper: Link to full research paper (if attached)
+🎵 Audio: Original audio/voiceover credit
+3.3.3 Video Upload Workflow
+Tap camera button in center of bottom nav bar
+Record video (30-60s) or upload from gallery
+Add title, description, and research field tags
+Optional: Attach PDF/link to full paper
+Optional: Enable interactive timestamps (mark key moments)
+Submit for processing (auto-generates captions, thumbnail)
+3.4 Messages Tab
+3.4.1 Conversation List View
+Search Bar: Top of screen to search conversations and contacts
+New Message Button: Floating action button (bottom-right)
+Tabs: All / Direct Messages / Groups
+Conversation Cards: Show profile picture, name, last message preview, timestamp
+Unread Indicators: Bold text + blue dot for unread messages
+3.4.2 Chat Interface
+Message Bubbles: Sent (blue, right-aligned), Received (gray, left-aligned)
+Typing Indicators: Real-time '...' animation when other user is typing
+Read Receipts: Small profile picture under last message when read
+Message Actions: Long-press for Reply, Delete, Copy, React
+3.4.3 File Sharing
+Attachment Button: + icon next to message input
+Supported Types: PDF, DOCX, PPTX, XLSX, images, videos, code files
+File Preview: In-line preview with 'Open in Viewer' button
+LaTeX Rendering: Math equations render inline in messages
+3.4.4 Group Chat Features
+Member Management: Add/remove members (admin only)
+Group Info: Edit name, description, profile picture
+@Mentions: Tag specific members to notify them
+Pinned Messages: Admin can pin important announcements
+3.5 Explore Tab
+3.5.1 Discovery Algorithm
+The Explore feed uses a hybrid ranking system combining engagement metrics with quality signals:
+3.5.2 Browse Categories
+For You: Personalized feed based on user's interests
+Trending Now: Top content from past 7 days
+Research Fields: Browse by discipline (AI, Biology, Physics, etc.)
+Rising Researchers: Early-career academics gaining traction
+Conferences: Track specific events (NeurIPS, CVPR, etc.)
+3.5.3 Search Functionality
+Universal Search Bar: Top of Explore tab
+Search Filters: People, Posts, Reels, Documents, Topics
+Advanced Filters: Date range, research field, citation count, file type
+Semantic Search: AI-powered similarity search for academic concepts
+3.6 Profile Tab
+3.6.1 Profile Header
+Profile Picture: Tappable to view full-size
+Display Name + Verification Badge: Gold (ORCID verified), Blue (Student), Green (Faculty)
+Bio: 200 character max with clickable links
+Institution/Affiliation: University logo + department
+Research Interests: Up to 5 tags
+Stats Row: Followers | Following | Total Posts
+3.6.2 Content Tabs
+Posts: Grid view of all feed posts (text, images, documents)
+Reels: Grid of video thumbnails
+Publications: Linked papers from Google Scholar / ORCID
+Projects: Collaboration boards (visible if set to public)
+Saved: Bookmarked content (private, only visible to user)
+3.6.3 Settings & Options
+Edit Profile: Update bio, picture, institution, research interests
+Privacy Settings: Public/Private account, blocked users, data export
+Notifications: Granular controls (reactions, comments, messages, mentions)
+Analytics Dashboard: Post performance, follower growth, engagement rate (verified users only)
+Linked Accounts: Connect ORCID, Google Scholar, GitHub, LinkedIn
+4. Core Features
+4.1 In-App Document Reader
+4.1.1 Supported File Types
+4.1.2 Reader Interface Controls
+Top Bar: Back button, document title, share/download buttons
+Bottom Bar: Page navigation, zoom controls, annotation tools
+Side Panel (Desktop): Table of contents, annotations list
+Ask Claude Button: Floating action button for AI Q&A
+4.1.3 Annotation Tools
+Highlight: Color-coded highlighting (yellow, green, pink, blue)
+Notes: Sticky notes attached to specific text selections
+Drawings: Freehand annotations for diagrams/figures
+Bookmarks: Quick navigation to specific pages/sections
+Sharing: Share annotations with collaborators (private or public)
+4.2 AI-Powered Features
+4.2.1 Document Summarization
+Auto-Summary: On document upload, generates 200-word abstract
+Key Points: Bulleted list of main findings (3-5 points)
+Video Script Generator: AI suggests 60-second video script from paper
+Methodology Summary: Separate section for methods/experimental setup
+4.2.2 Q&A on Documents (RAG-based)
+Chat Interface: Ask questions about uploaded document in natural language
+Citation References: Answers cite specific page numbers and sections
+Multi-Document Queries: Compare findings across multiple papers
+Follow-up Questions: Conversation history maintained for context
+4.2.3 Recommendation Engine
+Related Papers: Suggest similar work based on content embeddings
+Researcher Connections: Find experts working on similar topics
+Grant Opportunities: Match research area to funding calls
+Collaboration Suggestions: Identify potential co-authors based on complementary skills
+4.3 Collaboration Tools
+4.3.1 Project Boards
+Kanban Interface: Drag-and-drop task management (To Do, In Progress, Done)
+Task Cards: Title, description, assignees, due date, attachments
+Custom Columns: Create additional stages (e.g., Under Review, Revisions)
+Activity Timeline: Track all changes with timestamps and user attribution
+4.3.2 Version Control
+Document Versioning: Automatic snapshots on every save
+Diff View: Side-by-side comparison of document versions
+Rollback: Restore previous version with one click
+Branching: Create alternate versions for experimental edits
+Git Integration: Sync code repositories with GitHub/GitLab
+4.3.3 Co-Authorship Tracking
+Contributor Metrics: Track edits, comments, and research contributions
+Author Order Management: Drag-and-drop to reorder author list
+Contribution Statements: CRediT taxonomy (Conceptualization, Data curation, etc.)
+Export to Citation Managers: Generate BibTeX, RIS, EndNote files
+5. User Verification System
+5.1 Verification Tiers
+5.2 Student Verification Workflow
+User uploads student ID card (front and back images)
+OCR extracts name, university, enrollment number
+System sends approval request to university's designated faculty/admin
+Faculty reviews application within 48 hours (auto-approve option for known domains)
+Upon approval, student receives blue badge and email notification
+Re-verification required annually with updated ID
+5.3 Scholar Verification Workflow
+User links ORCID account via OAuth
+System fetches publication record and affiliations
+User verifies institutional email (must match ORCID affiliation)
+System sends confirmation code to institutional email
+Upon email verification, gold badge granted immediately
+Google Scholar data synced automatically (if linked)
+6. Content Moderation & Safety
+6.1 Automated Moderation Pipeline
+6.1.1 Pre-Upload Checks
+Spam Detection: Reject duplicate content, excessive links, keyword stuffing
+Profanity Filter: Block offensive language in titles/captions
+File Validation: Scan for malware, verify file type matches extension
+6.1.2 Post-Upload Analysis
+Plagiarism Detection: Compare document text against academic databases
+Image Moderation: Perspective API checks for inappropriate visual content
+Citation Verification: Flag uncredited figures/data (warning, not auto-remove)
+6.2 Community Reporting System
+Report Button: On every post, video, and profile
+Report Categories: Spam, Harassment, Plagiarism, Misinformation, Copyright Violation
+Review Queue: Moderator dashboard with prioritization (verified user reports ranked higher)
+Action Timeline: Reports reviewed within 24 hours, decisions appealable
+6.3 Academic Integrity Enforcement
+6.3.1 Preprint vs Published Labeling
+Mandatory Tag: Users must mark content as 'Preprint', 'Published', or 'Work in Progress'
+DOI Verification: Published papers auto-verified via CrossRef API
+Warning Banner: Preprints show 'Not Peer-Reviewed' badge
+6.3.2 Penalty System
+First Offense: Warning email + content removed
+Second Offense: 7-day posting suspension
+Third Offense: Permanent account ban + institution notification
+7. Monetization Strategy
+7.1 Advertising Model
+7.1.1 Ad Placements
+Feed Ads: Every 5th post in Home feed (native format, blends with content)
+Reel Ads: Every 8th video in Reels feed (skippable after 5 seconds)
+Explore Banner: Top banner in Explore tab (rotates every 30 seconds)
+Document Viewer: Non-intrusive sidebar ads (research equipment, books, tools)
+7.1.2 Ad Targeting
+Research Field Targeting: Ads matched to user's declared interests
+Academic Stage: Different ads for undergrads vs PhD students vs professors
+Institution Type: Target based on university tier (R1 vs liberal arts vs community college)
+Ethical Restrictions: No tracking pixels, no cross-site data sharing, GDPR compliant
+7.2 Revenue Projections (Year 1)
+Assumptions: Average user views 50 content pieces/day, 60% ad fill rate, $4 CPM average.
+7.3 Future Monetization Opportunities
+Premium Tier ($4.99/month): Ad-free experience, unlimited document storage, advanced analytics
+Institutional Licenses: Universities pay for branded portals ($5,000/year)
+Job Board: Paid listings for research positions, postdocs, internships
+Sponsored Research Challenges: Companies fund bounties for specific research questions
+8. Technical Implementation Details
+8.1 Database Schema (Core Tables)
+8.1.1 Users Table
+CREATE TABLE users (
+  id UUID PRIMARY KEY,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  username VARCHAR(50) UNIQUE NOT NULL,
+  full_name VARCHAR(100),
+  bio TEXT,
+  profile_picture_url TEXT,
+  verification_status ENUM('unverified', 'student', 'scholar', 'faculty'),
+  orcid_id VARCHAR(19),
+  institution_id UUID REFERENCES institutions(id),
+  research_interests TEXT[],
+  created_at TIMESTAMP DEFAULT NOW(),
+  last_active TIMESTAMP
+);
+8.1.2 Posts Table
+CREATE TABLE posts (
+  id UUID PRIMARY KEY,
+  author_id UUID REFERENCES users(id),
+  content_type ENUM('text', 'image', 'document', 'video'),
+  caption TEXT,
+  media_urls TEXT[],
+  document_id UUID REFERENCES documents(id),
+  tags TEXT[],
+  publication_status ENUM('preprint', 'published', 'wip'),
+  doi VARCHAR(255),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP
+);
+8.1.3 Videos Table (Reels)
+CREATE TABLE videos (
+  id UUID PRIMARY KEY,
+  author_id UUID REFERENCES users(id),
+  title VARCHAR(200) NOT NULL,
+  description TEXT,
+  video_url TEXT NOT NULL,
+  thumbnail_url TEXT,
+  duration_seconds INT CHECK (duration_seconds BETWEEN 30 AND 60),
+  linked_paper_id UUID REFERENCES documents(id),
+  timestamps JSONB,
+  tags TEXT[],
+  created_at TIMESTAMP DEFAULT NOW()
+);
+8.2 API Endpoints
+8.2.1 Authentication
+POST /api/auth/register - Create new account
+POST /api/auth/login - Email/password login
+POST /api/auth/oauth/google - Google OAuth
+POST /api/auth/oauth/orcid - ORCID OAuth
+POST /api/auth/verify-email - Send verification code
+POST /api/auth/refresh - Refresh JWT token
+8.2.2 Feed Management
+GET /api/feed/home - Home feed (paginated, 20 posts/page)
+GET /api/feed/explore - Explore/trending feed
+GET /api/reels - Reels feed (infinite scroll)
+POST /api/posts - Create new post
+POST /api/videos - Upload new video
+DELETE /api/posts/:id - Delete post
+8.2.3 Messaging
+GET /api/conversations - List all conversations
+GET /api/conversations/:id/messages - Fetch message history
+POST /api/messages - Send new message (Socket.IO event)
+POST /api/messages/upload - Upload file attachment
+PUT /api/messages/:id/read - Mark message as read
+8.2.4 Document Operations
+POST /api/documents/upload - Upload document
+GET /api/documents/:id - Fetch document metadata
+GET /api/documents/:id/render - Stream rendered document
+POST /api/documents/:id/summarize - Generate AI summary
+POST /api/documents/:id/ask - RAG-based Q&A
+8.3 Real-Time Communication
+8.3.1 Socket.IO Events
+8.4 Video Processing Pipeline
+User uploads video via mobile app (multipart/form-data)
+Backend validates duration (30-60s), file size (<200MB), format (MP4/MOV)
+Video uploaded to S3 staging bucket
+Lambda function triggered to process video:
+Transcode to multiple resolutions (1080p, 720p, 480p) using FFmpeg
+Generate HLS manifest for adaptive streaming
+Extract thumbnail at 1-second mark
+Generate auto-captions using Whisper API
+Processed files uploaded to CDN-backed S3 bucket
+Database updated with video URLs and metadata
+Push notification sent to user confirming upload success
+9. Performance & Scalability
+9.1 Caching Strategy
+Redis Cache Layers:
+  - Home Feed: 10-minute TTL, invalidated on new posts from followed users
+  - User Profiles: 60-minute TTL, invalidated on profile edits
+  - Document Metadata: 24-hour TTL (immutable after upload)
+  - Trending Feed: 5-minute TTL (recalculated frequently)
+9.2 Database Optimization
+Indexes:
+  - users(email), users(username), users(orcid_id)
+  - posts(author_id, created_at), posts(tags) using GIN index
+  - videos(author_id, created_at)
+  - messages(conversation_id, created_at)
+Partitioning: Posts and messages tables partitioned by month (PostgreSQL declarative partitioning)
+Read Replicas: 2 read replicas for feed generation and analytics queries
+9.3 Load Projections
+9.4 Infrastructure Scaling Plan
+Phase 1 (0-100K users): Single AWS region, 3 EC2 instances, 1 PostgreSQL instance
+Phase 2 (100K-1M users): Auto-scaling groups, RDS multi-AZ, Redis cluster
+Phase 3 (1M+ users): Multi-region deployment, database sharding, CDN optimization
+10. Security & Privacy
+10.1 Data Protection
+Encryption at Rest: AES-256 encryption for all S3 buckets and database backups
+Encryption in Transit: TLS 1.3 for all API communications
+Password Storage: bcrypt hashing with salt rounds = 12
+JWT Tokens: Short-lived (1 hour), httpOnly cookies, CSRF protection
+10.2 Privacy Controls
+Account Privacy: Users can set profile to private (only approved followers see content)
+Data Export: Users can download all their data (GDPR compliance)
+Right to Deletion: Account deletion removes all user data within 30 days
+Minimal Data Collection: No tracking of browsing outside app, no selling of user data
+10.3 Rate Limiting
+11. Testing & Quality Assurance
+11.1 Testing Strategy
+Unit Tests: 80% code coverage target using Jest (backend) and Flutter Test (mobile)
+Integration Tests: API endpoint testing with Supertest, database transactions
+E2E Tests: Detox (mobile), Playwright (web) for critical user flows
+Load Testing: JMeter scripts for 10,000 concurrent users
+11.2 Critical User Journeys to Test
+Account Creation → Email Verification → Student ID Upload → Faculty Approval → First Video Upload
+Home Feed Scroll → Post Interaction → Document Open → Ask Claude Q&A
+Search Researcher → View Profile → Send Message → File Attachment → Real-time Delivery
+Reels Feed → Swipe Videos → React → Comment → Share to Chat
+Create Project Board → Add Collaborators → Upload Document → Version Control → Export
+12. Deployment & DevOps
+12.1 CI/CD Pipeline
+GitHub Actions for automated testing and deployment
+Dev Environment: Auto-deploy on push to 'develop' branch
+Staging Environment: Deploy on PR merge to 'main', manual QA approval required
+Production Environment: Blue-green deployment, automated rollback on error spike
+12.2 Monitoring & Alerting
+Application Monitoring: Sentry for error tracking, DataDog for APM
+Infrastructure Monitoring: AWS CloudWatch, Prometheus + Grafana dashboards
+Alerts: PagerDuty integration for critical issues (>5% error rate, database down)
+Performance Metrics: P95 latency, throughput, concurrent users
+13. Future Roadmap
+13.1 Post-MVP Features (6-12 Months)
+Live Streaming: Host virtual conferences, lab tours, Q&A sessions
+Interactive Notebooks: Jupyter integration for executable code in posts
+Peer Review System: Lightweight review process for preprints
+Equipment Marketplace: Rent/share lab equipment, datasets, compute resources
+Grant Collaboration Network: Match researchers with complementary skills for joint proposals
+13.2 Long-Term Vision (12-24 Months)
+Decentralized Publishing: Blockchain-based immutable research timestamps
+AR/VR Integration: 3D molecule viewers, virtual lab walkthroughs
+AI Research Assistant: Proactive literature review, hypothesis generation
+Global Research Index: Open-access repository competing with Sci-Hub
+14. Success Metrics
+14.1 Key Performance Indicators (KPIs)
+14.2 Academic Impact Metrics
+Citations Generated: Track papers shared on platform that get cited elsewhere
+Collaborations Formed: Measure co-authored papers resulting from platform connections
+Grant Success Rate: Survey users who find collaborators for grant applications
+Knowledge Dissemination: Track general public engagement with research content
+15. Conclusion
+ResearchReel represents a paradigm shift in academic communication by combining the engagement mechanics of social media with the rigor of academic research. By lowering the barrier to research discovery through short-form video content while maintaining quality through verification systems and AI-assisted moderation, the platform has the potential to democratize access to cutting-edge research and accelerate scientific collaboration globally.
+The Instagram-inspired navigation model ensures immediate familiarity for users, while advanced features like in-app document reading, AI-powered Q&A, and project collaboration tools provide the depth required for serious academic work. The ad-supported monetization model ensures sustainability without paywalls, keeping research accessible to all.
+With a clear technical architecture, comprehensive security measures, and a phased rollout plan, ResearchReel is positioned to become the primary platform where researchers share their work, collaborate on projects, and connect with peers and the public in meaningful ways.
+--- End of Document ---
