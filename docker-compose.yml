@@ -38,27 +38,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Search Engine Service (Section 5.0)
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
-    container_name: researchreel-search
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ports:
-      - "9200:9200"
-      - "9300:9300"
-    volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-    networks:
-      - researchreel-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # Python RAG Microservice (Section 4.0)
   rag-service:
     build:
@@ -94,7 +73,6 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
       - REDIS_URL=redis://redis:6379
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - RAG_SERVICE_URL=http://rag-service:8000
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -109,8 +87,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      elasticsearch:
         condition: service_healthy
       rag-service:
         condition: service_started
@@ -127,7 +103,6 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
       - REDIS_URL=redis://redis:6379
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - START_WORKER=true
     volumes:
@@ -136,8 +111,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      elasticsearch:
         condition: service_healthy
     networks:
       - researchreel-network
@@ -171,8 +144,5 @@ volumes:
     driver: local
   redis_data:
     driver: local
-  elasticsearch_data:
-    driver: local
   media_uploads:
     driver: local
-

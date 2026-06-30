@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "jest --runInBand --detectOpenHandles --forceExit"
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
+    "migrate": "node-pg-migrate"
   },
   "keywords": [],
   "author": "",
@@ -31,9 +32,10 @@
     "markdown-it": "^14.1.1",
     "morgan": "^1.10.1",
     "multer": "^2.1.1",
+    "node-pg-migrate": "^8.0.4",
     "nodemailer": "^8.0.7",
     "pdf-parse": "^2.4.5",
-    "pg": "^8.20.0",
+    "pg": "^8.22.0",
     "qdrant-client": "^0.0.1",
     "redis": "^6.0.0",
     "socket.io": "^4.8.3",
@@ -41,6 +43,7 @@
     "winston": "^3.19.0"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
     "jest": "^30.4.2",
     "nodemon": "^3.1.14",
     "supertest": "^7.2.2"
