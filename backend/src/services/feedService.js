@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const searchService = require('./searchService');
+const aiService = require('./aiService');
 
 const getFeed = async () => {
   const posts = await db.query(`
@@ -51,13 +52,24 @@ const reactToPost = async ({ post_id, user_id, reaction_type }) => {
 };
 
 const uploadDocument = async ({ uploader_id, file_name, file_type, file_url }) => {
-  const summaryText = `Automated AI Summary: This research paper explores ${file_name} with novel findings...`;
-  const newDoc = await db.query(
-    `INSERT INTO documents (uploader_id, file_name, file_type, file_url, summary_text) 
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [uploader_id, file_name, file_type, file_url, summaryText]
+  let newDoc = await db.query(
+    `INSERT INTO documents (uploader_id, file_name, file_type, file_url) 
+     VALUES ($1, $2, $3, $4) RETURNING *`,
+    [uploader_id, file_name, file_type, file_url]
   );
-  const doc = newDoc.rows[0];
+  let doc = newDoc.rows[0];
+
+  try {
+    const aiSummary = await aiService.summarizeDocument(doc.id);
+    const updatedDoc = await db.query(
+      `UPDATE documents SET summary_text = $1, key_points = $2 WHERE id = $3 RETURNING *`,
+      [aiSummary.abstract, aiSummary.key_points, doc.id]
+    );
+    doc = updatedDoc.rows[0];
+  } catch (err) {
+    console.error('Failed to generate AI summary:', err.message);
+    doc.summary_text = `Fallback Summary: Unable to generate AI insights for ${file_name}.`;
+  }
 
   try {
     await searchService.indexEntity('documents', doc.id, {
