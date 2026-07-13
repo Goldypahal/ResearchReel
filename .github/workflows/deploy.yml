@@ -132,37 +132,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-to-kubernetes:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Set up Kubeconfig Context
-        uses: azure/k8s-set-context@v3
-        with:
-          method: kubeconfig
-          kubeconfig: ${{ secrets.KUBE_CONFIG }}
-
-      - name: Deploy Kubernetes Manifests
-        run: |
-          # Apply manifest configurations
-          kubectl apply -f k8s/secrets.yml
-          kubectl apply -f k8s/postgres-deployment.yml
-          kubectl apply -f k8s/redis-deployment.yml
-          kubectl apply -f k8s/elasticsearch-deployment.yml
-          kubectl apply -f k8s/rag-deployment.yml
-          kubectl apply -f k8s/gateway-deployment.yml
-          kubectl apply -f k8s/worker-deployment.yml
-          kubectl apply -f k8s/frontend-deployment.yml
-          kubectl apply -f k8s/microservices-deployments.yml
-          kubectl apply -f k8s/ingress.yml
-          kubectl apply -f k8s/hpa.yml
-
-          # Rolling update with new docker hashes
-          kubectl set image deployment/researchreel-gateway-deployment gateway=${{ env.IMAGE_GATEWAY }}:${{ github.sha }}
-          kubectl set image deployment/researchreel-worker-deployment worker=${{ env.IMAGE_WORKER }}:${{ github.sha }}
-          kubectl set image deployment/researchreel-rag-deployment rag=${{ env.IMAGE_RAG }}:${{ github.sha }}
-          kubectl set image deployment/researchreel-web-deployment frontend=${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+  # deploy-to-kubernetes:
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/main'
+  #   steps:
+  #     - name: Deployment Temporarily Skipped
+  #       run: echo "Kubernetes deployment is skipped until a cluster is set up."
