@@ -9,6 +9,14 @@ jest.mock('../src/config/db', () => ({
   pool: { on: jest.fn(), end: jest.fn() }
 }));
 
+jest.mock('../src/services/plagiarismService', () => ({
+  scanDocument: jest.fn().mockResolvedValue({
+    isOriginal: true,
+    similarityScore: 10,
+    flaggedSections: []
+  })
+}));
+
 jest.mock('../src/config/redisClient', () => {
   const mockClient = {
     on: jest.fn(),

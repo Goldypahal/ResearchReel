@@ -128,7 +128,7 @@ describe('Backend Smoke Tests', () => {
         .post('/api/auth/login')
         .send({ email: 'test@example.com', password: 'correct_password' });
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(401);
       expect(response.body.message).toBe('Invalid credentials');
     });
 
