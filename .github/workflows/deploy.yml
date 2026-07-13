@@ -8,10 +8,10 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_GATEWAY: ghcr.io/${{ github.repository }}/api-gateway
-  IMAGE_WORKER: ghcr.io/${{ github.repository }}/video-worker
-  IMAGE_RAG: ghcr.io/${{ github.repository }}/rag-service
-  IMAGE_FRONTEND: ghcr.io/${{ github.repository }}/frontend
+  IMAGE_GATEWAY: ghcr.io/goldypahal/researchreel/api-gateway
+  IMAGE_WORKER: ghcr.io/goldypahal/researchreel/video-worker
+  IMAGE_RAG: ghcr.io/goldypahal/researchreel/rag-service
+  IMAGE_FRONTEND: ghcr.io/goldypahal/researchreel/frontend
 
 jobs:
   audit-and-test:
