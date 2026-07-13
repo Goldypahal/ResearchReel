@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+build
+.git
+.gitignore
+*.log
+*.map
+.env.local

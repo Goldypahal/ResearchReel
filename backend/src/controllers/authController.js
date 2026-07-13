@@ -33,7 +33,8 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(400).json({ success: false, message: error.message || 'Server Error' });
+    const status = error.statusCode || 500;
+    res.status(status).json({ success: false, message: error.message || 'Server Error' });
   }
 };
 
@@ -68,10 +69,13 @@ exports.verifyOTP = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      token: accessToken,
       user
     });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message || 'Verification failed' });
+    console.error('OTP Verification Error:', error);
+    const status = error.statusCode || 500;
+    res.status(status).json({ success: false, message: error.message || 'Verification failed' });
   }
 };
 
@@ -106,10 +110,13 @@ exports.login = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      token: accessToken,
       user
     });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message || 'Invalid credentials' });
+    console.error('Login Error:', error);
+    const status = error.statusCode || 500;
+    res.status(status).json({ success: false, message: error.message || 'Invalid credentials' });
   }
 };
 
@@ -122,12 +129,10 @@ exports.logout = async (req, res) => {
 
 // ORCID Callback Placeholder
 exports.orcidCallback = async (req, res) => {
-  const { orcid_id, user_id } = req.body;
+  const { orcid_id } = req.body;
+  const user_id = req.user.id;
   if (!orcid_id) {
     return res.status(400).json({ success: false, message: 'ORCID ID is required.' });
-  }
-  if (!user_id) {
-    return res.status(400).json({ success: false, message: 'User ID is required.' });
   }
   try {
     await db.query('UPDATE users SET orcid_id = $1, verification_status = $2 WHERE id = $3', [orcid_id, 'scholar', user_id]);
@@ -139,10 +144,8 @@ exports.orcidCallback = async (req, res) => {
 
 // Student ID Verification Flow (Section 5.2)
 exports.studentVerification = async (req, res) => {
-  const { user_id, university } = req.body;
-  if (!user_id) {
-    return res.status(400).json({ success: false, message: 'User ID is required.' });
-  }
+  const { university } = req.body;
+  const user_id = req.user.id;
   if (!university) {
     return res.status(400).json({ success: false, message: 'University name is required.' });
   }

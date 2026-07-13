@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "jest --runInBand --detectOpenHandles --forceExit",
-    "migrate": "node-pg-migrate"
+    "migrate": "node-pg-migrate",
+    "seed": "node src/scripts/seed.js"
   },
   "keywords": [],
   "author": "",
@@ -17,7 +18,7 @@
     "@elastic/elasticsearch": "^9.3.4",
     "@google/genai": "^1.50.1",
     "@qdrant/js-client-rest": "^1.17.0",
-    "argon2": "^0.30.0",
+    "argon2": "^0.44.0",
     "axios": "^1.18.1",
     "bullmq": "^5.78.1",
     "cookie-parser": "^1.4.7",
@@ -25,27 +26,39 @@
     "dotenv": "^17.4.0",
     "elasticsearch": "^16.7.3",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
     "fluent-ffmpeg": "^2.1.3",
-    "helmet": "^8.1.0",
+    "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.12.0",
     "markdown-it": "^14.1.1",
+    "mongoose": "^9.7.4",
     "morgan": "^1.10.1",
     "multer": "^2.1.1",
+    "neo4j-driver": "^6.2.0",
     "node-pg-migrate": "^8.0.4",
-    "nodemailer": "^8.0.7",
+    "nodemailer": "^9.0.3",
     "pdf-parse": "^2.4.5",
     "pg": "^8.22.0",
     "qdrant-client": "^0.0.1",
     "redis": "^6.0.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "winston": "^3.19.0"
+    "stripe": "^22.3.0",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
+    "winston": "^3.19.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "husky": "^9.1.7",
     "jest": "^30.4.2",
     "nodemon": "^3.1.14",
     "supertest": "^7.2.2"
+  },
+  "jest": {
+    "setupFiles": [
+      "<rootDir>/tests/setup.js"
+    ]
   }
 }

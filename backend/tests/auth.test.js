@@ -128,7 +128,7 @@ describe('Backend Smoke Tests', () => {
         .post('/api/auth/login')
         .send({ email: 'test@example.com', password: 'correct_password' });
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(401);
       expect(response.body.message).toBe('Invalid credentials');
     });
 
@@ -156,6 +156,64 @@ describe('Backend Smoke Tests', () => {
       expect(cookies).toBeDefined();
       expect(cookies.some(c => c.includes('accessToken'))).toBe(true);
       expect(cookies.some(c => c.includes('refreshToken'))).toBe(true);
+    });
+  });
+
+  describe('Full Authentication Flow: Register -> OTP Verify -> Login', () => {
+    it('should successfully complete the entire auth lifecycle', async () => {
+      // 1. Register
+      db.query.mockResolvedValueOnce({ rows: [] }); // No existing user
+      db.query.mockResolvedValueOnce({
+        rows: [{ id: 2, email: 'flow@example.com', username: 'flowuser', verification_status: 'unverified' }]
+      });
+
+      const registerRes = await request(app)
+        .post('/api/auth/register')
+        .send({
+          email: 'flow@example.com',
+          username: 'flowuser',
+          password: 'flowpassword123',
+          full_name: 'Flow User'
+        });
+
+      expect(registerRes.status).toBe(201);
+      expect(registerRes.body.success).toBe(true);
+
+      // 2. OTP Verify
+      redisClient.get.mockResolvedValueOnce(JSON.stringify({ otp: '123456' })); // Mock stored OTP
+      db.query.mockResolvedValueOnce({ rows: [] }); // Update user status
+      db.query.mockResolvedValueOnce({
+        rows: [{ id: 2, email: 'flow@example.com', username: 'flowuser', verification_status: 'verified' }]
+      }); // Select user after verification
+      
+      const verifyRes = await request(app)
+        .post('/api/auth/verify-otp')
+        .send({
+          email: 'flow@example.com',
+          otp: '123456'
+        });
+        
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.success).toBe(true);
+
+      // 3. Login
+      db.query.mockResolvedValueOnce({
+        rows: [{
+          id: 2,
+          email: 'flow@example.com',
+          username: 'flowuser',
+          password_hash: 'mocked_password_hash',
+          verification_status: 'verified'
+        }]
+      });
+
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ email: 'flow@example.com', password: 'correct_password' });
+
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.success).toBe(true);
+      expect(loginRes.headers['set-cookie']).toBeDefined();
     });
   });
 

@@ -10,7 +10,7 @@ const transporter = nodemailer.createTransport({
 
 exports.sendOTP = async (email, otp) => {
   const mailOptions = {
-    from: `"ResearchReel Verification" <${process.env.EMAIL_USER}>`,
+    from: `"ResearchReel Verification" <${process.env.EMAIL_USER || 'no-reply@researchreel.com'}>`,
     to: email,
     subject: 'Your ResearchReel Verification Code',
     html: `
@@ -28,5 +28,16 @@ exports.sendOTP = async (email, otp) => {
     `,
   };
 
-  return transporter.sendMail(mailOptions);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`\n============================================\n[DEV ONLY] Verification code for ${email} is: ${otp}\n============================================\n`);
+  }
+  try {
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      await transporter.sendMail(mailOptions);
+    } else {
+      console.log(`[EMAIL BYPASS] Skipping SMTP delivery (missing EMAIL_USER or EMAIL_PASS in environment).`);
+    }
+  } catch (error) {
+    console.error(`[EMAIL BYPASS] Nodemailer failed to send email:`, error.message);
+  }
 };

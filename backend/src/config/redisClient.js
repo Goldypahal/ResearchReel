@@ -46,6 +46,22 @@ const createDuplicate = () => {
 module.exports = {
   client,
   createDuplicate,
+  incr: async (key) => {
+    try {
+      return await client.incr(key);
+    } catch (err) {
+      console.error('[Redis Incr Error]', err);
+      return null;
+    }
+  },
+  expire: async (key, seconds) => {
+    try {
+      return await client.expire(key, seconds);
+    } catch (err) {
+      console.error('[Redis Expire Error]', err);
+      return null;
+    }
+  },
   get: async (key) => {
     try {
       return await client.get(key);

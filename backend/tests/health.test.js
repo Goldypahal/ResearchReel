@@ -3,6 +3,18 @@ const app = require('../src/app');
 const db = require('../src/config/db');
 const redisClient = require('../src/config/redisClient');
 
+jest.mock('bullmq', () => ({
+  Queue: jest.fn().mockImplementation(() => ({
+    add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),
+    on: jest.fn(),
+    close: jest.fn().mockResolvedValue(true)
+  })),
+  Worker: jest.fn().mockImplementation(() => ({
+    on: jest.fn(),
+    close: jest.fn().mockResolvedValue(true)
+  }))
+}));
+
 jest.mock('../src/config/db', () => ({
   query: jest.fn(),
   pool: {

@@ -2,8 +2,8 @@ const db = require('../config/db');
 const searchService = require('./searchService');
 const aiService = require('./aiService');
 
-const getFeed = async () => {
-  const posts = await db.query(`
+const getFeed = async (cursor, limit = 20) => {
+  let query = `
     SELECT 
       p.*, 
       u.username, u.full_name, u.profile_picture_url, u.verification_status,
@@ -12,11 +12,25 @@ const getFeed = async () => {
     FROM posts p
     JOIN users u ON p.author_id = u.id
     LEFT JOIN documents d ON p.document_id = d.id
-    ORDER BY p.created_at DESC
-    LIMIT 20
-  `);
+  `;
+  const params = [];
 
-  return posts.rows;
+  if (cursor) {
+    query += ` WHERE p.created_at < $1`;
+    params.push(cursor);
+  }
+
+  query += ` ORDER BY p.created_at DESC LIMIT $${cursor ? 2 : 1}`;
+  params.push(limit);
+
+  const posts = await db.query(query, params);
+
+  let nextCursor = null;
+  if (posts.rows.length > 0) {
+    nextCursor = posts.rows[posts.rows.length - 1].created_at.toISOString();
+  }
+
+  return { posts: posts.rows, nextCursor };
 };
 
 const createPost = async ({ author_id, content_type, caption, media_urls, document_id, tags, publication_status, doi }) => {
@@ -80,6 +94,16 @@ const uploadDocument = async ({ uploader_id, file_name, file_type, file_url }) =
     });
   } catch (err) {
     console.error('Failed to index document in search:', err.message);
+  }
+
+  // Trigger auto-generator hook for reels
+  try {
+    const reelGeneratorService = require('./reelGeneratorService');
+    reelGeneratorService.handleNewPaperUpload(doc.id, uploader_id).catch(err => {
+      console.error('[Feed Service] Error during reel auto-generation hook:', err.message);
+    });
+  } catch (err) {
+    console.error('[Feed Service] Failed to call reel auto-generation hook:', err.message);
   }
 
   return doc;

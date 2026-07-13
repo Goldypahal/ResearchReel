@@ -8,10 +8,10 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_GATEWAY: ghcr.io/${{ github.repository }}/api-gateway
-  IMAGE_WORKER: ghcr.io/${{ github.repository }}/video-worker
-  IMAGE_RAG: ghcr.io/${{ github.repository }}/rag-service
-  IMAGE_FRONTEND: ghcr.io/${{ github.repository }}/frontend
+  IMAGE_GATEWAY: ghcr.io/goldypahal/researchreel/api-gateway
+  IMAGE_WORKER: ghcr.io/goldypahal/researchreel/video-worker
+  IMAGE_RAG: ghcr.io/goldypahal/researchreel/rag-service
+  IMAGE_FRONTEND: ghcr.io/goldypahal/researchreel/frontend
 
 jobs:
   audit-and-test:
@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18.x'
+          node-version: '20.x'
           cache: 'npm'
           cache-dependency-path: |
             backend/package-lock.json
@@ -32,7 +32,7 @@ jobs:
       - name: Install Gateway Dependencies
         run: |
           cd backend
-          npm ci
+          npm install
 
       - name: Run Gateway Audit
         run: |
@@ -42,7 +42,7 @@ jobs:
       - name: Install Frontend Dependencies
         run: |
           cd frontend
-          npm ci
+          npm install
 
       - name: Run Frontend Lint
         run: |
@@ -132,37 +132,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-to-kubernetes:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Set up Kubeconfig Context
-        uses: azure/k8s-set-context@v3
-        with:
-          method: kubeconfig
-          kubeconfig: ${{ secrets.KUBE_CONFIG }}
-
-      - name: Deploy Kubernetes Manifests
-        run: |
-          # Apply manifest configurations
-          kubectl apply -f k8s/secrets.yml
-          kubectl apply -f k8s/postgres-deployment.yml
-          kubectl apply -f k8s/redis-deployment.yml
-          kubectl apply -f k8s/elasticsearch-deployment.yml
-          kubectl apply -f k8s/rag-deployment.yml
-          kubectl apply -f k8s/gateway-deployment.yml
-          kubectl apply -f k8s/worker-deployment.yml
-          kubectl apply -f k8s/frontend-deployment.yml
-          kubectl apply -f k8s/microservices-deployments.yml
-          kubectl apply -f k8s/ingress.yml
-          kubectl apply -f k8s/hpa.yml
-
-          # Rolling update with new docker hashes
-          kubectl set image deployment/researchreel-gateway-deployment gateway=${{ env.IMAGE_GATEWAY }}:${{ github.sha }}
-          kubectl set image deployment/researchreel-worker-deployment worker=${{ env.IMAGE_WORKER }}:${{ github.sha }}
-          kubectl set image deployment/researchreel-rag-deployment rag=${{ env.IMAGE_RAG }}:${{ github.sha }}
-          kubectl set image deployment/researchreel-web-deployment frontend=${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+  # deploy-to-kubernetes:
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/main'
+  #   steps:
+  #     - name: Deployment Temporarily Skipped
+  #       run: echo "Kubernetes deployment is skipped until a cluster is set up."

@@ -18,16 +18,34 @@ const getConversations = async (user_id) => {
   return list.rows;
 };
 
-const getMessages = async (conversation_id) => {
-  const messages = await db.query(`
+const getMessages = async (conversation_id, cursor, limit = 50) => {
+  let query = `
     SELECT m.*, u.username, u.profile_picture_url
     FROM messages m
     JOIN users u ON m.sender_id = u.id
     WHERE m.conversation_id = $1
-    ORDER BY m.sent_at ASC
-  `, [conversation_id]);
+  `;
+  const params = [conversation_id];
 
-  return messages.rows;
+  if (cursor) {
+    query += ` AND m.sent_at < $2`;
+    params.push(cursor);
+  }
+
+  query += ` ORDER BY m.sent_at DESC LIMIT $${cursor ? 3 : 2}`;
+  params.push(limit);
+
+  const messages = await db.query(query, params);
+
+  let nextCursor = null;
+  if (messages.rows.length > 0) {
+    nextCursor = messages.rows[messages.rows.length - 1].sent_at.toISOString();
+  }
+
+  // Reverse so they are chronologically ordered for the UI
+  const results = messages.rows.reverse();
+
+  return { messages: results, nextCursor };
 };
 
 const sendMessage = async ({ conversation_id, sender_id, content, message_type, file_url }) => {

@@ -38,6 +38,9 @@ const checkFFmpegAvailable = () => {
 const getVideoDuration = async (filePath) => {
   const hasFFmpeg = await checkFFmpegAvailable();
   if (!hasFFmpeg) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FFmpeg/FFprobe is not available in production.');
+    }
     console.warn('FFmpeg/FFprobe not found. Simulating duration validation (45s).');
     return 45; // Default mock duration
   }
@@ -131,6 +134,9 @@ const processVideo = async ({
       fs.copyFileSync(stagingFilePath, localVideoPath);
 
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('FFmpeg/FFprobe is required but not installed in the production environment.');
+      }
       console.log(`Simulating transcoding & thumbnail for ${videoId} (FFmpeg missing)...`);
       
       // Copy staging file directly as the mp4 file

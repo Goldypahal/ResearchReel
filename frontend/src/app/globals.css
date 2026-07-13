@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --foreground: #FFFFFF;
+  --accent-rgb: 255,255,255;
+  --border: rgba(255,255,255,0.12);
+  --font-geist-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-geist-mono: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sidebar-width: 72px;
+  --sidebar-collapsed-width: 72px;
+  --card-rgb: 10,10,20;
+  --card-foreground-rgb: 255,255,255;
+  --primary-rgb: 10,132,255;
+  --primary-foreground-rgb: 255,255,255;
+  --muted-rgb: 30,30,30;
+  --muted-foreground-rgb: 150,150,150;
+  --ring-rgb: 10,132,255;
+  
+  /* Onboarding checklist - Dark Mode (High Contrast) */
+  --onboarding-bg: linear-gradient(135deg, rgba(49, 46, 129, 0.65), rgba(88, 28, 135, 0.45), rgba(24, 24, 27, 0.8));
+  --onboarding-border: rgba(129, 140, 248, 0.3);
+  --onboarding-title: #c7d2fe;
+  --onboarding-text: #e4e4e7;
+  --onboarding-task-bg: rgba(9, 9, 11, 0.6);
+  --onboarding-task-border: rgba(63, 63, 70, 0.6);
+  --onboarding-task-title: #ffffff;
+  --onboarding-task-desc: #a1a1aa;
+  --onboarding-btn-bg: #27272a;
+  --onboarding-btn-text: #ffffff;
+  --onboarding-btn-border: rgba(63, 63, 70, 0.5);
+}
+
+[data-theme='white'] {
+  --background: #FFFFFF;
+  --foreground: #000000;
+  --accent-rgb: 0,122,255;
+  --border: rgba(0,0,0,0.12);
+  --font-geist-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-geist-mono: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sidebar-width: 72px;
+  --sidebar-collapsed-width: 72px;
+  --card-rgb: 255,255,255;
+  --card-foreground-rgb: 0,0,0;
+  --primary-rgb: 0,122,255;
+  --primary-foreground-rgb: 255,255,255;
+  --muted-rgb: 242,242,247;
+  --muted-foreground-rgb: 142,142,147;
+  --ring-rgb: 0,122,255;
+  
+  /* Onboarding checklist - Light Mode (High Contrast) */
+  --onboarding-bg: linear-gradient(135deg, rgba(224, 231, 255, 0.95), rgba(237, 233, 254, 0.9), rgba(244, 244, 245, 0.95));
+  --onboarding-border: rgba(79, 70, 229, 0.45);
+  --onboarding-title: #3730a3;
+  --onboarding-text: #1e293b;
+  --onboarding-task-bg: rgba(255,255,255,0.95);
+  --onboarding-task-border: rgba(203,213,225,0.9);
+  --onboarding-task-title: #0f172a;
+  --onboarding-task-desc: #334155;
+  --onboarding-btn-bg: #ffffff;
+  --onboarding-btn-text: #0f172a;
+  --onboarding-btn-border: #cbd5e1;
+}
+
+/* These set the Tailwind CSS variables from our CSS variables */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: rgb(var(--card-rgb));
+  --color-card-foreground: rgb(var(--card-foreground-rgb));
+  --color-primary: rgb(var(--primary-rgb));
+  --color-primary-foreground: rgb(var(--primary-foreground-rgb));
+  --color-muted: rgb(var(--muted-rgb));
+  --color-muted-foreground: rgb(var(--muted-foreground-rgb));
+  --color-accent: rgb(var(--accent-rgb));
+  --color-border: rgb(var(--border-rgb));
+  --color-ring: rgb(var(--ring-rgb));
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --accent: 240 4.8% 95.9%;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-zinc-900/80 backdrop-blur-3xl border border-white/10 shadow-2xl;
+  }
+  [data-theme='white'] .glass {
+    @apply bg-white/90 backdrop-blur-3xl border-slate-200/50 shadow-xl shadow-slate-200/20;
+  }
+  .animate-fade-in {
+    animation: fadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-slide-left {
+    animation: slideLeft 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-slide-up {
+    animation: slideUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+}

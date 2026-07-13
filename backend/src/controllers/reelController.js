@@ -1,105 +1,93 @@
-const db = require('../config/db');
-const analyticsService = require('../services/analyticsService');
+const reelService = require('../services/reelGeneratorService');
 
-// Get Reels Feed (Infinite Scroll - Section 3.3)
-exports.getReels = async (req, res) => {
+exports.getDrafts = async (req, res) => {
   try {
-    const reels = await db.query(`
-      SELECT 
-        v.*, 
-        u.username, u.full_name, u.profile_picture_url, u.verification_status,
-        (SELECT COUNT(*) FROM analytics_events ae WHERE ae.entity_id = v.id AND ae.event_type = 'view_video') as view_count,
-        (SELECT COUNT(*) FROM analytics_events ae WHERE ae.entity_id = v.id AND ae.event_type = 'like_video') as like_count
-      FROM videos v
-      JOIN users u ON v.author_id = u.id
-      ORDER BY v.created_at DESC
-      LIMIT 10
-    `);
-
-    res.status(200).json({
-      success: true,
-      data: reels.rows
-    });
+    const drafts = await reelService.getDrafts(req.user.id);
+    res.status(200).json({ success: true, data: drafts });
   } catch (error) {
-    console.error('Failed to fetch reels:', error);
-    res.status(500).json({ success: false, message: 'Reels fetch failed' });
+    console.error('[Reel Controller] Error fetching drafts:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch drafts' });
   }
 };
 
-// Upload & Process Reel (Section 8.4)
-exports.uploadReel = async (req, res) => {
-  const { author_id, title, description, video_url, linked_paper_id, timestamps, tags } = req.body;
-
+exports.getDraft = async (req, res) => {
   try {
-    const thumbnail_url = video_url ? video_url.replace('.mp4', '_thumb.jpg') : '/uploads/processed/default_thumb.jpg';
-    const duration_seconds = 45; // Mocked
-
-    const cleanTags = Array.isArray(tags) ? tags : (tags ? tags.split(',').map(t => t.trim()) : []);
-
-    const newReel = await db.query(
-      `INSERT INTO videos (author_id, title, description, video_url, thumbnail_url, duration_seconds, linked_paper_id, timestamps, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [author_id, title, description, video_url || '', thumbnail_url, duration_seconds, linked_paper_id || null, JSON.stringify(timestamps || []), cleanTags]
-    );
-
-    res.status(201).json({
-      success: true,
-      message: 'Processing started. You will be notified when live.',
-      data: newReel.rows[0]
-    });
+    const draft = await reelService.getDraftById(req.params.id, req.user.id);
+    if (!draft) {
+      return res.status(404).json({ success: false, message: 'Draft not found' });
+    }
+    res.status(200).json({ success: true, data: draft });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: 'Video upload processing failed' });
+    console.error('[Reel Controller] Error fetching draft:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch draft' });
   }
 };
 
-// Toggle Reaction on Reel
-exports.reactToReel = async (req, res) => {
-  const { video_id, reaction_type } = req.body;
-  const user_id = req.user.id;
-
+exports.generateDraft = async (req, res) => {
   try {
-    if (!video_id) {
-      return res.status(400).json({ success: false, message: 'video_id is required' });
+    const { document_id, split_mode, parts_mode, parts_count } = req.body;
+    if (!document_id) {
+      return res.status(400).json({ success: false, message: 'document_id is required' });
     }
 
-    // Register like/reaction in analytics
-    await analyticsService.trackEvent({
-      user_id,
-      event_type: 'like_video',
-      entity_id: video_id,
-      entity_type: 'video',
-      metadata: { reaction_type: reaction_type || 'like' }
+    const data = await reelService.generateDraftFromPaper(document_id, req.user.id, {
+      split_mode,
+      parts_mode,
+      parts_count
     });
-
-    res.status(200).json({ success: true, message: 'Reel reaction recorded' });
+    res.status(201).json({ success: true, data });
   } catch (error) {
-    console.error('Failed to react to reel:', error);
-    res.status(500).json({ success: false, message: 'Reel reaction failed' });
+    console.error('[Reel Controller] Error generating draft:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to generate draft' });
   }
 };
 
-// Track video view
-exports.viewReel = async (req, res) => {
-  const { video_id } = req.body;
-  const user_id = req.user ? req.user.id : null;
-
+exports.updateDraft = async (req, res) => {
   try {
-    if (!video_id) {
-      return res.status(400).json({ success: false, message: 'video_id is required' });
-    }
-
-    await analyticsService.trackEvent({
-      user_id,
-      event_type: 'view_video',
-      entity_id: video_id,
-      entity_type: 'video'
-    });
-
-    res.status(200).json({ success: true, message: 'View recorded' });
+    const draft = await reelService.updateDraft(req.params.id, req.user.id, req.body);
+    res.status(200).json({ success: true, data: draft });
   } catch (error) {
-    console.error('Failed to record video view:', error);
-    res.status(500).json({ success: false, message: 'Failed to record view' });
+    console.error('[Reel Controller] Error updating draft:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to update draft' });
   }
 };
 
+exports.publishDraft = async (req, res) => {
+  try {
+    const result = await reelService.publishDraft(req.params.id, req.user.id);
+    res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    console.error('[Reel Controller] Error publishing draft:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to publish draft' });
+  }
+};
+
+exports.getAutomation = async (req, res) => {
+  try {
+    const settings = await reelService.getAutomationSettings(req.user.id);
+    res.status(200).json({ success: true, data: settings });
+  } catch (error) {
+    console.error('[Reel Controller] Error getting automation settings:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch automation settings' });
+  }
+};
+
+exports.updateAutomation = async (req, res) => {
+  try {
+    const settings = await reelService.updateAutomationSettings(req.user.id, req.body);
+    res.status(200).json({ success: true, data: settings });
+  } catch (error) {
+    console.error('[Reel Controller] Error updating automation settings:', error);
+    res.status(500).json({ success: false, message: 'Failed to update automation settings' });
+  }
+};
+
+exports.getDocuments = async (req, res) => {
+  try {
+    const documents = await reelService.getUserDocuments(req.user.id);
+    res.status(200).json({ success: true, data: documents });
+  } catch (error) {
+    console.error('[Reel Controller] Error fetching user documents:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch documents' });
+  }
+};
