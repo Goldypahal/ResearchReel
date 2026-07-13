@@ -19,7 +19,7 @@ try {
  * Perform a search across documents, posts, videos, and users.
  * Supports Elasticsearch with full SQL query fallback.
  */
-const searchDocuments = async (query, type = 'all') => {
+const searchDocuments = async (query, type = 'all', cursor = null, limit = 10) => {
   const searchTerm = query ? query.trim() : '';
 
   if (esClient) {
@@ -47,8 +47,17 @@ const searchDocuments = async (query, type = 'all') => {
             fields: ['title^3', 'caption^2', 'username^4', 'full_name^3', 'summary_text', 'tags^2'],
             fuzziness: 'AUTO'
           }
-        }
+        },
+        size: limit,
+        sort: [
+          { _score: 'desc' },
+          { id: 'desc' }
+        ]
       };
+
+      if (cursor) {
+        body.search_after = cursor.split(',');
+      }
 
       const result = await esClient.search({
         index: indices.join(','),
@@ -56,27 +65,37 @@ const searchDocuments = async (query, type = 'all') => {
         ignore_unavailable: true
       });
 
-      return result.hits.hits.map(hit => ({
-        id: hit._source.id,
-        type: hit._index.replace('researchreel_', '').replace(/s$/, ''), // convert researchreel_posts -> post
-        title: hit._source.title || hit._source.caption || hit._source.username || hit._source.file_name || '',
-        description: hit._source.description || hit._source.summary_text || hit._source.full_name || '',
-        score: hit._score,
-        metadata: hit._source
-      }));
+      const hits = result.hits.hits;
+      let nextCursor = null;
+      if (hits.length > 0 && hits[hits.length - 1].sort) {
+        nextCursor = hits[hits.length - 1].sort.join(',');
+      }
+
+      return {
+        results: hits.map(hit => ({
+          id: hit._source.id,
+          type: hit._index.replace('researchreel_', '').replace(/s$/, ''), // convert researchreel_posts -> post
+          title: hit._source.title || hit._source.caption || hit._source.username || hit._source.file_name || '',
+          description: hit._source.description || hit._source.summary_text || hit._source.full_name || '',
+          score: hit._score,
+          metadata: hit._source
+        })),
+        nextCursor
+      };
     } catch (error) {
       console.warn('Elasticsearch query failed, falling back to database query:', error.message);
     }
   }
 
   // Fallback database query using ILIKE
-  return searchDatabaseFallback(searchTerm, type);
+  return searchDatabaseFallback(searchTerm, type, cursor, limit);
 };
 
 /**
  * Fallback search queries for PostgreSQL database
  */
-const searchDatabaseFallback = async (searchTerm, type) => {
+const searchDatabaseFallback = async (searchTerm, type, cursor, limit) => {
+  const offset = cursor ? parseInt(cursor) : 0;
   const ilikePattern = `%${searchTerm}%`;
   const results = [];
 
@@ -90,8 +109,8 @@ const searchDatabaseFallback = async (searchTerm, type) => {
           SELECT id, 'document' AS type, file_name AS title, summary_text AS description, created_at
           FROM documents
           WHERE file_name ILIKE $1 OR summary_text ILIKE $1
-          LIMIT 10
-        `, [ilikePattern]).then(res => res.rows)
+          LIMIT $2 OFFSET $3
+        `, [ilikePattern, limit, offset]).then(res => res.rows)
       );
     }
 
@@ -102,8 +121,8 @@ const searchDatabaseFallback = async (searchTerm, type) => {
           SELECT id, 'user' AS type, username AS title, full_name AS description, created_at
           FROM users
           WHERE username ILIKE $1 OR full_name ILIKE $1
-          LIMIT 10
-        `, [ilikePattern]).then(res => res.rows)
+          LIMIT $2 OFFSET $3
+        `, [ilikePattern, limit, offset]).then(res => res.rows)
       );
     }
 
@@ -114,8 +133,8 @@ const searchDatabaseFallback = async (searchTerm, type) => {
           SELECT id, 'post' AS type, caption AS title, array_to_string(tags, ' ') AS description, created_at
           FROM posts
           WHERE caption ILIKE $1 OR $2 = ANY(tags)
-          LIMIT 10
-        `, [ilikePattern, searchTerm]).then(res => res.rows)
+          LIMIT $3 OFFSET $4
+        `, [ilikePattern, searchTerm, limit, offset]).then(res => res.rows)
       );
     }
 
@@ -126,8 +145,8 @@ const searchDatabaseFallback = async (searchTerm, type) => {
           SELECT id, 'video' AS type, title, description, created_at
           FROM videos
           WHERE title ILIKE $1 OR description ILIKE $1
-          LIMIT 10
-        `, [ilikePattern]).then(res => res.rows.map(r => ({ ...r, title: r.title, description: r.description })))
+          LIMIT $2 OFFSET $3
+        `, [ilikePattern, limit, offset]).then(res => res.rows.map(r => ({ ...r, title: r.title, description: r.description })))
       );
     }
 
@@ -137,7 +156,7 @@ const searchDatabaseFallback = async (searchTerm, type) => {
     });
 
     // Sort results by date or simple relevance matching
-    return results.map(item => {
+    const mapped = results.map(item => {
       let score = 0.5;
       const lowerTitle = (item.title || '').toLowerCase();
       const lowerDesc = (item.description || '').toLowerCase();
@@ -157,9 +176,16 @@ const searchDatabaseFallback = async (searchTerm, type) => {
       };
     }).sort((a, b) => b.score - a.score);
 
+    const nextCursor = mapped.length > 0 ? (offset + limit).toString() : null;
+
+    return {
+      results: mapped,
+      nextCursor
+    };
+
   } catch (error) {
     console.error('Database fallback search failed:', error);
-    return [];
+    return { results: [], nextCursor: null };
   }
 };
 

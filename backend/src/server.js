@@ -37,5 +37,9 @@ server.listen(PORT, () => {
   if (process.env.START_WORKER !== 'false') {
     require('./workers/videoWorker');
   }
+
+  // Start Reel Auto-Upload Scheduler
+  const reelScheduler = require('./services/reelScheduler');
+  reelScheduler.start();
 });
 

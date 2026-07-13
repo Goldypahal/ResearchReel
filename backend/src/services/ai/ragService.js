@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const RAG_SERVICE_URL = process.env.RAG_SERVICE_URL || 'http://localhost:8000/api/v1';
+const REQUEST_TIMEOUT = 15000; // 15 seconds timeout
 
 class RagService {
   /**
@@ -22,6 +23,7 @@ class RagService {
         headers: {
           ...formData.getHeaders(),
         },
+        timeout: REQUEST_TIMEOUT
       });
 
       return response.data;
@@ -43,6 +45,8 @@ class RagService {
         paper_ids: paperIds.length > 0 ? paperIds : null,
         expand_context: expandContext,
         prompt_version: "v1"
+      }, {
+        timeout: REQUEST_TIMEOUT
       });
 
       return response.data;
@@ -58,6 +62,8 @@ class RagService {
       const response = await axios.post(`${RAG_SERVICE_URL}/query`, {
         query: prompt,
         paper_ids: [paperId]
+      }, {
+        timeout: REQUEST_TIMEOUT
       });
       return response.data;
     } catch (error) {
@@ -74,6 +80,8 @@ class RagService {
       const response = await axios.post(`${RAG_SERVICE_URL}/compare`, {
         query: query,
         paper_ids: paperIds
+      }, {
+        timeout: REQUEST_TIMEOUT
       });
 
       return response.data;

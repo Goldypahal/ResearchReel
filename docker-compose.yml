@@ -7,13 +7,13 @@ services:
     container_name: researchreel-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_password_placeholder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}
       POSTGRES_DB: ${POSTGRES_DB:-researchreel}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docs/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - ${PWD}/docs/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     networks:
       - researchreel-network
     healthcheck:
@@ -26,6 +26,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: researchreel-cache
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}
+    command: redis-server --requirepass ${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}
     ports:
       - "6379:6379"
     volumes:
@@ -33,7 +36,7 @@ services:
     networks:
       - researchreel-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "sh", "-c", "redis-cli -a $${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_} ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -46,8 +49,8 @@ services:
     container_name: researchreel-rag
     environment:
       - PORT=8000
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - QDRANT_URL=${QDRANT_URL}
       - QDRANT_API_KEY=${QDRANT_API_KEY}
@@ -71,8 +74,8 @@ services:
       - PORT=5000
       - NODE_ENV=production
       - JWT_SECRET=${JWT_SECRET}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - RAG_SERVICE_URL=http://rag-service:8000
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -101,8 +104,8 @@ services:
     container_name: researchreel-worker
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_placeholder}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - START_WORKER=true
     volumes:

@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const db = require('../config/db');
 
 const authMiddleware = (req, res, next) => {
   const token = req.cookies?.accessToken || req.header('Authorization')?.split(' ')[1];
@@ -28,4 +29,16 @@ const checkVerification = (roles) => {
   };
 };
 
-module.exports = { authMiddleware, checkVerification };
+const checkRole = (roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: `Forbidden: User role '${req.user.role}' is not authorized`
+      });
+    }
+    next();
+  };
+};
+
+module.exports = { authMiddleware, checkVerification, checkRole };

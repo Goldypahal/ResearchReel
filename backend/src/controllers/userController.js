@@ -15,6 +15,7 @@ exports.getProfile = async (req, res) => {
         (SELECT COUNT(*) FROM follows f WHERE f.follower_id = u.id) as following_count
       FROM users u
       LEFT JOIN institutions i ON u.institution_id = i.id
+      LEFT JOIN organizations o ON u.organization_id = o.id
       WHERE u.username = $1
     `, [username]);
 
@@ -49,8 +50,11 @@ exports.getAnalytics = async (req, res) => {
 
 
 // Update Profile (Section 3.6.3)
+// NOTE: user_id is taken from the authenticated token (req.user.id),
+// NOT from the request body, to prevent authorization bypass.
 exports.updateProfile = async (req, res) => {
-  const { user_id, bio, research_interests } = req.body;
+  const { bio, research_interests } = req.body;
+  const user_id = req.user.id;
 
   try {
     const updatedUser = await db.query(

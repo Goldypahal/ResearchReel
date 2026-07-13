@@ -16,11 +16,12 @@ ResearchReel is a premium academic collaboration platform with a "research-first
 - **Inline Latex Rendering**: Math formulas and equations render beautifully across posts and comments using KaTeX/Markdown support.
 - **Embedded Document Previews**: PDF and DOCX files show a visual preview snippet directly in the feed.
 
-## 3. Reels Interface (Academic Discovery)
+## 3. Reels Interface & AI Content Studio
 - **Full-Screen 9:16 Vertical Player**: Immersive full-screen video player optimized for mobile.
 - **Swipe-to-Discover**: Infinite scroll logic for discovery of new research fields.
 - **Interactive Timestamps**: Tappable time-markers that jump to specific figures or equation explanations in the video.
 - **Researcher Overlay**: Floating researcher profile, verification status, field tags, and a direct link to the full research paper.
+- **AI Content Studio & Auto-Generator**: A creator panel that parses uploaded papers and compiles them into customizable video slides, scripts, voiceovers, blog posts, and slide decks. Includes automation controls, customizable target difficulty levels, multi-accent voices, and fact-checking safeguards.
 
 ## 4. Messaging & Collaboration Tabs
 - **Real-time Messaging Hub**: 1-on-1 and Group chats with real-time typing indicators and read receipts.

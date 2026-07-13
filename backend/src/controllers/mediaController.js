@@ -15,6 +15,18 @@ exports.uploadVideo = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Title is required' });
     }
 
+    const { moderateText } = require('../utils/moderator');
+    const titleMod = moderateText(title);
+    const descMod = moderateText(description);
+    if (!titleMod.clean || !descMod.clean) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      const violator = !titleMod.clean ? titleMod.matchedKeyword : descMod.matchedKeyword;
+      return res.status(400).json({
+        success: false,
+        message: `Content violates community guidelines (detected prohibited keyword: "${violator}").`
+      });
+    }
+
     // Validate video duration before adding to task queue
     const duration = await mediaService.getVideoDuration(req.file.path);
     if (duration < 30 || duration > 60) {

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
@@ -7,10 +8,20 @@ const searchService = require('./searchService');
 
 const OTP_TTL_SECONDS = Number(process.env.OTP_TTL_SECONDS || 600);
 
+// Custom error that carries an HTTP status code so controllers can
+// distinguish client errors (400/409/401) from server faults (500).
+class AuthError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.name = 'AuthError';
+    this.statusCode = statusCode;
+  }
+}
+
 const register = async ({ email, username, password, full_name }) => {
   const userExists = await db.query('SELECT * FROM users WHERE email = $1 OR username = $2', [email, username]);
   if (userExists.rows.length > 0) {
-    throw new Error('User already exists');
+    throw new AuthError('User already exists', 409);
   }
 
   const passwordHash = await argon2.hash(password);
@@ -31,7 +42,7 @@ const register = async ({ email, username, password, full_name }) => {
     console.error('Failed to index user in search:', err.message);
   }
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = crypto.randomInt(100000, 999999).toString();
   await redisClient.set(`otp:${email}`, JSON.stringify({ otp }), { EX: OTP_TTL_SECONDS });
   await sendOTP(email, otp);
 
@@ -43,21 +54,21 @@ const verifyOTP = async ({ email, otp }) => {
   const recordJson = await redisClient.get(`otp:${email}`);
   const record = recordJson ? JSON.parse(recordJson) : null;
   if (!record || record.otp !== otp) {
-    throw new Error('Invalid or expired OTP');
+    throw new AuthError('Invalid or expired OTP', 400);
   }
 
   await db.query('UPDATE users SET verification_status = $1 WHERE email = $2', ['verified', email]);
   await redisClient.del(`otp:${email}`);
 
-  const user = await db.query('SELECT id, email, username, verification_status FROM users WHERE email = $1', [email]);
+  const user = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE email = $1', [email]);
   const accessToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: 'verified' },
+    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN || '15m' }
   );
 
   const refreshToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: 'verified' },
+    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d' }
   );
@@ -68,22 +79,22 @@ const verifyOTP = async ({ email, otp }) => {
 const login = async ({ email, password }) => {
   const user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
   if (user.rows.length === 0) {
-    throw new Error('Invalid credentials');
+    throw new AuthError('Invalid credentials', 401);
   }
 
   const isValidPassword = await argon2.verify(user.rows[0].password_hash, password);
   if (!isValidPassword) {
-    throw new Error('Invalid credentials');
+    throw new AuthError('Invalid credentials', 401);
   }
 
   const accessToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: user.rows[0].verification_status },
+    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN || '15m' }
   );
 
   const refreshToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: user.rows[0].verification_status },
+    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d' }
   );
