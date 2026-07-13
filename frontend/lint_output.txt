@@ -1,0 +1,42 @@
+
+> frontend@0.1.0 lint
+> eslint
+
+
+G:\Desktop\RESEARCHAPP\frontend\src\app\auth\login\page.tsx
+  64:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  99:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+G:\Desktop\RESEARCHAPP\frontend\src\app\auth\register\page.tsx
+   88:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  123:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+G:\Desktop\RESEARCHAPP\frontend\src\app\create\page.tsx
+    6:46  warning  'MapPin' is defined but never used        @typescript-eslint/no-unused-vars
+    6:61  warning  'ChevronDown' is defined but never used   @typescript-eslint/no-unused-vars
+  138:19  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+G:\Desktop\RESEARCHAPP\frontend\src\app\lectures\page.tsx
+  10:3  warning  'Calendar' is defined but never used  @typescript-eslint/no-unused-vars
+
+G:\Desktop\RESEARCHAPP\frontend\src\app\reels\page.tsx
+  44:10  warning  'watchedSet' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+  50:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+G:\Desktop\RESEARCHAPP\frontend\src\app\reels\page.tsx:50:5
+  48 |     if (!currentReelId) return;
+  49 |
+> 50 |     setWatchedSet(prev => {
+     |     ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  51 |       if (prev.has(currentReelId)) return prev;
+  52 |       const nextWatched = new Set(prev);
+  53 |       nextWatched.add(currentReelId);  react-hooks/set-state-in-effect
+
+✖ 10 problems (6 errors, 4 warnings)
+

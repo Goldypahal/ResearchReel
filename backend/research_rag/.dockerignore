@@ -1,0 +1,13 @@
+venv
+.git
+.gitignore
+__pycache__
+.pytest_cache
+*.pyc
+*.pyo
+*.pyd
+.env
+db_data
+*.txt
+!requirements.txt
+*.md
