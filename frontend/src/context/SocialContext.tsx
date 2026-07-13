@@ -197,6 +197,7 @@ export function SocialProvider({ children }: { children: React.ReactNode }) {
       if (!initialFollowers[u3].includes(u1)) initialFollowers[u3].push(u1);
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setProfiles(initialProfiles);
     setFollowingMap(initialFollowing);
     setFollowersMap(initialFollowers);

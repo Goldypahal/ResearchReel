@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import OTPVerification from '@/components/auth/OTPVerification';
 import { useAuth } from '@/context/AuthContext';
 import LandingPortrait from './LandingPortrait';
+import Link from 'next/link';
 
 export default function LandingPage() {
   const [email, setEmail] = useState('');
@@ -335,12 +336,12 @@ export default function LandingPage() {
 
       <footer className="w-full py-6 flex flex-col items-center gap-4 text-xs text-zinc-500">
         <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 max-w-4xl px-4">
-          <a href="/search" className="hover:underline">Research</a>
-          <a href="/home" className="hover:underline">About</a>
-          <a href="/explore" className="hover:underline">Explore</a>
-          <a href="/auth/forget-password" className="hover:underline">Help</a>
+          <Link href="/search" className="hover:underline">Research</Link>
+          <Link href="/home" className="hover:underline">About</Link>
+          <Link href="/explore" className="hover:underline">Explore</Link>
+          <Link href="/auth/forget-password" className="hover:underline">Help</Link>
           <a href="http://localhost:5000/api-docs" className="hover:underline">API</a>
-          <a href="/profile" className="hover:underline">Verified</a>
+          <Link href="/profile" className="hover:underline">Verified</Link>
         </div>
         <div className="flex items-center gap-4">
           <select className="bg-transparent text-xs outline-none cursor-pointer hover:underline" aria-label="Language">

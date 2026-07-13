@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  Sparkles, Play, Pause, Save, Upload, Settings, 
+import {
+  Sparkles, Play, Pause, Save, Upload, 
   Volume2, FileText, CheckCircle2, Loader2, AlertCircle, 
   ArrowLeft, Plus, Trash2, Smartphone, VolumeX, Eye
 } from 'lucide-react';
@@ -45,7 +45,7 @@ interface AutomationSettings {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
 export default function ReelGeneratorPage() {
-  const { user, token } = useAuth();
+  const { token } = useAuth();
   const router = useRouter();
 
   // State Management
@@ -93,6 +93,7 @@ export default function ReelGeneratorPage() {
     return () => {
       stopPreviewSpeech();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const getHeaders = () => ({
@@ -148,7 +149,7 @@ export default function ReelGeneratorPage() {
     if (typeof draft.scenes === 'string') {
       try {
         scenesParsed = JSON.parse(draft.scenes);
-      } catch (e) {
+      } catch {
         scenesParsed = [];
       }
     } else {
@@ -520,6 +521,7 @@ export default function ReelGeneratorPage() {
     return () => {
       stopPreviewSpeech();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPreviewPlaying, currentPreviewSceneIdx, activeDraft]);
 
   const togglePreviewPlay = () => {

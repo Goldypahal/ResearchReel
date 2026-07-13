@@ -20,7 +20,7 @@ export default function StoryViewerModal() {
   const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
-  const startTime = useRef<number>(Date.now());
+  const startTime = useRef<number>(0);
   const pausedTime = useRef<number>(0);
 
   const activeStory = stories[activeStoryIndex];
@@ -34,6 +34,23 @@ export default function StoryViewerModal() {
       markStoryViewed(activeStory.id);
     }
   }, [activeStoryIndex, isStoryViewerOpen, activeStory, markStoryViewed]);
+
+  const handlePrev = () => {
+    if (activeStoryIndex > 0) {
+      setActiveStoryIndex(activeStoryIndex - 1);
+    } else {
+      setProgress(0);
+      startTime.current = Date.now();
+    }
+  };
+
+  const handleNext = () => {
+    if (activeStoryIndex < stories.length - 1) {
+      setActiveStoryIndex(activeStoryIndex + 1);
+    } else {
+      setIsStoryViewerOpen(false);
+    }
+  };
 
   // Handle timer ticks
   useEffect(() => {
@@ -57,26 +74,10 @@ export default function StoryViewerModal() {
     return () => {
       if (progressInterval.current) clearInterval(progressInterval.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStoryViewerOpen, isPaused, activeStoryIndex, stories.length]);
 
   if (!isStoryViewerOpen || !activeStory) return null;
-
-  const handlePrev = () => {
-    if (activeStoryIndex > 0) {
-      setActiveStoryIndex(activeStoryIndex - 1);
-    } else {
-      setProgress(0);
-      startTime.current = Date.now();
-    }
-  };
-
-  const handleNext = () => {
-    if (activeStoryIndex < stories.length - 1) {
-      setActiveStoryIndex(activeStoryIndex + 1);
-    } else {
-      setIsStoryViewerOpen(false);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 transition-all duration-300 animate-in fade-in">
@@ -202,13 +203,13 @@ export default function StoryViewerModal() {
 
               {/* Quote Block */}
               <blockquote className="text-white text-sm font-bold italic tracking-tight leading-relaxed px-2 drop-shadow-sm">
-                "{activeStory.quote}"
+                &quot;{activeStory.quote}&quot;
               </blockquote>
 
               {/* Scientist Pseudocode block */}
               {activeStory.pseudocode && (
                 <div className="bg-black/55 border border-zinc-800/40 rounded-xl p-3 text-left font-mono text-[9px] text-zinc-300 w-full overflow-x-auto max-h-[160px] no-scrollbar">
-                  <span className="text-indigo-400 font-bold">// Breakthrough Logic:</span>
+                  <span className="text-indigo-400 font-bold">{`// Breakthrough Logic:`}</span>
                   <pre className="mt-1 leading-normal whitespace-pre-wrap">{activeStory.pseudocode}</pre>
                 </div>
               )}

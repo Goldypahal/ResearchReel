@@ -27,7 +27,6 @@ export default function Home() {
     setIsSwitchOpen,
     isSettingsOpen,
     setIsSettingsOpen,
-    activeStoryIndex,
     setActiveStoryIndex
   } = useSocial();
 
