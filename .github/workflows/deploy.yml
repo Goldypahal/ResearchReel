@@ -32,7 +32,7 @@ jobs:
       - name: Install Gateway Dependencies
         run: |
           cd backend
-          npm ci
+          npm install
 
       - name: Run Gateway Audit
         run: |
@@ -42,7 +42,7 @@ jobs:
       - name: Install Frontend Dependencies
         run: |
           cd frontend
-          npm ci
+          npm install
 
       - name: Run Frontend Lint
         run: |
