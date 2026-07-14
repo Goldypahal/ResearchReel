@@ -3,14 +3,30 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const client = createClient({ 
-  url: process.env.REDIS_URL,
-  socket: {
-    reconnectStrategy: (retries) => {
-      console.log(`[Redis] Reconnecting attempt #${retries}...`);
-      return Math.min(retries * 100, 3000); // reconnect with exponential backoff up to 3s
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const isTLS = redisUrl.startsWith('rediss://');
+
+const socketOptions = {
+  connectTimeout: 15000,
+  reconnectStrategy: (retries) => {
+    if (retries > 20) {
+      console.error('[Redis] Max reconnection attempts reached, giving up.');
+      return new Error('Redis max retries reached');
     }
+    console.log(`[Redis] Reconnecting attempt #${retries}...`);
+    return Math.min(retries * 200, 5000); // reconnect with backoff up to 5s
   }
+};
+
+// Upstash (and most managed Redis) require TLS with SNI servername
+if (isTLS) {
+  socketOptions.tls = true;
+  socketOptions.servername = new URL(redisUrl).hostname;
+}
+
+const client = createClient({
+  url: redisUrl,
+  socket: socketOptions
 });
 
 client.on('error', (err) => {

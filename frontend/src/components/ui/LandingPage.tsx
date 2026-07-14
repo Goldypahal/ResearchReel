@@ -340,7 +340,7 @@ export default function LandingPage() {
           <Link href="/home" className="hover:underline">About</Link>
           <Link href="/explore" className="hover:underline">Explore</Link>
           <Link href="/auth/forget-password" className="hover:underline">Help</Link>
-          <a href="http://localhost:5000/api-docs" className="hover:underline">API</a>
+          <a href="/api-docs" className="hover:underline">API</a>
           <Link href="/profile" className="hover:underline">Verified</Link>
         </div>
         <div className="flex items-center gap-4">

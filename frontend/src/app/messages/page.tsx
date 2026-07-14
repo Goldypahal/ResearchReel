@@ -4,8 +4,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, Send, Phone, Video, Info, Smile, Paperclip, CheckCheck, ArrowLeft } from 'lucide-react';
 import { io } from 'socket.io-client';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
-const socket = io(API_URL);
+const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+// If the API URL is absolute, strip the /api suffix for the socket host.
+// If it's a relative path (proxied same-origin setup), connect to the current origin.
+const socket = RAW_API_URL.startsWith('http')
+  ? io(RAW_API_URL.replace('/api', ''))
+  : io();
 
 interface ChatMessage {
   roomId?: string;
