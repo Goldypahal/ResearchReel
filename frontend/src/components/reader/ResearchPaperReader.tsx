@@ -6,24 +6,8 @@ import {
   ExternalLink, Download, BookOpen, AlertCircle,
   Maximize2, Minimize2, RotateCw
 } from 'lucide-react';
-import dynamic from 'next/dynamic';
-
-// Lazy-load PDF viewer only in browser
-const PDFDocument = dynamic(
-  () => import('react-pdf').then(m => ({ default: m.Document })),
-  { ssr: false }
-);
-const PDFPage = dynamic(
-  () => import('react-pdf').then(m => ({ default: m.Page })),
-  { ssr: false }
-);
-
-// Setup PDF worker
-if (typeof window !== 'undefined') {
-  import('react-pdf').then(({ pdfjs }) => {
-    pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-  });
-}
+// PDFs are rendered with the browser's native viewer via <iframe> to avoid
+// bundler incompatibilities between pdf.js and the Next.js webpack pipeline.
 
 export interface ResearchPaperReaderProps {
   isOpen: boolean;
@@ -61,10 +45,28 @@ export default function ResearchPaperReader({ isOpen, onClose, paper }: Research
   const doiDisplay = paper.doi ? `https://doi.org/${paper.doi}` : null;
 
   useEffect(() => {
-    // Small delay so PDF.js worker is ready before render
-    const t = setTimeout(() => setIsMounted(true), 80);
-    return () => clearTimeout(t);
-  }, []);
+    // Verify the PDF exists before embedding it in the iframe
+    if (!pdfSrc) {
+      setIsMounted(true);
+      return;
+    }
+    let cancelled = false;
+    fetch(pdfSrc, { method: 'HEAD' })
+      .then(res => {
+        if (cancelled) return;
+        if (!res.ok) setPdfError(true);
+        else setNumPages(n => n || 1);
+        setIsMounted(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPdfError(true);
+        setIsMounted(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfSrc]);
 
   // Reset on open
   useEffect(() => {
@@ -392,27 +394,13 @@ export default function ResearchPaperReader({ isOpen, onClose, paper }: Research
                     </div>
                   </div>
                 ) : (
-                  /* ── PDF Viewer ── */
-                  <div style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}>
-                    <PDFDocument
-                      file={pdfSrc}
-                      onLoadSuccess={onDocumentLoadSuccess}
-                      onLoadError={() => setPdfError(true)}
-                      loading={
-                        <div className="flex flex-col items-center gap-3 py-20 text-zinc-600">
-                          <div className="w-10 h-10 border-2 border-indigo-500/40 border-t-indigo-500 rounded-full animate-spin" />
-                          <span className="text-xs font-bold uppercase tracking-widest">Loading PDF…</span>
-                        </div>
-                      }
-                    >
-                      <PDFPage
-                        pageNumber={pageNumber}
-                        renderAnnotationLayer={true}
-                        renderTextLayer={true}
-                        width={Math.min(typeof window !== 'undefined' ? window.innerWidth * 0.7 : 700, 860)}
-                        className="shadow-2xl shadow-black/60 rounded-sm"
-                      />
-                    </PDFDocument>
+                  /* ── PDF Viewer (native browser rendering) ── */
+                  <div className="w-full h-full flex items-stretch justify-center px-4">
+                    <iframe
+                      src={`${pdfSrc}#page=${pageNumber}&zoom=${Math.round(scale * 100)}`}
+                      title={paper.title}
+                      className="w-full max-w-[900px] h-full min-h-[70vh] border-0 rounded-lg bg-white shadow-2xl shadow-black/60"
+                    />
                   </div>
                 )}
               </div>
