@@ -1,23 +1,98 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { 
-  ArrowLeft, FileText, CheckSquare, Users, Activity, 
-  Plus, MoreVertical, Layers, CheckCircle2, Clock, Play
-} from 'lucide-react';
+import { ArrowLeft, Plus, Loader2, CheckCircle2, Clock, PlayCircle, Eye } from 'lucide-react';
+import { projectsApi, Project } from '@/lib/api/projects';
+import { tasksApi, Task, TaskStatus } from '@/lib/api/tasks';
 
 export default function ProjectWorkspacePage() {
   const router = useRouter();
   const params = useParams();
   const projectId = params.projectId as string;
-  const [activeTab, setActiveTab] = useState<'overview' | 'documents' | 'tasks' | 'members'>('tasks');
 
-  const tasks = [
-    { id: 't1', title: 'Literature Review on LLM Detection', status: 'TODO', priority: 'High', assignee: 'Dr. Julia' },
-    { id: 't2', title: 'Dataset Cleaning & Normalization', status: 'IN_PROGRESS', priority: 'Medium', assignee: 'Rajvir' },
-    { id: 't3', title: 'Model Training & Evaluation', status: 'IN_PROGRESS', priority: 'High', assignee: 'Alex' },
-    { id: 't4', title: 'Paper Draft Preparation', status: 'DONE', priority: 'Medium', assignee: 'Rajvir' },
+  const [project, setProject] = useState<Project | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'overview' | 'documents' | 'tasks' | 'members'>('tasks');
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [isAddingTask, setIsAddingTask] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadData() {
+      if (!projectId) return;
+      try {
+        const [projData, taskData] = await Promise.all([
+          projectsApi.getProjectById(projectId),
+          tasksApi.getProjectTasks(projectId),
+        ]);
+        setProject(projData);
+        setTasks(taskData);
+      } catch (err: any) {
+        console.error('Project workspace error:', err);
+        setError(err.message || 'Failed to load project details');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadData();
+  }, [projectId]);
+
+  const handleCreateTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTaskTitle.trim()) return;
+
+    try {
+      const created = await tasksApi.createTask(projectId, {
+        title: newTaskTitle.trim(),
+        priority: 'medium',
+      });
+      setTasks(prev => [created, ...prev]);
+      setNewTaskTitle('');
+      setIsAddingTask(false);
+    } catch (err: any) {
+      console.error('Create task error:', err);
+    }
+  };
+
+  const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => {
+    try {
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+      await tasksApi.updateTask(taskId, { status: newStatus });
+    } catch (err: any) {
+      console.error('Status update error:', err);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-indigo-400 gap-2">
+        <Loader2 size={24} className="animate-spin" />
+        <span className="text-xs font-semibold">Loading project workspace...</span>
+      </div>
+    );
+  }
+
+  if (error || !project) {
+    return (
+      <div className="max-w-4xl mx-auto py-12 text-center space-y-4">
+        <p className="text-sm font-semibold text-red-400">{error || 'Project not found'}</p>
+        <button
+          onClick={() => router.push('/projects')}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold"
+        >
+          Back to Projects
+        </button>
+      </div>
+    );
+  }
+
+  const columns: { key: TaskStatus; label: string; color: string; icon: any }[] = [
+    { key: 'todo', label: 'To Do', color: 'text-slate-400 bg-slate-500/10 border-slate-500/20', icon: Clock },
+    { key: 'in_progress', label: 'In Progress', color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20', icon: PlayCircle },
+    { key: 'review', label: 'Review', color: 'text-amber-400 bg-amber-500/10 border-amber-500/20', icon: Eye },
+    { key: 'done', label: 'Done', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', icon: CheckCircle2 },
   ];
 
   return (
@@ -33,16 +108,19 @@ export default function ProjectWorkspacePage() {
           </button>
           <div>
             <h1 className="text-xl md:text-2xl font-extrabold text-[var(--foreground)]">
-              AI Text Detection Research
+              {project.name}
             </h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              4 Members • 12 Papers • 72% Progress
+              {project.research_field || 'General Research'} • {project.visibility.toUpperCase()} • Role: {project.user_role || 'member'}
             </p>
           </div>
         </div>
 
-        <button className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5">
-          <Plus size={14} /> Invite
+        <button 
+          onClick={() => setIsAddingTask(true)}
+          className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-md"
+        >
+          <Plus size={14} /> Add Task
         </button>
       </div>
 
@@ -63,81 +141,79 @@ export default function ProjectWorkspacePage() {
         ))}
       </div>
 
-      {/* Kanban Board Tab */}
+      {/* Quick Add Task Modal */}
+      {isAddingTask && (
+        <form onSubmit={handleCreateTask} className="p-4 rounded-xl bg-[var(--foreground)]/5 border border-indigo-500/30 flex items-center gap-3">
+          <input
+            type="text"
+            placeholder="Enter task title..."
+            value={newTaskTitle}
+            onChange={(e) => setNewTaskTitle(e.target.value)}
+            className="flex-1 px-3 py-2 text-xs bg-[var(--background)] border border-[var(--border)] rounded-lg text-[var(--foreground)] focus:outline-none"
+            autoFocus
+          />
+          <button type="submit" className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold">
+            Save
+          </button>
+          <button type="button" onClick={() => setIsAddingTask(false)} className="px-3 py-2 text-xs text-muted-foreground">
+            Cancel
+          </button>
+        </form>
+      )}
+
+      {/* Standardized 4-Column Kanban Board Tab */}
       {activeTab === 'tasks' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
-          {/* TODO Column */}
-          <div className="space-y-3 bg-[var(--foreground)]/[0.015] border border-[var(--border)] rounded-2xl p-4">
-            <div className="flex items-center justify-between font-bold text-xs text-muted-foreground uppercase tracking-wider">
-              <span>To Do</span>
-              <span className="px-2 py-0.5 rounded-full bg-[var(--foreground)]/10 text-[var(--foreground)]">
-                {tasks.filter(t => t.status === 'TODO').length}
-              </span>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2">
+          {columns.map((col) => {
+            const colTasks = tasks.filter(t => t.status === col.key);
+            const Icon = col.icon;
 
-            <div className="space-y-3">
-              {tasks.filter(t => t.status === 'TODO').map(task => (
-                <div key={task.id} className="p-3.5 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-sm space-y-2">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
-                    {task.priority}
+            return (
+              <div key={col.key} className="space-y-3 bg-[var(--foreground)]/[0.015] border border-[var(--border)] rounded-2xl p-4 min-h-[300px]">
+                <div className="flex items-center justify-between font-bold text-xs uppercase tracking-wider">
+                  <div className="flex items-center gap-1.5">
+                    <Icon size={14} className={col.color.split(' ')[0]} />
+                    <span className="text-[var(--foreground)]">{col.label}</span>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${col.color}`}>
+                    {colTasks.length}
                   </span>
-                  <h4 className="text-xs font-bold text-[var(--foreground)]">{task.title}</h4>
-                  <p className="text-[10px] text-muted-foreground">Assignee: {task.assignee}</p>
                 </div>
-              ))}
-            </div>
-          </div>
 
-          {/* IN PROGRESS Column */}
-          <div className="space-y-3 bg-[var(--foreground)]/[0.015] border border-[var(--border)] rounded-2xl p-4">
-            <div className="flex items-center justify-between font-bold text-xs text-indigo-400 uppercase tracking-wider">
-              <span>In Progress</span>
-              <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400">
-                {tasks.filter(t => t.status === 'IN_PROGRESS').length}
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {tasks.filter(t => t.status === 'IN_PROGRESS').map(task => (
-                <div key={task.id} className="p-3.5 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-sm space-y-2">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                    {task.priority}
-                  </span>
-                  <h4 className="text-xs font-bold text-[var(--foreground)]">{task.title}</h4>
-                  <p className="text-[10px] text-muted-foreground">Assignee: {task.assignee}</p>
+                <div className="space-y-3">
+                  {colTasks.map(task => (
+                    <div key={task.id} className="p-3.5 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-sm space-y-2 group">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase">
+                          {task.priority || 'medium'}
+                        </span>
+                        <select
+                          value={task.status}
+                          onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
+                          className="text-[10px] bg-transparent border border-[var(--border)] rounded px-1 text-muted-foreground"
+                        >
+                          <option value="todo">To Do</option>
+                          <option value="in_progress">In Progress</option>
+                          <option value="review">Review</option>
+                          <option value="done">Done</option>
+                        </select>
+                      </div>
+                      <h4 className={`text-xs font-bold text-[var(--foreground)] ${task.status === 'done' ? 'line-through opacity-70' : ''}`}>
+                        {task.title}
+                      </h4>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* DONE Column */}
-          <div className="space-y-3 bg-[var(--foreground)]/[0.015] border border-[var(--border)] rounded-2xl p-4">
-            <div className="flex items-center justify-between font-bold text-xs text-emerald-400 uppercase tracking-wider">
-              <span>Done</span>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">
-                {tasks.filter(t => t.status === 'DONE').length}
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {tasks.filter(t => t.status === 'DONE').map(task => (
-                <div key={task.id} className="p-3.5 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-sm space-y-2 opacity-80">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    Completed
-                  </span>
-                  <h4 className="text-xs font-bold text-[var(--foreground)] line-through">{task.title}</h4>
-                  <p className="text-[10px] text-muted-foreground">Assignee: {task.assignee}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {activeTab !== 'tasks' && (
-        <div className="py-12 text-center text-xs text-muted-foreground">
-          <p className="font-semibold text-sm capitalize">{activeTab} Section</p>
-          <p>Manage project {activeTab} for AI Text Detection Research.</p>
+        <div className="py-12 text-center text-xs text-muted-foreground space-y-1">
+          <p className="font-semibold text-sm capitalize text-[var(--foreground)]">{activeTab} Section</p>
+          <p>{project.description || 'Project details and collaborators.'}</p>
         </div>
       )}
     </div>

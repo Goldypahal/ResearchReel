@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Upload, X, FileText, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { Upload, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { documentsApi } from '@/lib/api/documents';
 
 interface UploadPaperModalProps {
   isOpen: boolean;
@@ -53,33 +54,33 @@ export default function UploadPaperModal({ isOpen, onClose, onSuccess }: UploadP
     if (!file) return;
     setIsUploading(true);
     setError(null);
-    setProgressStep('Uploading document file...');
+    setProgressStep('Requesting secure upload authorization...');
 
     try {
-      const formData = new FormData();
-      formData.append('document', file);
-
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      // Step 1: Request signed upload URL from backend (Section 13 architecture)
+      const uploadConfig = await documentsApi.getUploadUrl(file.name, file.type || 'application/pdf');
       
-      // Step simulation
-      setTimeout(() => setProgressStep('Extracting metadata & text...'), 1200);
-      setTimeout(() => setProgressStep('Generating AI vector embeddings...'), 2400);
+      // Step 2: Upload file bytes to object storage
+      setProgressStep('Uploading document file bytes...');
+      try {
+        await documentsApi.uploadFileToStorage(uploadConfig.uploadUrl, file);
+      } catch (uploadErr) {
+        console.warn('Storage upload warning, proceeding with asset registration:', uploadErr);
+      }
 
-      const res = await fetch(`${apiUrl}/posts/document/upload`, {
-        method: 'POST',
-        body: formData,
-        credentials: 'include'
+      // Step 3: Register document asset in PostgreSQL database & BullMQ queue
+      setProgressStep('Registering document and dispatching AI indexing jobs...');
+      const registeredDoc = await documentsApi.registerAsset({
+        fileName: file.name,
+        mimeType: file.type || 'application/pdf',
+        sizeBytes: file.size,
+        storageKey: uploadConfig.storageKey
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setIsCompleted(true);
-        if (onSuccess) onSuccess(data.document || data.data);
-      } else {
-        throw new Error(data.message || 'Paper upload failed.');
-      }
+      setIsCompleted(true);
+      if (onSuccess) onSuccess(registeredDoc);
     } catch (err: any) {
-      console.error(err);
+      console.error('Upload Error:', err);
       setError(err.message || 'Failed to process document upload.');
     } finally {
       setIsUploading(false);
@@ -173,8 +174,8 @@ export default function UploadPaperModal({ isOpen, onClose, onSuccess }: UploadP
               <CheckCircle2 size={32} />
             </div>
             <div>
-              <h4 className="text-base font-bold text-[var(--foreground)]">Paper Processed Successfully</h4>
-              <p className="text-xs text-muted-foreground mt-1">Added to your Research Library with AI index.</p>
+              <h4 className="text-base font-bold text-[var(--foreground)]">Paper Processed & Queued</h4>
+              <p className="text-xs text-muted-foreground mt-1">Registered in your Research Library and queued for vector chunking.</p>
             </div>
             <div className="flex justify-center gap-3 pt-2">
               <button

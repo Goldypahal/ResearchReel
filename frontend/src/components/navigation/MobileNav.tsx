@@ -14,12 +14,14 @@ export default function MobileNav({ onOpenCreate }: MobileNavProps) {
   const pathname = usePathname();
   const { user } = useAuth();
 
+  const profileHref = user?.username ? `/profile/${user.username}` : '/settings';
+
   const items = [
     { name: 'Home', href: '/home', icon: Home },
     { name: 'Discover', href: '/discover', icon: Compass },
     { name: 'Create', href: '#create', icon: PlusCircle, isCreate: true },
     { name: 'Reels', href: '/reels', icon: PlaySquare },
-    { name: 'Profile', href: `/profile/${user?.username || 'julianewton'}`, icon: User },
+    { name: 'Profile', href: profileHref, icon: User },
   ];
 
   return (

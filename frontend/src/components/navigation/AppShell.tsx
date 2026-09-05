@@ -11,6 +11,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Search, Bell, Library, Plus } from 'lucide-react';
 
+const PUBLIC_ROUTES = ['/landing'];
+const AUTH_ROUTES = ['/auth', '/login', '/register'];
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [isCreationOpen, setIsCreationOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -42,12 +45,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Hide AppShell navigation on standalone auth/landing pages if needed
-  const isAuthPage = pathname?.startsWith('/auth') || pathname === '/';
+  // Route classification check
+  const isStandalonePage =
+    pathname === '/' ||
+    PUBLIC_ROUTES.some((route) => pathname?.startsWith(route)) ||
+    AUTH_ROUTES.some((route) => pathname?.startsWith(route));
 
-  if (isAuthPage) {
+  if (isStandalonePage) {
     return <>{children}</>;
   }
+
+  const profileHref = user?.username ? `/profile/${user.username}` : '/settings';
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex flex-col md:flex-row">
@@ -99,10 +107,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
 
             <Link
-              href={`/profile/${user?.username || 'julianewton'}`}
+              href={profileHref}
               className="w-8 h-8 rounded-full border border-indigo-500/30 overflow-hidden bg-indigo-500/10 flex items-center justify-center font-bold text-xs text-indigo-400 hover:scale-105 transition-transform"
             >
-              {user?.full_name?.slice(0, 1) || 'U'}
+              {user?.full_name?.slice(0, 1) || user?.username?.slice(0, 1) || 'U'}
             </Link>
           </div>
         </header>

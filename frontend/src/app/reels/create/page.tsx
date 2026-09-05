@@ -1,29 +1,78 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Film, ArrowLeft, Bot, Sparkles, CheckCircle2, Play, RefreshCw, Loader2 } from 'lucide-react';
+import { Film, ArrowLeft, Sparkles, CheckCircle2, Play, Loader2 } from 'lucide-react';
+import { documentsApi, DocumentItem } from '@/lib/api/documents';
+import { reelsApi, ReelDraft } from '@/lib/api/reels';
 
 export default function CreateReelPage() {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [selectedPaper, setSelectedPaper] = useState('doc_1');
-  const [title, setTitle] = useState('Insight: Attention Is All You Need');
-  const [script, setScript] = useState('The Transformer architecture completely removes recurrence. By relying entirely on self-attention mechanisms, it computes relationships between all tokens in parallel...');
+  const [userDocs, setUserDocs] = useState<DocumentItem[]>([]);
+  const [selectedDocId, setSelectedDocId] = useState<string>('');
+  const [currentDraft, setCurrentDraft] = useState<ReelDraft | null>(null);
+
+  const [title, setTitle] = useState('');
+  const [script, setScript] = useState('');
   const [voice, setVoice] = useState('en-US-Neural-Adam');
-  const [duration, setDuration] = useState('60');
+  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const papers = [
-    { id: 'doc_1', title: 'Attention Is All You Need', authors: 'Vaswani et al.' },
-    { id: 'doc_2', title: 'BERT: Pre-training of Deep Bidirectional Transformers', authors: 'Devlin et al.' },
-    { id: 'doc_3', title: 'Retrieval-Augmented Generation for Knowledge-Intensive Tasks', authors: 'Lewis et al.' }
-  ];
+  useEffect(() => {
+    async function loadDocuments() {
+      try {
+        const docs = await documentsApi.getUserAssets();
+        setUserDocs(docs);
+        if (docs.length > 0) {
+          setSelectedDocId(docs[0].id);
+        }
+      } catch (err: any) {
+        console.error('Error fetching user documents:', err);
+      } finally {
+        setIsLoadingDocs(false);
+      }
+    }
+    loadDocuments();
+  }, []);
 
-  const handleStartGeneration = () => {
+  const handleStartGeneration = async () => {
+    if (!selectedDocId || isProcessing) return;
+    setIsProcessing(true);
+    setError(null);
     setStep(2);
-    setTimeout(() => {
+
+    try {
+      const selectedDoc = userDocs.find(d => d.id === selectedDocId);
+      const draft = await reelsApi.generateDraft({
+        document_id: selectedDocId,
+        title: selectedDoc ? `Insight: ${selectedDoc.title}` : 'Research Reel Insight'
+      });
+
+      setCurrentDraft(draft);
+      setTitle(draft.title || 'Research Reel Insight');
+      setScript(draft.script || 'AI is synthesizing key findings from the paper into video narration...');
       setStep(3);
-    }, 2000);
+    } catch (err: any) {
+      console.error('Reel generation error:', err);
+      setError(err.message || 'Failed to initialize AI reel generation.');
+      setStep(1);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!currentDraft) return;
+    try {
+      await reelsApi.updateDraft(currentDraft.id, { title, script });
+      await reelsApi.publishDraft(currentDraft.id);
+      router.push('/reels');
+    } catch (err: any) {
+      console.error('Publish Reel Error:', err);
+      setError(err.message || 'Failed to publish reel.');
+    }
   };
 
   return (
@@ -40,6 +89,12 @@ export default function CreateReelPage() {
           <span>Research Reel Creator</span>
         </h1>
       </div>
+
+      {error && (
+        <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+          {error}
+        </div>
+      )}
 
       {/* Step Indicator */}
       <div className="flex items-center justify-between border-b border-[var(--border)] pb-4 text-xs font-semibold">
@@ -62,32 +117,50 @@ export default function CreateReelPage() {
         <div className="p-6 rounded-2xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] space-y-5">
           <h3 className="text-sm font-bold text-[var(--foreground)]">Choose Research Paper from Library</h3>
 
-          <div className="space-y-3">
-            {papers.map((p) => (
-              <div
-                key={p.id}
-                onClick={() => setSelectedPaper(p.id)}
-                className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
-                  selectedPaper === p.id
-                    ? 'border-purple-500 bg-purple-500/10 text-[var(--foreground)]'
-                    : 'border-[var(--border)] text-muted-foreground hover:border-[var(--border)]/80'
-                }`}
+          {isLoadingDocs ? (
+            <div className="flex items-center justify-center py-8 text-purple-400 gap-2">
+              <Loader2 size={20} className="animate-spin" />
+              <span className="text-xs">Loading document library...</span>
+            </div>
+          ) : userDocs.length === 0 ? (
+            <div className="text-center py-8 space-y-3">
+              <p className="text-xs text-muted-foreground">No documents found in your library.</p>
+              <button
+                onClick={() => router.push('/library')}
+                className="px-4 py-2 bg-purple-600 text-white rounded-xl text-xs font-semibold"
               >
-                <div>
-                  <h4 className="text-sm font-bold text-[var(--foreground)]">{p.title}</h4>
-                  <p className="text-xs text-muted-foreground">{p.authors}</p>
+                Upload Paper First
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {userDocs.map((doc) => (
+                <div
+                  key={doc.id}
+                  onClick={() => setSelectedDocId(doc.id)}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                    selectedDocId === doc.id
+                      ? 'border-purple-500 bg-purple-500/10 text-[var(--foreground)]'
+                      : 'border-[var(--border)] text-muted-foreground hover:border-[var(--border)]/80'
+                  }`}
+                >
+                  <div>
+                    <h4 className="text-sm font-bold text-[var(--foreground)]">{doc.title}</h4>
+                    <p className="text-xs text-muted-foreground">{doc.mime_type} • {doc.status}</p>
+                  </div>
+                  {selectedDocId === doc.id && <CheckCircle2 size={20} className="text-purple-400 shrink-0" />}
                 </div>
-                {selectedPaper === p.id && <CheckCircle2 size={20} className="text-purple-400 shrink-0" />}
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           <div className="flex justify-end pt-3">
             <button
               onClick={handleStartGeneration}
-              className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 transition-colors"
+              disabled={!selectedDocId || isProcessing}
+              className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 transition-colors disabled:opacity-50"
             >
-              <Sparkles size={16} />
+              {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
               <span>Generate AI Reel Draft</span>
             </button>
           </div>
@@ -100,7 +173,7 @@ export default function CreateReelPage() {
           <Loader2 size={40} className="animate-spin text-purple-400 mx-auto" />
           <div className="space-y-1">
             <h3 className="text-base font-bold text-[var(--foreground)]">Generating Research Reel...</h3>
-            <p className="text-xs text-muted-foreground">Extracting paper findings, drafting voice script, and arranging video captions.</p>
+            <p className="text-xs text-muted-foreground">Extracting paper findings, drafting voice script, and queueing BullMQ video rendering worker.</p>
           </div>
         </div>
       )}
@@ -113,7 +186,7 @@ export default function CreateReelPage() {
             <span className="text-[10px] font-extrabold uppercase px-3 py-1 bg-white/10 rounded-full w-fit">Preview</span>
             <div className="text-center space-y-2">
               <Play size={36} className="mx-auto text-white/80" />
-              <p className="text-xs text-zinc-300 font-semibold px-4">{script}</p>
+              <p className="text-xs text-zinc-300 font-semibold px-4 line-clamp-4">{script}</p>
             </div>
             <div className="text-[11px] font-bold text-purple-300 truncate">{title}</div>
           </div>
@@ -160,7 +233,7 @@ export default function CreateReelPage() {
                 Back
               </button>
               <button
-                onClick={() => router.push('/reels')}
+                onClick={handlePublish}
                 className="flex-1 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-md transition-colors"
               >
                 Publish Reel

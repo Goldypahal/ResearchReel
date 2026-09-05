@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface KeyboardShortcutOptions {
@@ -13,53 +13,60 @@ interface KeyboardShortcutOptions {
 
 export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
   const router = useRouter();
+  const optionsRef = useRef(options);
+
+  // Keep ref synchronized without triggering effect re-execution
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
 
   useEffect(() => {
     let keyBuffer = '';
     let bufferTimeout: NodeJS.Timeout;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore shortcut keypresses inside input elements
+      const opts = optionsRef.current;
       const target = e.target as HTMLElement;
+
       if (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
         target.isContentEditable
       ) {
-        if (e.key === 'Escape' && options.onCloseModal) {
-          options.onCloseModal();
+        if (e.key === 'Escape' && opts.onCloseModal) {
+          opts.onCloseModal();
         }
         return;
       }
 
       const key = e.key;
 
-      if (key === 'Escape' && options.onCloseModal) {
-        options.onCloseModal();
+      if (key === 'Escape' && opts.onCloseModal) {
+        opts.onCloseModal();
         return;
       }
 
-      if (key === '/' && options.onOpenSearch) {
+      if (key === '/' && opts.onOpenSearch) {
         e.preventDefault();
-        options.onOpenSearch();
+        opts.onOpenSearch();
         return;
       }
 
-      if (key.toLowerCase() === 'n' && options.onOpenCreate) {
+      if (key.toLowerCase() === 'n' && opts.onOpenCreate) {
         e.preventDefault();
-        options.onOpenCreate();
+        opts.onOpenCreate();
         return;
       }
 
-      if (key.toLowerCase() === 'a' && options.onOpenAskAI) {
+      if (key.toLowerCase() === 'a' && opts.onOpenAskAI) {
         e.preventDefault();
-        options.onOpenAskAI();
+        opts.onOpenAskAI();
         return;
       }
 
-      if (key.toLowerCase() === 'u' && options.onOpenUpload) {
+      if (key.toLowerCase() === 'u' && opts.onOpenUpload) {
         e.preventDefault();
-        options.onOpenUpload();
+        opts.onOpenUpload();
         return;
       }
 
@@ -106,5 +113,5 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
       window.removeEventListener('keydown', handleKeyDown);
       clearTimeout(bufferTimeout);
     };
-  }, [router, options]);
+  }, [router]);
 }

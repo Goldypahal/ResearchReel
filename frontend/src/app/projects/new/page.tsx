@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Folder, Users, Globe, Lock, ArrowLeft, Loader2 } from 'lucide-react';
+import { Lock, Globe, ArrowLeft, Loader2 } from 'lucide-react';
+import { projectsApi } from '@/lib/api/projects';
 
 export default function CreateProjectPage() {
   const router = useRouter();
@@ -10,18 +11,28 @@ export default function CreateProjectPage() {
   const [description, setDescription] = useState('');
   const [field, setField] = useState('Artificial Intelligence');
   const [visibility, setVisibility] = useState<'private' | 'public'>('private');
-  const [invites, setInvites] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || isSubmitting) return;
     setIsSubmitting(true);
+    setError(null);
 
-    setTimeout(() => {
+    try {
+      const newProject = await projectsApi.createProject({
+        name: name.trim(),
+        description: description.trim(),
+        research_field: field,
+        visibility
+      });
+      router.push(`/projects/${newProject.id}`);
+    } catch (err: any) {
+      console.error('Create Project Error:', err);
+      setError(err.message || 'Failed to create project');
       setIsSubmitting(false);
-      router.push('/projects/proj_1');
-    }, 800);
+    }
   };
 
   return (
@@ -37,6 +48,12 @@ export default function CreateProjectPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="p-6 rounded-2xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] space-y-5">
+        {error && (
+          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+            {error}
+          </div>
+        )}
+
         <div className="space-y-1.5">
           <label className="text-xs font-bold text-[var(--foreground)]">Project Name</label>
           <input
@@ -110,32 +127,21 @@ export default function CreateProjectPage() {
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-bold text-[var(--foreground)]">Invite Members (Optional)</label>
-          <input
-            type="text"
-            placeholder="Enter emails or usernames separated by commas..."
-            value={invites}
-            onChange={(e) => setInvites(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-[var(--foreground)]/5 border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:border-indigo-500/50 text-[var(--foreground)]"
-          />
-        </div>
-
-        <div className="flex justify-end gap-3 pt-3">
+        <div className="flex justify-end gap-3 pt-3 border-t border-[var(--border)]">
           <button
             type="button"
             onClick={() => router.push('/projects')}
-            className="px-4 py-2 text-xs font-medium text-muted-foreground hover:text-[var(--foreground)] border border-[var(--border)] rounded-xl"
+            className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-[var(--foreground)]"
           >
             Cancel
           </button>
           <button
             type="submit"
-            disabled={isSubmitting || !name.trim()}
-            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 disabled:opacity-50"
+            disabled={!name.trim() || isSubmitting}
+            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors flex items-center gap-2 disabled:opacity-50"
           >
             {isSubmitting && <Loader2 size={14} className="animate-spin" />}
-            Create Project
+            <span>Create Project</span>
           </button>
         </div>
       </form>
