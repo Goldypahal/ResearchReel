@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const workspaceController = require('../controllers/workspaceController');
-// const { verifyToken } = require('../middleware/authMiddleware'); // Uncomment when fully integrated
+const { authMiddleware } = require('../middleware/authMiddleware');
 
-router.post('/', workspaceController.createWorkspace);
-router.get('/', workspaceController.getWorkspaces);
+router.post('/', authMiddleware, workspaceController.createWorkspace);
+router.get('/', authMiddleware, workspaceController.getWorkspaces);
 
 module.exports = router;
+

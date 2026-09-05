@@ -38,28 +38,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAnalytics();
     initSentry();
 
-    const savedToken = localStorage.getItem('token');
+    // Remove legacy insecure localStorage token storage
+    localStorage.removeItem('token');
+
     const savedUser = localStorage.getItem('user');
-    if (savedToken && savedUser) {
+    if (savedUser) {
       try {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setToken(savedToken);
         const parsedUser = JSON.parse(savedUser);
         setUser(parsedUser);
         identifyUser(parsedUser.id, parsedUser.email, { username: parsedUser.username, role: parsedUser.role });
       } catch (e) {
         console.error("Failed to parse saved user", e);
         localStorage.removeItem('user');
-        localStorage.removeItem('token');
       }
     }
     setIsLoading(false);
   }, []);
 
-  const login = (userData: User, newToken: string) => {
+  const login = (userData: User, newToken?: string) => {
     setUser(userData);
-    setToken(newToken);
-    localStorage.setItem('token', newToken);
+    if (newToken) setToken(newToken);
+    localStorage.removeItem('token');
     localStorage.setItem('user', JSON.stringify(userData));
     identifyUser(userData.id, userData.email, { username: userData.username, role: userData.role });
     trackEvent('login', { userId: userData.id, email: userData.email });
@@ -76,6 +75,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     resetAnalytics();
+
+    fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+
     document.cookie.split(";").forEach((c) => {
       document.cookie = c
         .replace(/^ +/, "")
@@ -90,6 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     </AuthContext.Provider>
   );
 }
+
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

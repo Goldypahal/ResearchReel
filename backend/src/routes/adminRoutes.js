@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
-// const adminController = require('../controllers/adminController'); // To be implemented
+const { authMiddleware, checkRole } = require('../middleware/authMiddleware');
+
+// Protect all admin routes
+router.use(authMiddleware);
+router.use(checkRole(['admin']));
 
 /**
  * @swagger
@@ -31,3 +35,4 @@ router.get('/feature-flags', (req, res) => {
 });
 
 module.exports = router;
+

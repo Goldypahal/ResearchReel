@@ -115,6 +115,21 @@ router.post('/logout', authController.logout);
 
 /**
  * @swagger
+ * /api/v1/auth/refresh:
+ *   post:
+ *     summary: Refresh access token using refresh token cookie
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: New access and refresh tokens set in cookies
+ *       401:
+ *         description: Invalid or expired refresh token
+ */
+router.post('/refresh', authController.refreshToken);
+
+
+/**
+ * @swagger
  * /api/v1/auth/verify/orcid:
  *   post:
  *     summary: Complete ORCID oauth verification

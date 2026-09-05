@@ -6,7 +6,15 @@ exports.createCheckoutSession = async (req, res) => {
     const { priceId } = req.body;
     const userId = req.user?.id;
 
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
     if (!priceId) return res.status(400).json({ success: false, message: 'Price ID is required' });
+
+    const allowedPrices = (process.env.ALLOWED_STRIPE_PRICE_IDS || 'price_pro_monthly,price_pro_yearly,price_scholar_monthly').split(',');
+    if (process.env.NODE_ENV === 'production' && !allowedPrices.includes(priceId)) {
+      return res.status(400).json({ success: false, message: 'Invalid or unallowed Price ID' });
+    }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -22,6 +30,7 @@ exports.createCheckoutSession = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 exports.handleWebhook = async (req, res) => {
   const sig = req.headers['stripe-signature'];

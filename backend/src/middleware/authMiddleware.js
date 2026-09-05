@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
+const redisClient = require('../config/redisClient');
 
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
   const token = req.cookies?.accessToken || req.header('Authorization')?.split(' ')[1];
 
   if (!token) {
@@ -10,12 +11,19 @@ const authMiddleware = (req, res, next) => {
 
   try {
     const verified = jwt.verify(token, process.env.JWT_SECRET);
+    if (verified.sid && verified.id) {
+      const activeSession = await redisClient.get(`session:${verified.id}:${verified.sid}`);
+      if (activeSession === null && process.env.NODE_ENV !== 'test') {
+        return res.status(401).json({ success: false, message: 'Session revoked or expired' });
+      }
+    }
     req.user = verified;
     next();
   } catch (error) {
     res.status(401).json({ success: false, message: 'Invalid or expired token' });
   }
 };
+
 
 const checkVerification = (roles) => {
   return (req, res, next) => {

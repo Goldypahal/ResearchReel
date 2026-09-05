@@ -35,6 +35,11 @@ const analyticsService = require('../services/analyticsService');
 // Get Profile Analytics (Section 3.6.3 / 15.1)
 exports.getAnalytics = async (req, res) => {
   const { user_id } = req.params;
+  const authUserId = req.user?.id;
+
+  if (user_id !== authUserId) {
+    return res.status(403).json({ success: false, message: 'Forbidden: Cannot access another user\'s private analytics' });
+  }
 
   try {
     const analytics = await analyticsService.getProfileAnalytics(user_id);
@@ -47,6 +52,7 @@ exports.getAnalytics = async (req, res) => {
     res.status(500).json({ success: false, message: 'Analytics fetch failed' });
   }
 };
+
 
 
 // Update Profile (Section 3.6.3)

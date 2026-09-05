@@ -2,6 +2,24 @@ const db = require('../config/db');
 const { getIO } = require('./socketService');
 const { publishMessage } = require('./messagePublisher');
 
+class ChatError extends Error {
+  constructor(message, statusCode = 403) {
+    super(message);
+    this.name = 'ChatError';
+    this.statusCode = statusCode;
+  }
+}
+
+const checkParticipant = async (conversation_id, user_id) => {
+  const check = await db.query(
+    'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+    [conversation_id, user_id]
+  );
+  if (check.rows.length === 0) {
+    throw new ChatError('Forbidden: Not a participant in this conversation', 403);
+  }
+};
+
 const getConversations = async (user_id) => {
   const list = await db.query(`
     SELECT 
@@ -18,7 +36,9 @@ const getConversations = async (user_id) => {
   return list.rows;
 };
 
-const getMessages = async (conversation_id, cursor, limit = 50) => {
+const getMessages = async (conversation_id, user_id, cursor, limit = 50) => {
+  await checkParticipant(conversation_id, user_id);
+
   let query = `
     SELECT m.*, u.username, u.profile_picture_url
     FROM messages m
@@ -49,6 +69,8 @@ const getMessages = async (conversation_id, cursor, limit = 50) => {
 };
 
 const sendMessage = async ({ conversation_id, sender_id, content, message_type, file_url }) => {
+  await checkParticipant(conversation_id, sender_id);
+
   const newMessage = await db.query(
     `INSERT INTO messages (conversation_id, sender_id, content, message_type, file_url) 
      VALUES ($1, $2, $3, $4, $5) RETURNING *`,
@@ -72,6 +94,8 @@ const sendMessage = async ({ conversation_id, sender_id, content, message_type, 
 };
 
 const markAsRead = async ({ conversation_id, user_id }) => {
+  await checkParticipant(conversation_id, user_id);
+
   await db.query(
     'UPDATE messages SET read_at = NOW() WHERE conversation_id = $1 AND sender_id != $2 AND read_at IS NULL',
     [conversation_id, user_id]
@@ -85,3 +109,4 @@ module.exports = {
   sendMessage,
   markAsRead
 };
+

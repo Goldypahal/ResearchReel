@@ -103,15 +103,16 @@ const getDraftById = async (id, userId) => {
 const generateDraftFromPaper = async (documentId, userId, options = {}) => {
   const { split_mode = 'single', parts_mode = 'auto', parts_count = 3 } = options;
 
-  // 1. Fetch document from db
+  // 1. Fetch document from db (with uploader check)
   const docResult = await db.query(
-    'SELECT * FROM documents WHERE id = $1',
-    [documentId]
+    'SELECT * FROM documents WHERE id = $1 AND uploader_id = $2',
+    [documentId, userId]
   );
   const doc = docResult && docResult.rows ? docResult.rows[0] : null;
   if (!doc) {
-    throw new Error('Document not found');
+    throw new Error('Document not found or access denied');
   }
+
 
   const paperTitle = doc.file_name || 'Untitled Research Paper';
   const summaryText = doc.summary_text || 'No abstract summary available.';

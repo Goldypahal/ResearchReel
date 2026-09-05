@@ -35,15 +35,22 @@ exports.summarizeDocument = async (req, res) => {
   const { document_id } = req.body;
   const userId = req.user?.id;
 
+  if (!userId) {
+    return res.status(401).json({ success: false, message: 'Authentication required' });
+  }
+
   try {
-    if (userId) {
-      const withinLimit = await checkDailyAiCap(userId);
-      if (!withinLimit) {
-        return res.status(429).json({
-          success: false,
-          message: `You have reached your daily limit of ${DAILY_AI_CAP} AI queries. Please try again tomorrow.`
-        });
-      }
+    const docCheck = await db.query('SELECT id FROM documents WHERE id = $1 AND uploader_id = $2', [document_id, userId]);
+    if (docCheck.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Forbidden: Cannot access this document' });
+    }
+
+    const withinLimit = await checkDailyAiCap(userId);
+    if (!withinLimit) {
+      return res.status(429).json({
+        success: false,
+        message: `You have reached your daily limit of ${DAILY_AI_CAP} AI queries. Please try again tomorrow.`
+      });
     }
 
     // Try Redis cache first
@@ -74,15 +81,24 @@ exports.askGemini = async (req, res) => {
   const { document_id, question } = req.body;
   const userId = req.user?.id;
 
+  if (!userId) {
+    return res.status(401).json({ success: false, message: 'Authentication required' });
+  }
+
   try {
-    if (userId) {
-      const withinLimit = await checkDailyAiCap(userId);
-      if (!withinLimit) {
-        return res.status(429).json({
-          success: false,
-          message: `You have reached your daily limit of ${DAILY_AI_CAP} AI queries. Please try again tomorrow.`
-        });
+    if (document_id && document_id !== 'global') {
+      const docCheck = await db.query('SELECT id FROM documents WHERE id = $1 AND uploader_id = $2', [document_id, userId]);
+      if (docCheck.rows.length === 0) {
+        return res.status(403).json({ success: false, message: 'Forbidden: Cannot access this document' });
       }
+    }
+
+    const withinLimit = await checkDailyAiCap(userId);
+    if (!withinLimit) {
+      return res.status(429).json({
+        success: false,
+        message: `You have reached your daily limit of ${DAILY_AI_CAP} AI queries. Please try again tomorrow.`
+      });
     }
 
     // Try Redis cache first
@@ -97,6 +113,7 @@ exports.askGemini = async (req, res) => {
 
     // Save to Redis cache for 24h
     await redisClient.set(cacheKey, JSON.stringify(response), { EX: 86400 });
+
 
     res.status(200).json({ success: true, data: response });
   } catch (error) {

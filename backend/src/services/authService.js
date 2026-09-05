@@ -8,8 +8,6 @@ const searchService = require('./searchService');
 
 const OTP_TTL_SECONDS = Number(process.env.OTP_TTL_SECONDS || 600);
 
-// Custom error that carries an HTTP status code so controllers can
-// distinguish client errors (400/409/401) from server faults (500).
 class AuthError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
@@ -17,6 +15,31 @@ class AuthError extends Error {
     this.statusCode = statusCode;
   }
 }
+
+const createTokenPair = async (userData) => {
+  const sid = crypto.randomUUID();
+  const sessionKey = `session:${userData.id}:${sid}`;
+  // 30 days session TTL matching refresh token duration
+  await redisClient.set(sessionKey, JSON.stringify({ userId: userData.id, createdAt: new Date() }), { EX: 30 * 24 * 60 * 60 });
+
+  const payload = {
+    id: userData.id,
+    sid,
+    verification_status: userData.verification_status,
+    subscription_tier: userData.subscription_tier || 'free',
+    role: userData.role || 'user'
+  };
+
+  const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN || '15m'
+  });
+
+  const refreshToken = jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d'
+  });
+
+  return { accessToken, refreshToken, sid };
+};
 
 const register = async ({ email, username, password, full_name }) => {
   const userExists = await db.query('SELECT * FROM users WHERE email = $1 OR username = $2', [email, username]);
@@ -49,7 +72,6 @@ const register = async ({ email, username, password, full_name }) => {
   return user;
 };
 
-
 const verifyOTP = async ({ email, otp }) => {
   const recordJson = await redisClient.get(`otp:${email}`);
   const record = recordJson ? JSON.parse(recordJson) : null;
@@ -60,50 +82,73 @@ const verifyOTP = async ({ email, otp }) => {
   await db.query('UPDATE users SET verification_status = $1 WHERE email = $2', ['verified', email]);
   await redisClient.del(`otp:${email}`);
 
-  const user = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE email = $1', [email]);
-  const accessToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN || '15m' }
-  );
+  const userRes = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE email = $1', [email]);
+  const user = userRes.rows[0];
+  const { accessToken, refreshToken } = await createTokenPair(user);
 
-  const refreshToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d' }
-  );
-
-  return { user: user.rows[0], accessToken, refreshToken };
+  return { user, accessToken, refreshToken };
 };
 
 const login = async ({ email, password }) => {
-  const user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-  if (user.rows.length === 0) {
+  const userRes = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+  if (userRes.rows.length === 0) {
     throw new AuthError('Invalid credentials', 401);
   }
 
-  const isValidPassword = await argon2.verify(user.rows[0].password_hash, password);
+  const user = userRes.rows[0];
+  const isValidPassword = await argon2.verify(user.password_hash, password);
   if (!isValidPassword) {
     throw new AuthError('Invalid credentials', 401);
   }
 
-  const accessToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN || '15m' }
-  );
+  const { accessToken, refreshToken } = await createTokenPair(user);
+  return { user, accessToken, refreshToken };
+};
 
-  const refreshToken = jwt.sign(
-    { id: user.rows[0].id, verification_status: user.rows[0].verification_status, subscription_tier: user.rows[0].subscription_tier || 'free', role: user.rows[0].role || 'user' },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d' }
-  );
+const refreshTokens = async (token) => {
+  if (!token) {
+    throw new AuthError('Refresh token required', 401);
+  }
 
-  return { user: user.rows[0], accessToken, refreshToken };
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    throw new AuthError('Invalid or expired refresh token', 401);
+  }
+
+  const { id: userId, sid } = decoded;
+
+  if (sid) {
+    const sessionData = await redisClient.get(`session:${userId}:${sid}`);
+    if (!sessionData) {
+      throw new AuthError('Session revoked or expired', 401);
+    }
+    // Delete old session (rotation)
+    await redisClient.del(`session:${userId}:${sid}`);
+  }
+
+  const userRes = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE id = $1', [userId]);
+  if (userRes.rows.length === 0) {
+    throw new AuthError('User not found', 404);
+  }
+
+  const user = userRes.rows[0];
+  const { accessToken, refreshToken } = await createTokenPair(user);
+  return { user, accessToken, refreshToken };
+};
+
+const revokeSession = async (userId, sid) => {
+  if (userId && sid) {
+    await redisClient.del(`session:${userId}:${sid}`);
+  }
 };
 
 module.exports = {
   register,
   verifyOTP,
-  login
+  login,
+  refreshTokens,
+  revokeSession
 };
+

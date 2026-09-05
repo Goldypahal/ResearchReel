@@ -4,7 +4,11 @@ const KanbanCard = require('../models/KanbanCard');
 exports.createWorkspace = async (req, res) => {
   try {
     const { name, organizationId } = req.body;
-    const userId = req.user?.id || 'anonymous';
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
 
     const newWorkspace = new Workspace({
       name,
@@ -21,10 +25,14 @@ exports.createWorkspace = async (req, res) => {
 
 exports.getWorkspaces = async (req, res) => {
   try {
-    const userId = req.user?.id || 'anonymous';
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
     const workspaces = await Workspace.find({ 'members.userId': userId });
     res.status(200).json({ success: true, data: workspaces });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+

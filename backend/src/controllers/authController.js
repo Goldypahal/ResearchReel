@@ -122,10 +122,46 @@ exports.login = async (req, res) => {
 
 // Logout User
 exports.logout = async (req, res) => {
+  if (req.user) {
+    await authService.revokeSession(req.user.id, req.user.sid);
+  }
   res.clearCookie('accessToken');
   res.clearCookie('refreshToken');
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 };
+
+// Refresh Tokens (Rotation)
+exports.refreshToken = async (req, res) => {
+  try {
+    const token = req.cookies?.refreshToken || req.body?.refreshToken;
+    const { user, accessToken, refreshToken } = await authService.refreshTokens(token);
+
+    res.cookie('accessToken', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 15 * 60 * 1000 // 15 minutes
+    });
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+
+    res.status(200).json({
+      success: true,
+      token: accessToken,
+      user
+    });
+  } catch (error) {
+    console.error('Refresh Error:', error);
+    const status = error.statusCode || 401;
+    res.status(status).json({ success: false, message: error.message || 'Token refresh failed' });
+  }
+};
+
 
 // ORCID Callback Placeholder
 exports.orcidCallback = async (req, res) => {

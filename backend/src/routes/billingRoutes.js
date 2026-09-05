@@ -1,18 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const billingController = require('../controllers/billingController');
+const { authMiddleware } = require('../middleware/authMiddleware');
 
-/**
- * @swagger
- * /api/v1/billing/checkout:
- *   post:
- *     summary: Create a checkout session
- *     tags: [Billing]
- *     responses:
- *       200:
- *         description: Checkout session created
- */
-router.post('/checkout', billingController.createCheckoutSession);
+router.post('/checkout', authMiddleware, billingController.createCheckoutSession);
+
 
 /**
  * @swagger
