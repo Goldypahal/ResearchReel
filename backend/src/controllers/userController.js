@@ -1,75 +1,80 @@
+const userRepository = require('../repositories/userRepository');
 const db = require('../config/db');
+const analyticsService = require('../services/analyticsService');
+const { sendSuccess, sendError } = require('../utils/response');
 
-// Get User Profile (Section 3.6.1)
-exports.getProfile = async (req, res) => {
+// Get Public User Profile (Section 12 - Explicit safe columns)
+exports.getProfile = async (req, res, next) => {
   const { username } = req.params;
 
   try {
-    const user = await db.query(`
+    const profile = await userRepository.findByUsername(username);
+    if (!profile) {
+      return sendError(res, 'User not found.', 404, 'NOT_FOUND', req);
+    }
+
+    // Additional aggregated counts
+    const countsRes = await db.query(`
       SELECT 
-        u.*, 
-        i.name as institution_name, i.logo_url as institution_logo,
-        (SELECT COUNT(*) FROM posts p WHERE p.author_id = u.id) as post_count,
-        (SELECT COUNT(*) FROM videos v WHERE v.author_id = u.id) as video_count,
-        (SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id) as follower_count,
-        (SELECT COUNT(*) FROM follows f WHERE f.follower_id = u.id) as following_count
-      FROM users u
-      LEFT JOIN institutions i ON u.institution_id = i.id
-      LEFT JOIN organizations o ON u.organization_id = o.id
-      WHERE u.username = $1
-    `, [username]);
+        (SELECT COUNT(*) FROM posts p WHERE p.author_id = $1 AND p.deleted_at IS NULL) as post_count,
+        (SELECT COUNT(*) FROM reels r WHERE r.author_id = $1 AND r.deleted_at IS NULL) as reel_count
+    `, [profile.id]);
 
-    if (user.rows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
-
-    res.status(200).json({
-      success: true,
-      data: user.rows[0]
-    });
+    const counts = countsRes.rows[0] || {};
+    return sendSuccess(res, { ...profile, ...counts }, 'Profile fetched successfully.');
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Profile fetch failed' });
+    next(error);
   }
 };
 
-const analyticsService = require('../services/analyticsService');
-
-// Get Profile Analytics (Section 3.6.3 / 15.1)
-exports.getAnalytics = async (req, res) => {
-  const { user_id } = req.params;
-  const authUserId = req.user?.id;
-
-  if (user_id !== authUserId) {
-    return res.status(403).json({ success: false, message: 'Forbidden: Cannot access another user\'s private analytics' });
-  }
-
+// Get Current Authenticated User Profile
+exports.getMe = async (req, res, next) => {
   try {
-    const analytics = await analyticsService.getProfileAnalytics(user_id);
-    res.status(200).json({
-      success: true,
-      data: analytics
-    });
+    const user = await userRepository.findById(req.user.id);
+    if (!user) {
+      return sendError(res, 'User profile not found.', 404, 'NOT_FOUND', req);
+    }
+    return sendSuccess(res, user, 'Authenticated profile fetched.');
   } catch (error) {
-    console.error('Error fetching user analytics:', error);
-    res.status(500).json({ success: false, message: 'Analytics fetch failed' });
+    next(error);
   }
 };
 
+// Get User Analytics (Section 40 - restricted to req.user.id)
+exports.getAnalytics = async (req, res, next) => {
+  try {
+    const targetUserId = req.params.user_id || req.user.id;
+    if (targetUserId !== req.user.id && req.user.role !== 'admin') {
+      return sendError(res, 'Forbidden: Cannot access another user\'s private analytics', 403, 'AUTHORIZATION_ERROR', req);
+    }
 
+    const analytics = await analyticsService.getProfileAnalytics(targetUserId);
+    return sendSuccess(res, analytics, 'Analytics data retrieved.');
+  } catch (error) {
+    next(error);
+  }
+};
 
-// Update Profile (Section 3.6.3)
-// NOTE: user_id is taken from the authenticated token (req.user.id),
-// NOT from the request body, to prevent authorization bypass.
-exports.updateProfile = async (req, res) => {
-  const { bio, research_interests } = req.body;
+// Update Profile
+exports.updateProfile = async (req, res, next) => {
+  const { bio, research_interests, full_name, institution } = req.body;
   const user_id = req.user.id;
 
   try {
     const updatedUser = await db.query(
-      'UPDATE users SET bio = $1, research_interests = $2, last_active = NOW() WHERE id = $3 RETURNING *',
-      [bio, research_interests, user_id]
+      `UPDATE users 
+       SET bio = COALESCE($1, bio), 
+           research_interests = COALESCE($2, research_interests),
+           full_name = COALESCE($3, full_name),
+           institution = COALESCE($4, institution),
+           updated_at = NOW() 
+       WHERE id = $5 
+       RETURNING id, username, full_name, avatar_url, bio, institution, research_interests, updated_at`,
+      [bio, research_interests, full_name, institution, user_id]
     );
 
-    res.status(200).json({ success: true, data: updatedUser.rows[0] });
+    return sendSuccess(res, updatedUser.rows[0], 'Profile updated successfully.');
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Update failed' });
+    next(error);
   }
 };

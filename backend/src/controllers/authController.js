@@ -1,194 +1,182 @@
 const authService = require('../services/authService');
 const db = require('../config/db');
+const { sendSuccess, sendError } = require('../utils/response');
 
 const validateEmail = (email) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return email && emailRegex.test(email);
 };
 
+const extractReqInfo = (req) => ({
+  ipAddress: req.ip || req.headers['x-forwarded-for'] || null,
+  userAgent: req.headers['user-agent'] || null,
+  deviceName: req.headers['user-agent'] ? req.headers['user-agent'].split(' ')[0] : 'Web Browser'
+});
+
 // Register User
-exports.register = async (req, res) => {
+exports.register = async (req, res, next) => {
   try {
     const { email, username, password, full_name } = req.body;
 
     if (!email || !validateEmail(email)) {
-      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+      return sendError(res, 'A valid email address is required.', 400, 'VALIDATION_ERROR', req);
     }
     if (!username || username.trim().length < 3) {
-      return res.status(400).json({ success: false, message: 'Username must be at least 3 characters.' });
+      return sendError(res, 'Username must be at least 3 characters.', 400, 'VALIDATION_ERROR', req);
     }
     if (!password || password.length < 8) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
+      return sendError(res, 'Password must be at least 8 characters.', 400, 'VALIDATION_ERROR', req);
     }
     if (!full_name || full_name.trim().length < 1) {
-      return res.status(400).json({ success: false, message: 'Full name is required.' });
+      return sendError(res, 'Full name is required.', 400, 'VALIDATION_ERROR', req);
     }
 
     await authService.register({ email, username, password, full_name });
-    res.status(201).json({
-      success: true,
-      message: 'Registration successful. Please verify your email.',
-      email,
-      requiresVerification: true
-    });
+    return sendSuccess(res, { email, requiresVerification: true }, 'Verification code sent.', 201);
   } catch (error) {
-    console.error(error);
-    const status = error.statusCode || 500;
-    res.status(status).json({ success: false, message: error.message || 'Server Error' });
+    next(error);
   }
 };
 
 // Verify OTP
-exports.verifyOTP = async (req, res) => {
+exports.verifyOTP = async (req, res, next) => {
   try {
     const { email, otp } = req.body;
 
     if (!email || !validateEmail(email)) {
-      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+      return sendError(res, 'A valid email address is required.', 400, 'VALIDATION_ERROR', req);
     }
     if (!otp || otp.trim().length !== 6) {
-      return res.status(400).json({ success: false, message: 'Verification OTP must be exactly 6 digits.' });
+      return sendError(res, 'Verification OTP must be exactly 6 digits.', 400, 'VALIDATION_ERROR', req);
     }
 
-    const { user, accessToken, refreshToken } = await authService.verifyOTP({ email, otp });
+    const reqInfo = extractReqInfo(req);
+    const { user, accessToken, refreshToken } = await authService.verifyOTP({ email, otp, reqInfo });
 
-    // Set HttpOnly, SameSite cookies
+    // Set HttpOnly cookies
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 15 * 60 * 1000 // 15 minutes
+      maxAge: 15 * 60 * 1000
     });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+      maxAge: 30 * 24 * 60 * 60 * 1000
     });
 
-    res.status(200).json({
-      success: true,
-      token: accessToken,
-      user
-    });
+    return sendSuccess(res, { user, token: accessToken }, 'Verification successful.');
   } catch (error) {
-    console.error('OTP Verification Error:', error);
-    const status = error.statusCode || 500;
-    res.status(status).json({ success: false, message: error.message || 'Verification failed' });
+    next(error);
   }
 };
 
 // Login User
-exports.login = async (req, res) => {
+exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
     if (!email || !validateEmail(email)) {
-      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+      return sendError(res, 'A valid email address is required.', 400, 'VALIDATION_ERROR', req);
     }
     if (!password) {
-      return res.status(400).json({ success: false, message: 'Password is required.' });
+      return sendError(res, 'Password is required.', 400, 'VALIDATION_ERROR', req);
     }
 
-    const { user, accessToken, refreshToken } = await authService.login({ email, password });
+    const reqInfo = extractReqInfo(req);
+    const { user, accessToken, refreshToken } = await authService.login({ email, password, reqInfo });
 
-    // Set HttpOnly, SameSite cookies
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 15 * 60 * 1000 // 15 minutes
+      maxAge: 15 * 60 * 1000
     });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+      maxAge: 30 * 24 * 60 * 60 * 1000
     });
 
-    res.status(200).json({
-      success: true,
-      token: accessToken,
-      user
-    });
+    return sendSuccess(res, { user, token: accessToken }, 'Login successful.');
   } catch (error) {
-    console.error('Login Error:', error);
-    const status = error.statusCode || 500;
-    res.status(status).json({ success: false, message: error.message || 'Invalid credentials' });
+    next(error);
   }
 };
 
 // Logout User
-exports.logout = async (req, res) => {
-  if (req.user) {
-    await authService.revokeSession(req.user.id, req.user.sid);
+exports.logout = async (req, res, next) => {
+  try {
+    const refreshToken = req.cookies?.refreshToken;
+    if (req.user || refreshToken) {
+      await authService.revokeSession(req.user?.id, req.user?.sid, refreshToken);
+    }
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+    return sendSuccess(res, {}, 'Logged out successfully.');
+  } catch (error) {
+    next(error);
   }
-  res.clearCookie('accessToken');
-  res.clearCookie('refreshToken');
-  res.status(200).json({ success: true, message: 'Logged out successfully' });
 };
 
 // Refresh Tokens (Rotation)
-exports.refreshToken = async (req, res) => {
+exports.refreshToken = async (req, res, next) => {
   try {
     const token = req.cookies?.refreshToken || req.body?.refreshToken;
-    const { user, accessToken, refreshToken } = await authService.refreshTokens(token);
+    const reqInfo = extractReqInfo(req);
+    const { user, accessToken, refreshToken } = await authService.refreshTokens(token, reqInfo);
 
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 15 * 60 * 1000 // 15 minutes
+      maxAge: 15 * 60 * 1000
     });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+      maxAge: 30 * 24 * 60 * 60 * 1000
     });
 
-    res.status(200).json({
-      success: true,
-      token: accessToken,
-      user
-    });
+    return sendSuccess(res, { user, token: accessToken }, 'Tokens refreshed successfully.');
   } catch (error) {
-    console.error('Refresh Error:', error);
-    const status = error.statusCode || 401;
-    res.status(status).json({ success: false, message: error.message || 'Token refresh failed' });
+    next(error);
   }
 };
-
 
 // ORCID Callback Placeholder
-exports.orcidCallback = async (req, res) => {
-  const { orcid_id } = req.body;
-  const user_id = req.user.id;
-  if (!orcid_id) {
-    return res.status(400).json({ success: false, message: 'ORCID ID is required.' });
-  }
+exports.orcidCallback = async (req, res, next) => {
   try {
+    const { orcid_id } = req.body;
+    const user_id = req.user.id;
+    if (!orcid_id) {
+      return sendError(res, 'ORCID ID is required.', 400, 'VALIDATION_ERROR', req);
+    }
     await db.query('UPDATE users SET orcid_id = $1, verification_status = $2 WHERE id = $3', [orcid_id, 'scholar', user_id]);
-    res.status(200).json({ success: true, message: 'Verified as Scholar' });
+    return sendSuccess(res, {}, 'Verified as Scholar.');
   } catch (error) {
-    res.status(500).json({ success: false, message: 'ORCID verification failed' });
+    next(error);
   }
 };
 
-// Student ID Verification Flow (Section 5.2)
-exports.studentVerification = async (req, res) => {
-  const { university } = req.body;
-  const user_id = req.user.id;
-  if (!university) {
-    return res.status(400).json({ success: false, message: 'University name is required.' });
-  }
+// Student ID Verification Flow
+exports.studentVerification = async (req, res, next) => {
   try {
+    const { university } = req.body;
+    const user_id = req.user.id;
+    if (!university) {
+      return sendError(res, 'University name is required.', 400, 'VALIDATION_ERROR', req);
+    }
     await db.query('UPDATE users SET verification_status = $1 WHERE id = $2', ['student', user_id]);
-    res.status(200).json({ success: true, message: 'Student ID Submitted for Faculty Approval' });
+    return sendSuccess(res, {}, 'Student ID Submitted for Faculty Approval.');
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Verification process failed' });
+    next(error);
   }
 };

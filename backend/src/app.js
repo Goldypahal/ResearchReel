@@ -4,15 +4,17 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
 const logger = require('./utils/logger');
+const cookieParser = require('cookie-parser');
+const rateLimiter = require('./middleware/rateLimiter');
+const requestIdMiddleware = require('./middleware/requestId');
+const { sendError } = require('./utils/response');
 
 dotenv.config();
 
 const app = express();
 
-const cookieParser = require('cookie-parser');
-const rateLimiter = require('./middleware/rateLimiter');
-
-// Middleware
+// Request Pipeline Order (Section 2 & 53)
+app.use(requestIdMiddleware);
 app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -68,7 +70,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// API service routes
+// API service routes (Section 60 - /api/v1 prefix)
 const authRoutes = require('./routes/authRoutes');
 const postRoutes = require('./routes/postRoutes');
 const reelRoutes = require('./routes/reelRoutes');
@@ -84,7 +86,7 @@ const moderationRoutes = require('./routes/moderationRoutes');
 const billingRoutes = require('./routes/billingRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const workspaceRoutes = require('./routes/workspaceRoutes');
-const assetRoutes = require('./routes/assetRoutes'); // Phase 8
+const assetRoutes = require('./routes/assetRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const citationRoutes = require('./routes/citationRoutes');
 
@@ -102,12 +104,12 @@ app.use('/api/v1/moderation', moderationRoutes);
 app.use('/api/v1/billing', billingRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/workspaces', workspaceRoutes);
-app.use('/api/v1/assets', assetRoutes); // Phase 8
+app.use('/api/v1/assets', assetRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/citations', citationRoutes);
 app.use('/api/v1', healthRoutes);
 
-// Fallback for current frontend if not fully updated yet
+// Legacy routes fallback
 app.use('/api/auth', authRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/reels', reelRoutes);
@@ -123,13 +125,19 @@ app.use('/api', healthRoutes);
 
 // Not found handler
 app.use((req, res, next) => {
-  res.status(404).json({ success: false, message: 'API route not found' });
+  return sendError(res, 'API route not found', 404, 'NOT_FOUND', req);
 });
 
-// Error Handling Middleware
+// Standard Error Handling Middleware (Section 3 & Section 59)
 app.use((err, req, res, next) => {
-  logger.error(err.stack);
-  res.status(500).json({ success: false, message: 'Internal Server Error' });
+  if (err.stack) {
+    logger.error(err.stack);
+  }
+  const statusCode = err.statusCode || 500;
+  const code = err.code || 'INTERNAL_SERVER_ERROR';
+  const message = err.message || 'An unexpected server error occurred.';
+
+  return sendError(res, message, statusCode, code, req);
 });
 
 module.exports = app;

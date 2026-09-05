@@ -1,93 +1,122 @@
 const reelService = require('../services/reelGeneratorService');
+const { canAccessDocument } = require('../authorization/documentAuthorization');
+const { canAccessReel } = require('../authorization/reelAuthorization');
+const queueManager = require('../queues/queueManager');
+const { sendSuccess, sendError } = require('../utils/response');
 
-exports.getDrafts = async (req, res) => {
+exports.getDrafts = async (req, res, next) => {
   try {
     const drafts = await reelService.getDrafts(req.user.id);
-    res.status(200).json({ success: true, data: drafts });
+    return sendSuccess(res, drafts, 'User reel drafts retrieved.');
   } catch (error) {
-    console.error('[Reel Controller] Error fetching drafts:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch drafts' });
+    next(error);
   }
 };
 
-exports.getDraft = async (req, res) => {
+exports.getDraft = async (req, res, next) => {
   try {
-    const draft = await reelService.getDraftById(req.params.id, req.user.id);
+    const { id } = req.params;
+    const { allowed } = await canAccessReel(req.user.id, id);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: You do not have access to this reel draft.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    const draft = await reelService.getDraftById(id, req.user.id);
     if (!draft) {
-      return res.status(404).json({ success: false, message: 'Draft not found' });
+      return sendError(res, 'Reel draft not found.', 404, 'NOT_FOUND', req);
     }
-    res.status(200).json({ success: true, data: draft });
+    return sendSuccess(res, draft, 'Reel draft fetched.');
   } catch (error) {
-    console.error('[Reel Controller] Error fetching draft:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch draft' });
+    next(error);
   }
 };
 
-exports.generateDraft = async (req, res) => {
+exports.generateDraft = async (req, res, next) => {
   try {
-    const { document_id, split_mode, parts_mode, parts_count } = req.body;
+    const { document_id, split_mode, parts_mode, parts_count, title } = req.body;
     if (!document_id) {
-      return res.status(400).json({ success: false, message: 'document_id is required' });
+      return sendError(res, 'document_id is required.', 400, 'VALIDATION_ERROR', req);
     }
 
-    const data = await reelService.generateDraftFromPaper(document_id, req.user.id, {
+    // Document access authorization check (Section 33)
+    const { allowed } = await canAccessDocument(req.user.id, document_id);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    const draft = await reelService.generateDraftFromPaper(document_id, req.user.id, {
       split_mode,
       parts_mode,
-      parts_count
+      parts_count,
+      title
     });
-    res.status(201).json({ success: true, data });
+
+    // Queue reel generation background job (Section 34: Return 202 Accepted)
+    await queueManager.addJob('reel-generation', {
+      reelId: draft.id,
+      documentId: document_id,
+      authorId: req.user.id
+    });
+
+    return sendSuccess(res, draft, 'Reel draft created and processing queued.', 202);
   } catch (error) {
-    console.error('[Reel Controller] Error generating draft:', error);
-    res.status(500).json({ success: false, message: error.message || 'Failed to generate draft' });
+    next(error);
   }
 };
 
-exports.updateDraft = async (req, res) => {
+exports.updateDraft = async (req, res, next) => {
   try {
-    const draft = await reelService.updateDraft(req.params.id, req.user.id, req.body);
-    res.status(200).json({ success: true, data: draft });
+    const { id } = req.params;
+    const { allowed, isAuthor } = await canAccessReel(req.user.id, id);
+    if (!allowed || !isAuthor) {
+      return sendError(res, 'Forbidden: Only the reel author can update this draft.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    const draft = await reelService.updateDraft(id, req.user.id, req.body);
+    return sendSuccess(res, draft, 'Reel draft updated.');
   } catch (error) {
-    console.error('[Reel Controller] Error updating draft:', error);
-    res.status(500).json({ success: false, message: error.message || 'Failed to update draft' });
+    next(error);
   }
 };
 
-exports.publishDraft = async (req, res) => {
+exports.publishDraft = async (req, res, next) => {
   try {
-    const result = await reelService.publishDraft(req.params.id, req.user.id);
-    res.status(200).json({ success: true, ...result });
+    const { id } = req.params;
+    const { allowed, isAuthor } = await canAccessReel(req.user.id, id);
+    if (!allowed || !isAuthor) {
+      return sendError(res, 'Forbidden: Only the reel author can publish this draft.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    const result = await reelService.publishDraft(id, req.user.id);
+    return sendSuccess(res, result, 'Reel published successfully.');
   } catch (error) {
-    console.error('[Reel Controller] Error publishing draft:', error);
-    res.status(500).json({ success: false, message: error.message || 'Failed to publish draft' });
+    next(error);
   }
 };
 
-exports.getAutomation = async (req, res) => {
+exports.getAutomation = async (req, res, next) => {
   try {
     const settings = await reelService.getAutomationSettings(req.user.id);
-    res.status(200).json({ success: true, data: settings });
+    return sendSuccess(res, settings, 'Reel automation settings retrieved.');
   } catch (error) {
-    console.error('[Reel Controller] Error getting automation settings:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch automation settings' });
+    next(error);
   }
 };
 
-exports.updateAutomation = async (req, res) => {
+exports.updateAutomation = async (req, res, next) => {
   try {
     const settings = await reelService.updateAutomationSettings(req.user.id, req.body);
-    res.status(200).json({ success: true, data: settings });
+    return sendSuccess(res, settings, 'Reel automation settings updated.');
   } catch (error) {
-    console.error('[Reel Controller] Error updating automation settings:', error);
-    res.status(500).json({ success: false, message: 'Failed to update automation settings' });
+    next(error);
   }
 };
 
-exports.getDocuments = async (req, res) => {
+exports.getDocuments = async (req, res, next) => {
   try {
     const documents = await reelService.getUserDocuments(req.user.id);
-    res.status(200).json({ success: true, data: documents });
+    return sendSuccess(res, documents, 'Available user documents fetched.');
   } catch (error) {
-    console.error('[Reel Controller] Error fetching user documents:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch documents' });
+    next(error);
   }
 };

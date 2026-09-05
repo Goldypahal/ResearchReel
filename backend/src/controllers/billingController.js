@@ -1,48 +1,71 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_mock');
 const db = require('../config/db');
+const { sendSuccess, sendError } = require('../utils/response');
 
-exports.createCheckoutSession = async (req, res) => {
+const PLAN_TO_PRICE_MAP = {
+  pro: process.env.STRIPE_PRO_PRICE_ID || 'price_pro_monthly',
+  scholar: process.env.STRIPE_SCHOLAR_PRICE_ID || 'price_scholar_monthly',
+  enterprise: process.env.STRIPE_ENTERPRISE_PRICE_ID || 'price_enterprise_monthly'
+};
+
+exports.createCheckoutSession = async (req, res, next) => {
   try {
-    const { priceId } = req.body;
-    const userId = req.user?.id;
+    const { plan } = req.body;
+    const userId = req.user.id;
 
-    if (!userId) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
+    if (!plan || !PLAN_TO_PRICE_MAP[plan]) {
+      return sendError(res, 'Invalid subscription plan specified.', 400, 'VALIDATION_ERROR', req);
     }
-    if (!priceId) return res.status(400).json({ success: false, message: 'Price ID is required' });
 
-    const allowedPrices = (process.env.ALLOWED_STRIPE_PRICE_IDS || 'price_pro_monthly,price_pro_yearly,price_scholar_monthly').split(',');
-    if (process.env.NODE_ENV === 'production' && !allowedPrices.includes(priceId)) {
-      return res.status(400).json({ success: false, message: 'Invalid or unallowed Price ID' });
-    }
+    const priceId = PLAN_TO_PRICE_MAP[plan];
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
-      success_url: `${process.env.FRONTEND_URL}/profile/settings/billing?success=true`,
-      cancel_url: `${process.env.FRONTEND_URL}/profile/settings/billing?canceled=true`,
+      success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/settings?success=true`,
+      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/settings?canceled=true`,
       client_reference_id: userId,
     });
 
-    res.status(200).json({ success: true, url: session.url });
+    return sendSuccess(res, { url: session.url, sessionId: session.id }, 'Checkout session created.');
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    next(error);
   }
 };
 
+exports.getSubscriptionStatus = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const result = await db.query(
+      'SELECT subscription_tier, stripe_customer_id FROM users WHERE id = $1',
+      [userId]
+    );
 
-exports.handleWebhook = async (req, res) => {
+    const user = result.rows[0] || {};
+    return sendSuccess(res, {
+      plan: user.subscription_tier || 'free',
+      stripeCustomerId: user.stripe_customer_id || null
+    }, 'Subscription status fetched.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.handleWebhook = async (req, res, next) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    if (process.env.STRIPE_WEBHOOK_SECRET) {
+      event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    } else {
+      event = req.body;
+    }
   } catch (err) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Handle the event
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
     const userId = session.client_reference_id;
@@ -56,5 +79,5 @@ exports.handleWebhook = async (req, res) => {
     }
   }
 
-  res.json({ received: true });
+  return res.status(200).json({ received: true });
 };

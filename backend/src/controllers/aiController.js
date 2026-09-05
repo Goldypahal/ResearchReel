@@ -2,11 +2,11 @@ const aiService = require('../services/aiService');
 const db = require('../config/db');
 const redisClient = require('../config/redisClient');
 const crypto = require('crypto');
+const { canAccessDocument } = require('../authorization/documentAuthorization');
+const { sendSuccess, sendError } = require('../utils/response');
 
-// Daily cap limit (cost control)
 const DAILY_AI_CAP = 50;
 
-// Helper to check and increment user daily AI cap
 const checkDailyAiCap = async (userId) => {
   const today = new Date().toISOString().split('T')[0];
   const redisKey = `ai_cap:${userId}:${today}`;
@@ -16,7 +16,6 @@ const checkDailyAiCap = async (userId) => {
     if (currentCount && parseInt(currentCount) >= DAILY_AI_CAP) {
       return false;
     }
-    // Set counter with 24 hours expiry if not exists, otherwise increment
     if (!currentCount) {
       await redisClient.set(redisKey, '1', { EX: 86400 });
     } else {
@@ -25,126 +24,110 @@ const checkDailyAiCap = async (userId) => {
     return true;
   } catch (err) {
     console.error('Failed checking AI daily cap in Redis:', err.message);
-    // Graceful fallback: allow query if Redis fails
     return true;
   }
 };
 
-// Document Summarization (Section 4.2.1)
-exports.summarizeDocument = async (req, res) => {
+// Document Summarization (Section 16 / 17)
+exports.summarizeDocument = async (req, res, next) => {
   const { document_id } = req.body;
-  const userId = req.user?.id;
-
-  if (!userId) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
+  const userId = req.user.id;
 
   try {
-    const docCheck = await db.query('SELECT id FROM documents WHERE id = $1 AND uploader_id = $2', [document_id, userId]);
-    if (docCheck.rows.length === 0) {
-      return res.status(403).json({ success: false, message: 'Forbidden: Cannot access this document' });
+    if (!document_id) {
+      return sendError(res, 'document_id is required.', 400, 'VALIDATION_ERROR', req);
+    }
+
+    // Document Authorization Check (Section 16)
+    const { allowed } = await canAccessDocument(userId, document_id);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
     }
 
     const withinLimit = await checkDailyAiCap(userId);
     if (!withinLimit) {
-      return res.status(429).json({
-        success: false,
-        message: `You have reached your daily limit of ${DAILY_AI_CAP} AI queries. Please try again tomorrow.`
-      });
+      return sendError(res, `Daily limit of ${DAILY_AI_CAP} AI queries reached.`, 429, 'RATE_LIMIT_EXCEEDED', req);
     }
 
-    // Try Redis cache first
     const cacheKey = `doc_summary:${document_id}`;
     const cachedSummary = await redisClient.get(cacheKey);
     if (cachedSummary) {
-      return res.status(200).json({ success: true, data: JSON.parse(cachedSummary), source: 'cache' });
+      return sendSuccess(res, JSON.parse(cachedSummary), 'Summary retrieved from cache.');
     }
 
     const aiResponse = await aiService.summarizeDocument(document_id);
     await db.query(
       'UPDATE documents SET summary_text = $1, key_points = $2 WHERE id = $3',
-      [aiResponse.abstract, JSON.stringify(aiResponse.key_points), document_id]
+      [aiResponse.abstract, JSON.stringify(aiResponse.key_points || []), document_id]
     );
 
-    // Save to Redis cache for 24h
     await redisClient.set(cacheKey, JSON.stringify(aiResponse), { EX: 86400 });
-
-    res.status(200).json({ success: true, data: aiResponse });
+    return sendSuccess(res, aiResponse, 'Document summary generated.');
   } catch (error) {
-    console.error('Summarization Error:', error);
-    res.status(500).json({ success: false, message: 'Summarization failed' });
+    next(error);
   }
 };
 
-// RAG-based Document Q&A (Section 4.2.2)
-exports.askGemini = async (req, res) => {
+// RAG-based Document Q&A
+exports.askGemini = async (req, res, next) => {
   const { document_id, question } = req.body;
-  const userId = req.user?.id;
-
-  if (!userId) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
+  const userId = req.user.id;
 
   try {
+    if (!question) {
+      return sendError(res, 'question parameter is required.', 400, 'VALIDATION_ERROR', req);
+    }
+
     if (document_id && document_id !== 'global') {
-      const docCheck = await db.query('SELECT id FROM documents WHERE id = $1 AND uploader_id = $2', [document_id, userId]);
-      if (docCheck.rows.length === 0) {
-        return res.status(403).json({ success: false, message: 'Forbidden: Cannot access this document' });
+      const { allowed } = await canAccessDocument(userId, document_id);
+      if (!allowed) {
+        return sendError(res, 'Forbidden: You do not have access to this research document.', 403, 'AUTHORIZATION_ERROR', req);
       }
     }
 
     const withinLimit = await checkDailyAiCap(userId);
     if (!withinLimit) {
-      return res.status(429).json({
-        success: false,
-        message: `You have reached your daily limit of ${DAILY_AI_CAP} AI queries. Please try again tomorrow.`
-      });
+      return sendError(res, `Daily limit of ${DAILY_AI_CAP} AI queries reached.`, 429, 'RATE_LIMIT_EXCEEDED', req);
     }
 
-    // Try Redis cache first
     const questionHash = crypto.createHash('md5').update(question || '').digest('hex');
     const cacheKey = `doc_qa:${document_id || 'global'}:${questionHash}`;
     const cachedAnswer = await redisClient.get(cacheKey);
     if (cachedAnswer) {
-      return res.status(200).json({ success: true, data: JSON.parse(cachedAnswer), source: 'cache' });
+      return sendSuccess(res, JSON.parse(cachedAnswer), 'Answer retrieved from cache.');
     }
 
     const response = await aiService.askGemini(req.body);
-
-    // Save to Redis cache for 24h
     await redisClient.set(cacheKey, JSON.stringify(response), { EX: 86400 });
 
-
-    res.status(200).json({ success: true, data: response });
+    return sendSuccess(res, response, 'AI answer generated.');
   } catch (error) {
-    console.error('AI Controller Error:', error);
-    res.status(500).json({ success: false, message: 'RAG service unreachable or failed' });
+    next(error);
   }
 };
 
-// Related Paper Recommendations (Section 4.2.3)
-exports.getRecommendations = async (req, res) => {
+// Related Paper Recommendations (Section 62)
+exports.getRecommendations = async (req, res, next) => {
   try {
     const recommendations = await aiService.getRecommendations(req.query);
-    res.status(200).json({ success: true, data: recommendations });
+    return sendSuccess(res, recommendations, 'Research recommendations retrieved.');
   } catch (error) {
-    console.error('Recommendation Error:', error);
-    res.status(500).json({ success: false, message: 'Recommendation failed' });
+    next(error);
   }
 };
 
-/**
- * MOCK: Generates a JSON video script based on a document query.
- * In production, this calls Gemini 1.5 Flash via Vertex AI / Google AI Studio.
- */
+// Script Generation
 exports.generateScript = async (req, res, next) => {
   try {
     const { documentId, query } = req.body;
-    
-    // Fake processing delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // MOCK Output based on Phase 11 Schema
+    if (documentId) {
+      const { allowed } = await canAccessDocument(req.user.id, documentId);
+      if (!allowed) {
+        return sendError(res, 'Forbidden: You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
+      }
+    }
+
     const mockScript = {
       title: "Generated Research Script",
       scenes: [
@@ -163,34 +146,25 @@ exports.generateScript = async (req, res, next) => {
       ]
     };
 
-    res.status(200).json({
-      status: 'success',
-      script: mockScript
-    });
+    return sendSuccess(res, { script: mockScript }, 'AI video script generated.');
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * MOCK: Synthesizes voice audio from text.
- * In production, this calls Edge-TTS or Google Cloud TTS.
- */
+// Voice Audio Synthesis
 exports.generateVoice = async (req, res, next) => {
   try {
-    const { text, voiceId } = req.body;
+    const { text } = req.body;
+    if (!text) {
+      return sendError(res, 'text content is required for voice generation.', 400, 'VALIDATION_ERROR', req);
+    }
 
-    // Fake processing delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // MOCK output
-    res.status(200).json({
-      status: 'success',
+    return sendSuccess(res, {
       audioUrl: 'https://mock-s3.local/temp/voice_output_abc123.mp3',
       durationSeconds: 4.5
-    });
+    }, 'Voice synthesis completed.');
   } catch (error) {
     next(error);
   }
 };
-

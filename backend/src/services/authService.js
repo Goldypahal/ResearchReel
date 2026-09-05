@@ -16,10 +16,14 @@ class AuthError extends Error {
   }
 }
 
-const createTokenPair = async (userData) => {
+const sessionRepository = require('../repositories/sessionRepository');
+
+const createTokenPair = async (userData, reqInfo = {}) => {
   const sid = crypto.randomUUID();
   const sessionKey = `session:${userData.id}:${sid}`;
-  // 30 days session TTL matching refresh token duration
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+  // Redis cache for fast access token check
   await redisClient.set(sessionKey, JSON.stringify({ userId: userData.id, createdAt: new Date() }), { EX: 30 * 24 * 60 * 60 });
 
   const payload = {
@@ -37,6 +41,20 @@ const createTokenPair = async (userData) => {
   const refreshToken = jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d'
   });
+
+  // DB Session persistence (Section 6)
+  try {
+    await sessionRepository.createSession({
+      userId: userData.id,
+      refreshToken,
+      deviceName: reqInfo.deviceName || 'Web Browser',
+      ipAddress: reqInfo.ipAddress || null,
+      userAgent: reqInfo.userAgent || null,
+      expiresAt
+    });
+  } catch (err) {
+    console.error('Failed to record user session in DB:', err.message);
+  }
 
   return { accessToken, refreshToken, sid };
 };
@@ -72,7 +90,7 @@ const register = async ({ email, username, password, full_name }) => {
   return user;
 };
 
-const verifyOTP = async ({ email, otp }) => {
+const verifyOTP = async ({ email, otp, reqInfo }) => {
   const recordJson = await redisClient.get(`otp:${email}`);
   const record = recordJson ? JSON.parse(recordJson) : null;
   if (!record || record.otp !== otp) {
@@ -84,12 +102,12 @@ const verifyOTP = async ({ email, otp }) => {
 
   const userRes = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE email = $1', [email]);
   const user = userRes.rows[0];
-  const { accessToken, refreshToken } = await createTokenPair(user);
+  const { accessToken, refreshToken } = await createTokenPair(user, reqInfo);
 
   return { user, accessToken, refreshToken };
 };
 
-const login = async ({ email, password }) => {
+const login = async ({ email, password, reqInfo }) => {
   const userRes = await db.query('SELECT * FROM users WHERE email = $1', [email]);
   if (userRes.rows.length === 0) {
     throw new AuthError('Invalid credentials', 401);
@@ -101,11 +119,11 @@ const login = async ({ email, password }) => {
     throw new AuthError('Invalid credentials', 401);
   }
 
-  const { accessToken, refreshToken } = await createTokenPair(user);
+  const { accessToken, refreshToken } = await createTokenPair(user, reqInfo);
   return { user, accessToken, refreshToken };
 };
 
-const refreshTokens = async (token) => {
+const refreshTokens = async (token, reqInfo) => {
   if (!token) {
     throw new AuthError('Refresh token required', 401);
   }
@@ -124,8 +142,12 @@ const refreshTokens = async (token) => {
     if (!sessionData) {
       throw new AuthError('Session revoked or expired', 401);
     }
-    // Delete old session (rotation)
     await redisClient.del(`session:${userId}:${sid}`);
+  }
+
+  const dbSession = await sessionRepository.findActiveSession(token);
+  if (!dbSession) {
+    throw new AuthError('Active session not found or revoked', 401);
   }
 
   const userRes = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE id = $1', [userId]);
@@ -134,13 +156,26 @@ const refreshTokens = async (token) => {
   }
 
   const user = userRes.rows[0];
-  const { accessToken, refreshToken } = await createTokenPair(user);
-  return { user, accessToken, refreshToken };
+  const { accessToken, refreshToken: newRefreshToken, sid: newSid } = await createTokenPair(user, reqInfo);
+
+  // Rotate in sessionRepository
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await sessionRepository.rotateSession(dbSession.id, newRefreshToken, expiresAt);
+
+  return { user, accessToken, refreshToken: newRefreshToken };
 };
 
-const revokeSession = async (userId, sid) => {
+const revokeSession = async (userId, sid, refreshToken) => {
   if (userId && sid) {
     await redisClient.del(`session:${userId}:${sid}`);
+  }
+  if (refreshToken) {
+    const dbSession = await sessionRepository.findActiveSession(refreshToken);
+    if (dbSession) {
+      await sessionRepository.revokeSession(dbSession.id);
+    }
+  } else if (userId) {
+    await sessionRepository.revokeAllUserSessions(userId);
   }
 };
 
@@ -151,4 +186,5 @@ module.exports = {
   refreshTokens,
   revokeSession
 };
+
 

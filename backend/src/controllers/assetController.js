@@ -1,8 +1,10 @@
-const pool = require('../config/db');
+const crypto = require('crypto');
+const documentRepository = require('../repositories/documentRepository');
+const queueManager = require('../queues/queueManager');
+const { sendSuccess, sendError } = require('../utils/response');
 
 /**
- * MOCK: Generates a presigned S3 URL for uploading assets.
- * In production, this uses AWS SDK `getSignedUrl`.
+ * Generates presigned S3 upload URL with server-generated key format users/{userId}/{uuid}.pdf
  */
 exports.generateUploadUrl = async (req, res, next) => {
   try {
@@ -10,102 +12,89 @@ exports.generateUploadUrl = async (req, res, next) => {
     const userId = req.user.id;
 
     if (!fileName || !mimeType) {
-      return res.status(400).json({ error: 'fileName and mimeType are required' });
+      return sendError(res, 'fileName and mimeType are required.', 400, 'VALIDATION_ERROR', req);
     }
 
-    const s3Key = `users/${userId}/${Date.now()}_${fileName}`;
+    const fileExt = fileName.includes('.') ? fileName.split('.').pop() : 'pdf';
+    const storageKey = `users/${userId}/${crypto.randomUUID()}.${fileExt}`;
     
-    // MOCK: Generate fake upload URL for local dev
-    const uploadUrl = `https://mock-s3.local/upload?key=${encodeURIComponent(s3Key)}`;
+    // Signed upload URL simulation / S3 URL
+    const uploadUrl = process.env.S3_UPLOAD_ENDPOINT 
+      ? `${process.env.S3_UPLOAD_ENDPOINT}/${storageKey}`
+      : `https://mock-s3.local/upload?key=${encodeURIComponent(storageKey)}`;
 
-    res.status(200).json({
+    return sendSuccess(res, {
       uploadUrl,
-      s3Key,
-      bucket: 'rr-staging-uploads'
-    });
+      storageKey,
+      bucket: process.env.S3_BUCKET || 'researchreel-documents'
+    }, 'Signed upload URL generated.');
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Registers the uploaded asset into the PostgreSQL database.
+ * Registers the uploaded asset into the PostgreSQL documents table
  */
 exports.registerAsset = async (req, res, next) => {
   try {
-    const { fileName, sizeBytes, mimeType, s3Bucket, s3Key, publicUrl, metadata, tags } = req.body;
+    const { fileName, mimeType, sizeBytes, storageKey, fileUrl, metadata } = req.body;
     const userId = req.user.id;
 
-    const query = `
-      INSERT INTO media_assets 
-        (owner_id, file_name, file_size_bytes, mime_type, s3_bucket, s3_key, public_url, metadata, tags)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING *;
-    `;
-    const values = [
-      userId, fileName, sizeBytes, mimeType, s3Bucket, s3Key, publicUrl, 
-      metadata || {}, tags || []
-    ];
+    if (!fileName || !storageKey) {
+      return sendError(res, 'fileName and storageKey are required.', 400, 'VALIDATION_ERROR', req);
+    }
 
-    const result = await pool.query(query, values);
-    
-    res.status(201).json({
-      message: 'Asset registered successfully',
-      asset: result.rows[0]
+    const document = await documentRepository.createDocument({
+      ownerId: userId,
+      title: fileName,
+      storageKey,
+      fileUrl: fileUrl || `https://storage.local/${storageKey}`,
+      mimeType: mimeType || 'application/pdf',
+      fileSize: sizeBytes || 0,
+      metadata: metadata || {}
     });
+
+    // Enqueue background processing job (PDF parsing, text extraction, chunking)
+    await queueManager.addJob('document-processing', {
+      documentId: document.id,
+      storageKey: document.storage_key,
+      ownerId: userId
+    });
+
+    return sendSuccess(res, document, 'Document registered and queued for processing.', 201);
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Soft deletes an asset (moves to trash, kept for 30 days).
+ * Soft deletes an asset/document
  */
 exports.softDeleteAsset = async (req, res, next) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
 
-    const query = `
-      UPDATE media_assets
-      SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP
-      WHERE id = $1 AND owner_id = $2
-      RETURNING *;
-    `;
-
-    const result = await pool.query(query, [id, userId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Asset not found or unauthorized' });
+    const success = await documentRepository.softDelete(id, userId);
+    if (!success) {
+      return sendError(res, 'Document not found or unauthorized.', 404, 'NOT_FOUND', req);
     }
 
-    res.status(200).json({
-      message: 'Asset moved to trash',
-      asset: result.rows[0]
-    });
+    return sendSuccess(res, { id }, 'Document soft-deleted successfully.');
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Retrieves all non-deleted assets for the authenticated user.
+ * Retrieves library of non-deleted assets for the authenticated user
  */
 exports.getUserAssets = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    
-    const query = `
-      SELECT * FROM media_assets 
-      WHERE owner_id = $1 AND is_deleted = FALSE
-      ORDER BY created_at DESC;
-    `;
-
-    const result = await pool.query(query, [userId]);
-    
-    res.status(200).json({
-      assets: result.rows
-    });
+    const assets = await documentRepository.findByOwner(userId);
+    return sendSuccess(res, assets, 'User document library retrieved.');
   } catch (error) {
     next(error);
   }

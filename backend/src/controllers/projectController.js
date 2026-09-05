@@ -1,111 +1,215 @@
-const db = require('../config/db');
+const projectRepository = require('../repositories/projectRepository');
+const pool = require('../config/db');
+const { canAccessProject } = require('../authorization/projectAuthorization');
+const { canAccessDocument } = require('../authorization/documentAuthorization');
+const { sendSuccess, sendError } = require('../utils/response');
 
-// List All Projects (Section 4.3)
-exports.getProjects = async (req, res) => {
-  const userId = req.user.id;
+// Get User Projects (Section 21 / 22)
+exports.getProjects = async (req, res, next) => {
   try {
-    const list = await db.query('SELECT * FROM projects WHERE creator_id = $1 OR members @> $2', [userId, JSON.stringify([userId])]);
-    res.status(200).json({ success: true, data: list.rows });
+    const userId = req.user.id;
+    const projects = await projectRepository.findUserProjects(userId);
+    return sendSuccess(res, projects, 'User projects retrieved.');
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Projects fetch failed' });
+    next(error);
   }
 };
 
-// Kanban Board Actions (Section 4.3.1)
-exports.getProjectTasks = async (req, res) => {
-  const { project_id } = req.params;
-  const userId = req.user.id;
+// Create Project (Section 22 & 51 - Transactional creation with owner membership)
+exports.createProject = async (req, res, next) => {
   try {
-    const projectCheck = await db.query(
-      'SELECT id FROM projects WHERE id = $1 AND (creator_id = $2 OR members @> $3)',
-      [project_id, userId, JSON.stringify([userId])]
-    );
-    if (projectCheck.rows.length === 0) {
-      return res.status(403).json({ success: false, message: 'Forbidden: Not authorized to access this project' });
+    const { name, description, research_field, visibility } = req.body;
+    const creatorId = req.user.id;
+
+    if (!name || name.trim().length === 0) {
+      return sendError(res, 'Project name is required.', 400, 'VALIDATION_ERROR', req);
     }
 
-    const tasks = await db.query('SELECT * FROM tasks WHERE project_id = $1 ORDER BY position ASC', [project_id]);
-    res.status(200).json({ success: true, data: tasks.rows });
+    const project = await projectRepository.createProjectWithOwner({
+      creatorId,
+      name,
+      description,
+      researchField: research_field,
+      visibility
+    });
+
+    return sendSuccess(res, project, 'Project created successfully.', 201);
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Tasks fetch failed' });
+    next(error);
   }
 };
 
-exports.updateTask = async (req, res) => {
-  const { task_id, status, position } = req.body;
-  const userId = req.user.id;
+// Get Single Project Details
+exports.getProjectById = async (req, res, next) => {
   try {
-    const taskCheck = await db.query(
-      `SELECT t.id FROM tasks t 
-       JOIN projects p ON t.project_id = p.id 
-       WHERE t.id = $1 AND (p.creator_id = $2 OR p.members @> $3)`,
-      [task_id, userId, JSON.stringify([userId])]
+    const { id } = req.params;
+    const { allowed, role } = await canAccessProject(req.user.id, id);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: You do not have access to this project.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    const project = await projectRepository.findById(id);
+    if (!project) {
+      return sendError(res, 'Project not found.', 404, 'NOT_FOUND', req);
+    }
+
+    return sendSuccess(res, { ...project, user_role: role }, 'Project details retrieved.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete / Soft Delete Project
+exports.deleteProject = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { allowed, role } = await canAccessProject(req.user.id, id);
+    if (!allowed || role !== 'owner') {
+      return sendError(res, 'Only project owner can delete this project.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    await projectRepository.softDelete(id);
+    return sendSuccess(res, { id }, 'Project soft-deleted successfully.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Project Tasks (Section 24 / 25)
+exports.getProjectTasks = async (req, res, next) => {
+  const { id, project_id } = req.params;
+  const targetProjectId = id || project_id;
+  const userId = req.user.id;
+
+  try {
+    const { allowed } = await canAccessProject(userId, targetProjectId);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: Not authorized to access this project.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    const tasks = await pool.query(
+      'SELECT * FROM tasks WHERE project_id = $1 ORDER BY position ASC, created_at DESC',
+      [targetProjectId]
     );
+    return sendSuccess(res, tasks.rows, 'Project tasks retrieved.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Create Task (Section 24)
+exports.createTask = async (req, res, next) => {
+  const { id, project_id } = req.params;
+  const targetProjectId = id || project_id || req.body.project_id;
+  const { title, description, assigned_to, priority, due_date } = req.body;
+  const userId = req.user.id;
+
+  try {
+    const { allowed } = await canAccessProject(userId, targetProjectId);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: Cannot create task for this project.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    if (!title) {
+      return sendError(res, 'Task title is required.', 400, 'VALIDATION_ERROR', req);
+    }
+
+    const taskRes = await pool.query(`
+      INSERT INTO tasks (project_id, created_by, assigned_to, title, description, status, priority, due_date)
+      VALUES ($1, $2, $3, $4, $5, 'todo', $6, $7)
+      RETURNING *;
+    `, [targetProjectId, userId, assigned_to || null, title, description || '', priority || 'medium', due_date || null]);
+
+    return sendSuccess(res, taskRes.rows[0], 'Task created successfully.', 201);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update Task (Section 25 - Must check project authorization before modifying tasks)
+exports.updateTask = async (req, res, next) => {
+  const taskId = req.params.taskId || req.body.task_id;
+  const { status, position, title, description, assigned_to, priority } = req.body;
+  const userId = req.user.id;
+
+  try {
+    // Section 25 verification: find task -> find project -> verify project membership
+    const taskCheck = await pool.query('SELECT id, project_id FROM tasks WHERE id = $1', [taskId]);
     if (taskCheck.rows.length === 0) {
-      return res.status(403).json({ success: false, message: 'Forbidden: Cannot modify task for this project' });
+      return sendError(res, 'Task not found.', 404, 'NOT_FOUND', req);
     }
 
-    await db.query('UPDATE tasks SET status = $1, position = $2, updated_at = NOW() WHERE id = $3', [status, position, task_id]);
-    res.status(200).json({ success: true, message: 'Task updated' });
+    const projectId = taskCheck.rows[0].project_id;
+    const { allowed } = await canAccessProject(userId, projectId);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: Cannot modify tasks for this project.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+
+    const updatedTask = await pool.query(`
+      UPDATE tasks 
+      SET status = COALESCE($1, status),
+          position = COALESCE($2, position),
+          title = COALESCE($3, title),
+          description = COALESCE($4, description),
+          assigned_to = COALESCE($5, assigned_to),
+          priority = COALESCE($6, priority),
+          updated_at = NOW()
+      WHERE id = $7
+      RETURNING *;
+    `, [status, position, title, description, assigned_to, priority, taskId]);
+
+    return sendSuccess(res, updatedTask.rows[0], 'Task updated successfully.');
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Update failed' });
+    next(error);
   }
 };
 
-// Version Control Actions (Section 4.3.2)
-exports.getDocumentVersions = async (req, res) => {
+// Document Version Actions (Section 15)
+exports.getDocumentVersions = async (req, res, next) => {
   const { document_id } = req.params;
   const userId = req.user.id;
+
   try {
-    const docCheck = await db.query('SELECT id FROM documents WHERE id = $1 AND uploader_id = $2', [document_id, userId]);
-    if (docCheck.rows.length === 0) {
-      return res.status(403).json({ success: false, message: 'Forbidden: Cannot access document versions' });
+    const { allowed } = await canAccessDocument(userId, document_id);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: Cannot access document versions.', 403, 'AUTHORIZATION_ERROR', req);
     }
 
-    const versions = await db.query('SELECT * FROM document_versions WHERE document_id = $1 ORDER BY version_number DESC', [document_id]);
-    res.status(200).json({ success: true, data: versions.rows });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Versions fetch failed' });
-  }
-};
-
-exports.createVersion = async (req, res) => {
-  const { document_id, content, comment } = req.body;
-  const author_id = req.user.id;
-  try {
-    const docCheck = await db.query('SELECT id FROM documents WHERE id = $1 AND uploader_id = $2', [document_id, author_id]);
-    if (docCheck.rows.length === 0) {
-      return res.status(403).json({ success: false, message: 'Forbidden: Cannot create version for this document' });
-    }
-
-    const newVersion = await db.query(
-      `INSERT INTO document_versions (document_id, content_snapshot, author_id, comment) 
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [document_id, content, author_id, comment]
+    const versions = await pool.query(
+      'SELECT * FROM document_versions WHERE document_id = $1 ORDER BY version_number DESC',
+      [document_id]
     );
-    res.status(201).json({ success: true, data: newVersion.rows[0] });
+    return sendSuccess(res, versions.rows, 'Document versions retrieved.');
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Version creation failed' });
+    next(error);
   }
 };
 
-// Co-Authorship Tracking (Section 4.3.3)
-exports.getAuthorshipMetrics = async (req, res) => {
-  const { document_id } = req.params;
-  const userId = req.user.id;
+exports.createVersion = async (req, res, next) => {
+  const { document_id, content, change_summary } = req.body;
+  const author_id = req.user.id; // Section 15: author_id MUST come from req.user.id
+
   try {
-    const docCheck = await db.query('SELECT id FROM documents WHERE id = $1 AND uploader_id = $2', [document_id, userId]);
-    if (docCheck.rows.length === 0) {
-      return res.status(403).json({ success: false, message: 'Forbidden: Cannot access authorship metrics' });
+    const { allowed, permission } = await canAccessDocument(author_id, document_id);
+    if (!allowed || permission === 'viewer') {
+      return sendError(res, 'Forbidden: Edit permissions required to create document version.', 403, 'AUTHORIZATION_ERROR', req);
     }
 
-    const metrics = [
-      { name: "Dr. Julia Newton", edits: 142, comments: 24, percent: 65 },
-      { name: "Me", edits: 45, comments: 12, percent: 35 }
-    ];
-    res.status(200).json({ success: true, data: metrics });
+    // Get current latest version
+    const versionRes = await pool.query(
+      'SELECT COALESCE(MAX(version_number), 0) + 1 as next_ver FROM document_versions WHERE document_id = $1',
+      [document_id]
+    );
+    const nextVersion = versionRes.rows[0].next_ver;
+
+    const newVersion = await pool.query(
+      `INSERT INTO document_versions (document_id, author_id, version_number, content, change_summary) 
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [document_id, author_id, nextVersion, content || '', change_summary || 'Manual save']
+    );
+
+    return sendSuccess(res, newVersion.rows[0], 'Document version created.', 201);
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Metrics failed' });
+    next(error);
   }
 };
-

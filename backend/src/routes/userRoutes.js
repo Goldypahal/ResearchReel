@@ -3,13 +3,17 @@ const router = express.Router();
 const userController = require('../controllers/userController');
 const { authMiddleware } = require('../middleware/authMiddleware');
 
-// Public Profiles (Section 3.6.1)
-router.get('/:username', userController.getProfile);
+// Authenticated current user routes
+router.get('/me', authMiddleware, userController.getMe);
+router.get('/me/analytics', authMiddleware, userController.getAnalytics);
 
-// Private Analytics Dashboard (Section 3.6.3 / 15.1)
+// Private Analytics Dashboard (Legacy endpoint - authenticated)
 router.get('/analytics/:user_id', authMiddleware, userController.getAnalytics);
 
 // Account Actions
 router.put('/update', authMiddleware, userController.updateProfile);
+
+// Public Profiles (placed after static subpaths to avoid route shadowing)
+router.get('/:username', userController.getProfile);
 
 module.exports = router;

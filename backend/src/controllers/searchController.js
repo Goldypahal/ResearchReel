@@ -1,13 +1,12 @@
 const searchService = require('../services/searchService');
+const { sendSuccess } = require('../utils/response');
 
-exports.search = async (req, res) => {
+exports.search = async (req, res, next) => {
   try {
     const { q, type, cursor, limit } = req.query;
     const result = await searchService.searchDocuments(q || '', type || 'all', cursor, parseInt(limit) || 10);
-    res.status(200).json({ success: true, data: result.results, nextCursor: result.nextCursor });
+    return sendSuccess(res, result.results, 'Search results fetched.');
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: 'Search failed' });
+    next(error);
   }
 };
-
