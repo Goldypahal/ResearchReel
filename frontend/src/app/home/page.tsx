@@ -1,236 +1,304 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from 'react';
-import Image from 'next/image';
-import Feed from '@/components/feed/Feed';
+import React, { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { 
+  Bot, ArrowRight, Upload, Sparkles, Film, Users, BookOpen, 
+  Clock, Bookmark, Search, Star, MessageSquare, Play, ChevronRight 
+} from 'lucide-react';
+import Feed from '@/components/feed/Feed';
 
-import { SCIENTISTS } from '@/lib/scientists';
-import CreateStoryModal from '@/components/social/CreateStoryModal';
-import StoryViewerModal from '@/components/social/StoryViewerModal';
-import SwitchProfileModal from '@/components/social/SwitchProfileModal';
-import SettingsModal from '@/components/social/SettingsModal';
-import { useSocial } from '@/context/SocialContext';
-
-export default function Home() {
+export default function HomeDashboard() {
   const { user } = useAuth();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [showLeftArrow, setShowLeftArrow] = useState(false);
-  const [showRightArrow, setShowRightArrow] = useState(true);
-  const {
-    isCreateStoryOpen,
-    setIsCreateStoryOpen,
-    isStoryViewerOpen,
-    setIsStoryViewerOpen,
-    isSwitchOpen,
-    setIsSwitchOpen,
-    isSettingsOpen,
-    setIsSettingsOpen,
-    setActiveStoryIndex
-  } = useSocial();
+  const router = useRouter();
+  const [aiPrompt, setAiPrompt] = useState('');
 
-  // Use a subset of scientists for stories
-  const storyScientists = SCIENTISTS.slice(0, 10);
-
-  const handleScroll = () => {
-    if (scrollRef.current) {
-      const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
-      setShowLeftArrow(scrollLeft > 0);
-      setShowRightArrow(scrollLeft < scrollWidth - clientWidth - 5);
+  const handleAiAsk = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (aiPrompt.trim()) {
+      router.push(`/ai/ask?q=${encodeURIComponent(aiPrompt.trim())}`);
+    } else {
+      router.push('/ai/ask');
     }
   };
 
-  const scroll = (direction: 'left' | 'right') => {
-    if (scrollRef.current) {
-      const scrollAmount = 400;
-      scrollRef.current.scrollBy({
-        left: direction === 'left' ? -scrollAmount : scrollAmount,
-        behavior: 'smooth'
-      });
+  const continueResearching = [
+    {
+      id: 'doc_1',
+      title: 'Attention Is All You Need',
+      authors: 'Vaswani et al. (Google Brain)',
+      lastOpened: '2 hours ago',
+      progress: 85,
+      tag: 'Transformer'
+    },
+    {
+      id: 'doc_2',
+      title: 'BERT: Pre-training of Deep Bidirectional Transformers',
+      authors: 'Devlin et al. (Google AI Language)',
+      lastOpened: 'Yesterday',
+      progress: 60,
+      tag: 'NLP'
+    },
+    {
+      id: 'doc_3',
+      title: 'Retrieval-Augmented Generation for Knowledge-Intensive Tasks',
+      authors: 'Lewis et al. (Meta AI)',
+      lastOpened: '3 days ago',
+      progress: 40,
+      tag: 'RAG'
     }
-  };
+  ];
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) {
-      el.addEventListener('scroll', handleScroll);
-      handleScroll();
+  const recommendedPapers = [
+    {
+      id: 'rec_1',
+      title: 'Graph Attention Networks for Molecular Property Prediction',
+      authors: 'Veličković et al. • Cambridge University',
+      year: '2025',
+      citations: 342,
+      reason: 'Because you saved Attention Is All You Need'
+    },
+    {
+      id: 'rec_2',
+      title: 'Direct Preference Optimization: Your Language Model is Secretly a Reward Model',
+      authors: 'Rafailov et al. • Stanford University',
+      year: '2024',
+      citations: 580,
+      reason: 'Recommended based on your AI/ML research profile'
     }
-    return () => el?.removeEventListener('scroll', handleScroll);
-  }, []);
+  ];
 
-  // Format suggested users with realistic usernames and metadata
-  const suggestedUsers = SCIENTISTS.slice(10, 15).map((s, idx) => {
-    const username = s.name.toLowerCase().replace(/ /g, '_');
-    const descriptions = [
-      "Followed by @the_einstein + 3 more",
-      "Suggested for you",
-      "Followed by @m_curie",
-      "Suggested for you",
-      "Followed by @a_turing"
-    ];
-    return {
-      ...s,
-      username,
-      description: descriptions[idx % descriptions.length]
-    };
-  });
-
-  const currentUsername = user?.username 
-    ? (user.username.startsWith('@') ? user.username.slice(1) : user.username) 
-    : 'researcher_id';
+  const activeProjects = [
+    {
+      id: 'proj_1',
+      title: 'AI Text Detection Research',
+      members: 4,
+      papers: 12,
+      tasks: 8,
+      progress: 72
+    },
+    {
+      id: 'proj_2',
+      title: 'Quantum Computing Benchmark',
+      members: 3,
+      papers: 6,
+      tasks: 4,
+      progress: 45
+    }
+  ];
 
   return (
-    <div className="w-full flex justify-center bg-[var(--background)] min-h-screen text-[var(--foreground)] transition-colors duration-500 selection:bg-indigo-500/30">
-      {/* Main Content Area */}
-      <main className="w-full max-w-[1080px] px-4 pt-6 pb-20 grid grid-cols-1 lg:grid-cols-[600px_300px] gap-12 justify-center">
-        
-        {/* Left Column: Stories + Feed */}
-        <section className="flex flex-col w-full max-w-[600px] mx-auto lg:mx-0 lg:relative lg:-left-[75px]">
-          
-          {/* Stories Section */}
-          <div className="w-full mb-8 relative group">
-            {showLeftArrow && (
-              <button 
-                onClick={() => scroll('left')}
-                className="absolute left-2 top-8 z-10 w-8 h-8 bg-[var(--background)]/90 backdrop-blur-sm rounded-full flex items-center justify-center shadow-xl hover:bg-[var(--background)] transition-all border border-[var(--border)]/10 text-[var(--foreground)]"
-              >
-                <ChevronLeft size={18} />
-              </button>
-            )}
-            
-            {showRightArrow && (
-              <button 
-                onClick={() => scroll('right')}
-                className="absolute right-2 top-8 z-10 w-8 h-8 bg-[var(--background)]/90 backdrop-blur-sm rounded-full flex items-center justify-center shadow-xl hover:bg-[var(--background)] transition-all border border-[var(--border)]/10 text-[var(--foreground)]"
-              >
-                <ChevronRight size={18} />
-              </button>
-            )}
+    <div className="max-w-6xl mx-auto space-y-8 pb-12">
+      {/* Header Greeting */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-[var(--foreground)]">
+            Good morning, {user?.full_name || user?.username || 'Researcher'}
+          </h1>
+          <p className="text-xs md:text-sm text-muted-foreground mt-1">
+            Welcome to your AI research workspace.
+          </p>
+        </div>
+      </div>
 
-            <div 
-              ref={scrollRef}
-              className="flex gap-4 overflow-x-auto pb-4 no-scrollbar items-center px-0 scroll-smooth"
+      {/* Hero AI Copilot Card */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-900/80 via-purple-900/60 to-slate-900 border border-indigo-500/30 p-6 md:p-8 shadow-2xl space-y-4">
+        <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+          <Bot size={180} className="text-indigo-400" />
+        </div>
+
+        <div className="flex items-center gap-2 text-indigo-400 font-semibold text-xs uppercase tracking-wider">
+          <Sparkles size={16} />
+          <span>Research Copilot</span>
+        </div>
+
+        <h2 className="text-xl md:text-2xl font-bold text-white max-w-xl">
+          What are you researching today?
+        </h2>
+
+        <form onSubmit={handleAiAsk} className="relative max-w-2xl">
+          <input
+            type="text"
+            placeholder="Ask anything about papers, methods, dataset benchmarks, or research gaps..."
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            className="w-full pl-4 pr-12 py-3.5 text-sm bg-white/10 backdrop-blur-md border border-white/20 rounded-xl focus:outline-none focus:border-indigo-400 text-white placeholder:text-zinc-400 shadow-inner"
+          />
+          <button
+            type="submit"
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
+          >
+            <ArrowRight size={18} />
+          </button>
+        </form>
+
+        {/* Quick Action Pills */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 text-xs">
+          <span className="text-zinc-400 font-medium">Quick Actions:</span>
+          <button 
+            onClick={() => router.push('/library')} 
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
+          >
+            <Upload size={14} /> Upload Paper
+          </button>
+          <button 
+            onClick={() => router.push('/ai/ask')} 
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
+          >
+            <Bot size={14} /> Ask AI
+          </button>
+          <button 
+            onClick={() => router.push('/reels/create')} 
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
+          >
+            <Film size={14} /> Create Reel
+          </button>
+          <button 
+            onClick={() => router.push('/projects/new')} 
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
+          >
+            <Users size={14} /> New Project
+          </button>
+        </div>
+      </div>
+
+      {/* Continue Researching Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold text-[var(--foreground)] flex items-center gap-2">
+            <Clock size={18} className="text-indigo-500" />
+            <span>Continue Researching</span>
+          </h3>
+          <Link href="/library" className="text-xs font-semibold text-indigo-400 hover:underline flex items-center gap-1">
+            <span>View Library</span> <ChevronRight size={14} />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {continueResearching.map((item) => (
+            <div
+              key={item.id}
+              onClick={() => router.push(`/library/documents/${item.id}`)}
+              className="p-4 rounded-xl bg-[var(--foreground)]/[0.03] border border-[var(--border)] hover:border-indigo-500/40 hover:bg-indigo-500/[0.03] transition-all cursor-pointer space-y-3 group"
             >
-              {/* Add Story Button */}
-              <div className="flex flex-col items-center gap-1.5 cursor-pointer flex-shrink-0 group/story" onClick={() => setIsCreateStoryOpen(true)}>
-                <div className="w-14 h-14 rounded-full relative">
-                  <div className="w-full h-full rounded-full bg-[var(--foreground)]/5 border border-[var(--border)]/10 overflow-hidden flex items-center justify-center text-lg font-bold text-indigo-500/40">
-                    {user?.full_name?.slice(0,1) || 'U'}
-                  </div>
-                  <div className="absolute bottom-0 right-0 bg-[#0095f6] rounded-full w-4.5 h-4.5 flex items-center justify-center border-2 border-[var(--background)] shadow-md">
-                     <Plus size={10} className="text-white" strokeWidth={3} />
-                  </div>
-                </div>
-                <span className="text-[11px] text-zinc-500 group-hover/story:text-indigo-500 transition-colors">Your story</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  {item.tag}
+                </span>
+                <span className="text-[11px] text-muted-foreground">{item.lastOpened}</span>
               </div>
-              
-              {/* Story Items (Using Famous Scientists) */}
-              {storyScientists.map((s, i) => (
-                <div
-                  key={i}
-                  className="flex flex-col items-center gap-1.5 cursor-pointer flex-shrink-0 group/story"
-                  onClick={() => {
-                    setActiveStoryIndex(i);
-                    setIsStoryViewerOpen(true);
-                  }}
-                >
-                  <div className="w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 shadow-sm transition-transform group-hover/story:scale-105">
-                    <div className="w-full h-full rounded-full bg-[var(--background)] p-[1.5px]">
-                      <Image src={s.image} alt={s.name} width={56} height={56} className="w-full h-full rounded-full object-cover border border-[var(--border)]/5 shadow-inner" />
-                    </div>
-                  </div>
-                  <span className="text-[11px] text-[var(--foreground)] opacity-80 group-hover/story:opacity-100 group-hover/story:text-indigo-500 transition-all truncate w-14 text-center">
-                    {s.name.split(' ')[s.name.split(' ').length - 1].toLowerCase()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-          
-          <Feed />
-        </section>
-
-        {/* Right Column: Suggestions Sidebar */}
-        <aside className="hidden lg:block sticky top-8 h-fit mt-4 lg:relative lg:left-[38px]">
-          
-          {/* User Profile Summary */}
-          <div className="flex items-center justify-between mb-6 group">
-            <div className="flex items-center gap-3.5 cursor-pointer">
-              <div className="w-11 h-11 rounded-full bg-[var(--foreground)]/5 border border-[var(--border)]/10 overflow-hidden flex items-center justify-center text-lg font-bold text-indigo-500/30 shadow-inner">
-                {user?.full_name?.slice(0,1) || 'U'}
+              <div>
+                <h4 className="text-sm font-bold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors line-clamp-1">
+                  {item.title}
+                </h4>
+                <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{item.authors}</p>
               </div>
-              <div className="flex flex-col">
-                <span className="font-bold text-sm tracking-tight lowercase text-[var(--foreground)]">{currentUsername}</span>
-                <span className="text-xs text-zinc-500">{user?.full_name || 'Dr. John Doe'}</span>
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px] text-muted-foreground">
+                  <span>Reading progress</span>
+                  <span>{item.progress}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
+                  <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${item.progress}%` }} />
+                </div>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button className="text-[#0095f6] hover:text-[#1877f2] text-xs font-bold transition-colors bg-transparent border-none p-0 cursor-pointer" onClick={() => setIsSwitchOpen(true)}>
-                Switch
-              </button>
-              <button className="text-[#0095f6] hover:text-[#1877f2] text-xs font-bold transition-colors bg-transparent border-none p-0 cursor-pointer" onClick={() => setIsSettingsOpen(true)}>
-                Settings
-              </button>
-            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Grid: Recommended Papers & Active Projects */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Column: Recommended Research */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-[var(--foreground)] flex items-center gap-2">
+              <Sparkles size={18} className="text-indigo-500" />
+              <span>Recommended Research</span>
+            </h3>
+            <Link href="/discover" className="text-xs font-semibold text-indigo-400 hover:underline">
+              Discover More
+            </Link>
           </div>
 
-          {/* Suggestions Header */}
-          <div className="flex justify-between items-center mb-4">
-            <span className="text-xs font-bold text-zinc-500">Suggested for you</span>
-            <button className="text-xs font-bold text-[var(--foreground)] hover:opacity-75 transition-opacity">See All</button>
-          </div>
-
-          {/* Suggested Users */}
-          <div className="space-y-4">
-            {suggestedUsers.map(s => (
-              <div key={s.name} className="flex justify-between items-center group/suggest">
-                <div className="flex items-center gap-3.5 cursor-pointer">
-                  <div className="relative w-8 h-8">
-                    <Image src={s.image} alt={s.name} width={32} height={32} className="w-8 h-8 rounded-full object-cover border border-[var(--border)]/10 shadow-sm" />
-                    <div className="absolute inset-0 rounded-full bg-indigo-500/5 opacity-0 group-hover/suggest:opacity-100 transition-opacity"></div>
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-bold text-xs tracking-tight lowercase text-[var(--foreground)] hover:underline truncate w-40">{s.username}</span>
-                    <span className="text-[10px] text-zinc-500 truncate w-40 leading-snug">{s.description}</span>
+          <div className="space-y-3">
+            {recommendedPapers.map((paper) => (
+              <div
+                key={paper.id}
+                className="p-4 rounded-xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] hover:border-indigo-500/30 transition-all space-y-2"
+              >
+                <div className="flex items-center gap-2 text-[11px] text-indigo-400 font-medium">
+                  <Star size={12} className="fill-indigo-400" />
+                  <span>{paper.reason}</span>
+                </div>
+                <h4 className="text-sm font-bold text-[var(--foreground)] hover:text-indigo-400 cursor-pointer transition-colors">
+                  {paper.title}
+                </h4>
+                <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
+                  <span>{paper.authors}</span>
+                  <div className="flex items-center gap-3">
+                    <span>{paper.year}</span>
+                    <span>•</span>
+                    <span>{paper.citations} citations</span>
                   </div>
                 </div>
-                <button className="text-[#0095f6] hover:text-[#1877f2] text-xs font-bold transition-all active:scale-95 bg-transparent border-none p-0 cursor-pointer">Follow</button>
               </div>
             ))}
           </div>
 
-          {/* Footer Links */}
-          <div className="mt-8 text-[10px] text-zinc-500 leading-loose">
-            <div className="flex flex-wrap gap-x-2.5 mb-3 opacity-60">
-              <a href="#" className="hover:underline transition-all">About</a>
-              <a href="#" className="hover:underline transition-all">Help</a>
-              <a href="#" className="hover:underline transition-all">Press</a>
-              <a href="#" className="hover:underline transition-all">API</a>
-              <a href="#" className="hover:underline transition-all">Jobs</a>
-              <a href="#" className="hover:underline transition-all">Privacy</a>
-              <a href="#" className="hover:underline transition-all">Terms</a>
-              <a href="#" className="hover:underline transition-all">Locations</a>
-              <a href="#" className="hover:underline transition-all">Language</a>
-              <a href="#" className="hover:underline transition-all">Meta Verified</a>
-            </div>
-            <span className="text-zinc-500 font-medium uppercase tracking-[0.05em]">© 2026 RESEARCHREEL FROM ANTIGRAVITY</span>
+          {/* Social Feed Overview */}
+          <div className="pt-4 space-y-4">
+            <h3 className="text-lg font-bold text-[var(--foreground)] flex items-center gap-2">
+              <BookOpen size={18} className="text-indigo-500" />
+              <span>Research Community Feed</span>
+            </h3>
+            <Feed />
           </div>
-        </aside>
-      </main>
+        </div>
 
-      {/* Story Creation Modal */}
-      {isCreateStoryOpen && <CreateStoryModal />}
+        {/* Right Column: Active Projects */}
+        <div className="space-y-6">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-[var(--foreground)] flex items-center gap-2">
+                <Users size={16} className="text-indigo-500" />
+                <span>Active Projects</span>
+              </h3>
+              <Link href="/projects" className="text-xs font-semibold text-indigo-400 hover:underline">
+                All Projects
+              </Link>
+            </div>
 
-      {/* Story Viewer Modal */}
-      {isStoryViewerOpen && <StoryViewerModal />}
-
-      {/* Switch Profile Modal */}
-      {isSwitchOpen && <SwitchProfileModal />}
-
-      {/* Settings Modal */}
-      {isSettingsOpen && <SettingsModal />}
+            <div className="space-y-3">
+              {activeProjects.map((proj) => (
+                <div
+                  key={proj.id}
+                  onClick={() => router.push(`/projects/${proj.id}`)}
+                  className="p-4 rounded-xl bg-[var(--foreground)]/[0.03] border border-[var(--border)] hover:border-indigo-500/40 cursor-pointer transition-all space-y-3"
+                >
+                  <h4 className="text-sm font-bold text-[var(--foreground)]">{proj.title}</h4>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{proj.members} members</span>
+                    <span>{proj.papers} papers</span>
+                    <span>{proj.tasks} tasks</span>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                      <span>Progress</span>
+                      <span>{proj.progress}%</span>
+                    </div>
+                    <div className="w-full h-1 bg-[var(--border)] rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${proj.progress}%` }} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

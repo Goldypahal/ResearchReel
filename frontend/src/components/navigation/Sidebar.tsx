@@ -8,10 +8,14 @@ import { useTheme } from '@/context/ThemeContext';
 import { 
   Home, Search, Compass, PlaySquare, MessageCircle, 
   Heart, PlusSquare, Menu, FileText,
-  Bookmark, Sun, LogOut, Users, Moon, Library, User, BookOpen
+  Bookmark, Sun, LogOut, Users, Moon, Library, User, BookOpen, Bot, Settings
 } from 'lucide-react';
 
-export default function Sidebar() {
+interface SidebarProps {
+  onOpenCreate?: () => void;
+}
+
+export default function Sidebar({ onOpenCreate }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
@@ -42,16 +46,19 @@ export default function Sidebar() {
   }, []);
 
   const navItems = [
-    { name: 'Home', href: '/home', icon: Home },
-    { name: 'Search', href: '/search', icon: Search },
-    { name: 'Explore', href: '/explore', icon: Compass },
-    { name: 'Reels', href: '/reels', icon: PlaySquare },
-    { name: 'Lectures', href: '/lectures', icon: BookOpen },
-    { name: 'Messages', href: '/messages', icon: MessageCircle },
+    { name: 'Home', href: '/home', icon: Home, hint: 'G H' },
+    { name: 'Discover', href: '/discover', icon: Compass, hint: 'G D' },
+    { name: 'Library', href: '/library', icon: Bookmark, hint: 'G L' },
+    { name: 'AI Research', href: '/ai', icon: Bot, hint: 'A' },
+    { name: 'Projects', href: '/projects', icon: Users, hint: 'G P' },
+    { name: 'Reels', href: '/reels', icon: PlaySquare, hint: 'G R' },
+    { name: 'Messages', href: '/messages', icon: MessageCircle, hint: 'G M' },
     { name: 'Notifications', href: '/notifications', icon: Heart },
-    { name: 'Create', href: '/create', icon: PlusSquare },
+    { name: 'Create', href: '#create', icon: PlusSquare, isCreate: true, hint: 'N' },
     { name: 'Profile', href: `/profile/${user?.username || 'julianewton'}`, icon: User, isAvatar: true },
+    { name: 'Settings', href: '/settings', icon: Settings },
   ];
+
 
   return (
     <div 
@@ -77,15 +84,39 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation Links */}
-      <nav className="flex-1 space-y-1.5">
+      <nav className="flex-1 space-y-1.5 overflow-y-auto no-scrollbar">
         {navItems.map((item) => {
           const isActive = pathname === item.href || (item.name === 'Profile' && pathname?.startsWith('/profile'));
           const Icon = item.icon;
+
+          if (item.isCreate) {
+            return (
+              <button
+                key={item.name}
+                onClick={() => onOpenCreate && onOpenCreate()}
+                className={`w-full flex items-center gap-4 px-3 py-2.5 rounded-lg hover:bg-[var(--foreground)]/5 transition-all group ${
+                  isExpanded ? 'justify-start' : 'justify-center'
+                }`}
+              >
+                <div className="relative transition-transform duration-200 group-hover:scale-105 shrink-0 text-indigo-500">
+                  <Icon size={24} strokeWidth={2.5} />
+                </div>
+                <span 
+                  className={`text-[15px] font-medium text-indigo-500 whitespace-nowrap transition-all duration-300 ${
+                    isExpanded ? 'opacity-100 max-w-[200px] visible' : 'opacity-0 max-w-0 invisible overflow-hidden'
+                  }`}
+                >
+                  {item.name}
+                </span>
+              </button>
+            );
+          }
+
           return (
             <Link
               key={item.name}
               href={item.href}
-              className={`flex items-center gap-4 px-3 py-3 rounded-lg hover:bg-[var(--foreground)]/5 transition-all group ${
+              className={`flex items-center gap-4 px-3 py-2.5 rounded-lg hover:bg-[var(--foreground)]/5 transition-all group ${
                 isExpanded ? 'justify-start' : 'justify-center'
               }`}
             >
@@ -101,7 +132,7 @@ export default function Sidebar() {
               <span 
                 className={`text-[15px] whitespace-nowrap transition-all duration-300 ${
                   isExpanded ? 'opacity-100 max-w-[200px] visible' : 'opacity-0 max-w-0 invisible overflow-hidden'
-                } ${isActive ? 'font-bold tracking-tight' : 'font-medium opacity-80'}`}
+                } ${isActive ? 'font-bold tracking-tight text-indigo-500' : 'font-medium opacity-80'}`}
               >
                 {item.name}
               </span>
@@ -109,6 +140,7 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
 
       {/* Footer / More */}
       <div className="mt-auto pt-4 relative" ref={moreRef}>

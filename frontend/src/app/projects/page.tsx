@@ -1,54 +1,89 @@
 "use client";
 
-import React, { useState } from 'react';
-import KanbanBoard from '@/components/collaboration/KanbanBoard';
-import VersionControl from '@/components/collaboration/VersionControl';
-import CreateProjectModal from '@/components/collaboration/CreateProjectModal';
+import React from 'react';
+import { useRouter } from 'next/navigation';
+import { Users, Plus, FileText, CheckSquare, Sparkles, Folder } from 'lucide-react';
 
 export default function ProjectsPage() {
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const router = useRouter();
+
+  const projects = [
+    {
+      id: 'proj_1',
+      title: 'AI Text Detection Research',
+      description: 'Benchmark LLM-generated text detection algorithms across academic literature',
+      members: 4,
+      papers: 12,
+      tasks: 8,
+      progress: 72
+    },
+    {
+      id: 'proj_2',
+      title: 'Quantum Computing Benchmark',
+      description: 'Evaluate quantum algorithm speedups on molecular chemistry simulations',
+      members: 3,
+      papers: 6,
+      tasks: 4,
+      progress: 45
+    }
+  ];
 
   return (
-    <div className="h-[calc(100vh-128px)] md:h-screen bg-[var(--background)] text-[var(--foreground)] overflow-hidden flex flex-col selection:bg-indigo-500/30">
-       <main className="flex-1 flex flex-col md:flex-row overflow-hidden max-w-screen-2xl mx-auto w-full border-x border-white/5 shadow-2xl relative">
-          
-          <CreateProjectModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
+    <div className="max-w-6xl mx-auto space-y-6 pb-12">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-[var(--foreground)]">
+            Research Projects
+          </h1>
+          <p className="text-xs md:text-sm text-muted-foreground mt-1">
+            Collaborate on paper collections, assign tasks, and track milestone activity.
+          </p>
+        </div>
 
-          {/* Top Bar for Context */}
-          <div className="absolute top-0 left-0 w-full h-16 bg-black/40 backdrop-blur-3xl border-b border-white/5 z-20 flex items-center justify-between px-8">
-             <div className="flex items-center gap-6">
-                <div className="flex items-center gap-3">
-                   <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center font-bold text-lg">📁</div>
-                   <h1 className="text-xl font-black tracking-tight text-white uppercase italic">Active Collaboration</h1>
-                </div>
-                <div className="flex items-center gap-2">
-                   <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest pl-4">Project: Neural Integration v2</span>
-                   <span className="text-indigo-500 text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20">Active</span>
-                </div>
-             </div>
-             
-             <div className="flex items-center gap-6">
-                <button 
-                  onClick={() => setIsModalOpen(true)}
-                  className="px-6 py-2 bg-white text-black text-[10px] font-black uppercase tracking-widest rounded-xl hover:scale-105 transition-transform flex items-center gap-2"
-                >
-                   <span className="text-sm">+</span> New Scope
-                </button>
-                <div className="h-8 w-px bg-white/10 mx-2"></div>
-                <button className="px-4 py-1.5 h-10 border border-white/10 rounded-xl hover:bg-white/5 transition-all text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-white uppercase">Project Settings</button>
-             </div>
+        <button
+          onClick={() => router.push('/projects/new')}
+          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors flex items-center gap-2"
+        >
+          <Plus size={16} />
+          <span>New Project</span>
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {projects.map((proj) => (
+          <div
+            key={proj.id}
+            onClick={() => router.push(`/projects/${proj.id}`)}
+            className="p-6 rounded-2xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] hover:border-indigo-500/40 hover:bg-indigo-500/[0.03] transition-all cursor-pointer space-y-4 group"
+          >
+            <div className="flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                <Folder size={22} />
+              </div>
+              <span className="text-xs font-semibold text-emerald-400">{proj.progress}% Complete</span>
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors">
+                {proj.title}
+              </h3>
+              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                {proj.description}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2">
+              <span className="flex items-center gap-1"><Users size={14} /> {proj.members} members</span>
+              <span className="flex items-center gap-1"><FileText size={14} /> {proj.papers} papers</span>
+              <span className="flex items-center gap-1"><CheckSquare size={14} /> {proj.tasks} tasks</span>
+            </div>
+
+            <div className="w-full h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
+              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${proj.progress}%` }} />
+            </div>
           </div>
-
-          {/* Left Column: Kanban Board */}
-          <section className="flex-1 flex flex-col pt-16">
-             <KanbanBoard />
-          </section>
-
-          {/* Right Column: Version Control Sidebar (Section 4.3.2) */}
-          <VersionControl />
-
-       </main>
-
+        ))}
+      </div>
     </div>
   );
 }
