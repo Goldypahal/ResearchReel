@@ -1,0 +1,988 @@
+<h1 id="researchreel-architecture-documentation">ResearchReel
+Architecture Documentation</h1>
+<h2 id="executive-summary">Executive Summary</h2>
+<p>ResearchReel is a microservices-based, cloud-native platform designed
+for sharing research via short-form videos (Reels) and interactive
+research documents. The platform enables researchers, students,
+scholars, professors, moderators, and administrators to transform
+academic content into engaging multimedia formats while maintaining
+research integrity and fostering collaboration.</p>
+<h2 id="system-architecture-overview">System Architecture Overview</h2>
+<h3 id="high-level-components">High-Level Components</h3>
+<ol type="1">
+<li><strong>Frontend Web Application</strong> (<code>/frontend</code>)
+<ul>
+<li>Next.js 16.2.2 React framework</li>
+<li>TypeScript for type safety</li>
+<li>Tailwind CSS for styling</li>
+<li>SWR or React Query for data fetching</li>
+<li>Socket.IO client for real-time features</li>
+</ul></li>
+<li><strong>API Gateway &amp; Backend</strong> (<code>/backend</code>)
+<ul>
+<li>Node.js with Express.js framework</li>
+<li>RESTful API design</li>
+<li>WebSocket support via Socket.IO</li>
+<li>PostgreSQL as primary database</li>
+<li>Redis for caching and BullMQ job queuing</li>
+<li>Modular architecture with separate route handlers</li>
+</ul></li>
+<li><strong>Python RAG Microservice</strong>
+(<code>/backend/research_rag</code>)
+<ul>
+<li>FastAPI framework</li>
+<li>Google Gemini AI for natural language processing</li>
+<li>Qdrant vector database for semantic search</li>
+<li>Document processing pipeline (PDF, DOCX, TXT)</li>
+<li>Text chunking and embedding generation</li>
+</ul></li>
+<li><strong>Background Task Worker</strong> (<code>video-worker</code>)
+<ul>
+<li>BullMQ for job queue management</li>
+<li>FFmpeg for video processing</li>
+<li>Integration with RAG service for content generation</li>
+<li>TTS (Text-to-Speech) integration for audio generation</li>
+</ul></li>
+<li><strong>Infrastructure Services</strong>
+<ul>
+<li>PostgreSQL 15 (primary database)</li>
+<li>Redis 7 (cache and message broker)</li>
+<li>Optional: Qdrant (vector search)</li>
+<li>Optional: AWS S3 (object storage)</li>
+</ul></li>
+</ol>
+<h3 id="deployment-architecture">Deployment Architecture</h3>
+<h4 id="development-environment">Development Environment</h4>
+<ul>
+<li>Docker Compose orchestration</li>
+<li>All services running in separate containers</li>
+<li>Local development with hot reloading</li>
+<li>Environment-specific configuration via .env files</li>
+</ul>
+<h4 id="production-environment">Production Environment</h4>
+<ul>
+<li>Kubernetes/EKS orchestration</li>
+<li>Helm charts for service deployment</li>
+<li>Ingress controller (NGINX) for external access</li>
+<li>Auto-scaling groups for handling variable load</li>
+<li>CDN for static asset delivery</li>
+<li>Managed services for databases (AWS RDS, Elasticache)</li>
+</ul>
+<h2 id="detailed-component-architecture">Detailed Component
+Architecture</h2>
+<h3 id="frontend-architecture">Frontend Architecture</h3>
+<h4 id="technology-stack">Technology Stack</h4>
+<ul>
+<li><strong>Framework</strong>: Next.js 16.2.2 (React 18)</li>
+<li><strong>Language</strong>: TypeScript</li>
+<li><strong>Styling</strong>: Tailwind CSS</li>
+<li><strong>State Management</strong>: React Context API + SWR</li>
+<li><strong>Real-time Communication</strong>: Socket.IO client</li>
+<li><strong>UI Components</strong>: Custom component library with Lucide
+icons</li>
+<li><strong>Document Handling</strong>: React-PDF for PDF
+viewing/rendering</li>
+<li><strong>3D Visualization</strong>: Three.js with <span
+class="citation"
+data-cites="react-three/fiber">@react-three/fiber</span></li>
+<li><strong>Drag &amp; Drop</strong>: <span class="citation"
+data-cites="hello-pangea/dnd">@hello-pangea/dnd</span> for Kanban
+boards</li>
+<li><strong>Animations</strong>: Framer Motion, GSAP</li>
+<li><strong>Analytics</strong>: PostHog</li>
+<li><strong>Error Tracking</strong>: Sentry</li>
+</ul>
+<h4 id="key-features-implementation">Key Features Implementation</h4>
+<ol type="1">
+<li><strong>Authentication Flow</strong>
+<ul>
+<li>JWT-based auth with HttpOnly cookies</li>
+<li>OTP verification for registration</li>
+<li>Protected routes via Higher-Order Components</li>
+<li>Automatic token refresh mechanism</li>
+</ul></li>
+<li><strong>Content Creation Interface</strong>
+<ul>
+<li>Rich text editor for posts</li>
+<li>Media upload with drag-and-drop</li>
+<li>DOI lookup integration for academic metadata extraction</li>
+<li>Reel generator with prompt controls</li>
+<li>Project workspace with Kanban board</li>
+</ul></li>
+<li><strong>Real-time Features</strong>
+<ul>
+<li>Live feed updates via WebSocket</li>
+<li>Real-time notifications</li>
+<li>Collaborative editing indicators</li>
+<li>Live cursor positions in shared documents</li>
+</ul></li>
+<li><strong>Accessibility &amp; Performance</strong>
+<ul>
+<li>WCAG 2.1 AA compliance</li>
+<li>Server-side rendering for SEO</li>
+<li>Image optimization with Next.js Image</li>
+<li>Code splitting and lazy loading</li>
+<li>Critical CSS inlining</li>
+<li>Service worker for offline capabilities</li>
+</ul></li>
+</ol>
+<h3 id="backend-architecture">Backend Architecture</h3>
+<h4 id="api-gateway-service">API Gateway Service</h4>
+<ul>
+<li><strong>Entry Point</strong>: Single entry point for all client
+requests</li>
+<li><strong>Routing</strong>: RESTful API endpoints organized by
+resource</li>
+<li><strong>Middleware Stack</strong>:
+<ul>
+<li>Helmet for security headers</li>
+<li>CORS configuration</li>
+<li>Request logging (Morgan)</li>
+<li>Body parsing (JSON, multipart/form-data)</li>
+<li>Rate limiting (express-rate-limit)</li>
+<li>Authentication verification</li>
+<li>Request validation (Zod schemas)</li>
+</ul></li>
+</ul>
+<h4 id="core-services">Core Services</h4>
+<ol type="1">
+<li><strong>Authentication Service</strong>
+<ul>
+<li>JWT token generation and validation</li>
+<li>Password hashing with Argon2</li>
+<li>OTP generation and verification (via Redis)</li>
+<li>Role-based access control (RBAC)</li>
+<li>Session management</li>
+</ul></li>
+<li><strong>Content Management Service</strong>
+<ul>
+<li>Post creation, retrieval, updating, deletion</li>
+<li>Media file handling and validation</li>
+<li>DOI resolution and metadata extraction</li>
+<li>Content moderation workflow</li>
+<li>Search integration</li>
+</ul></li>
+<li><strong>Reel Generation Service</strong>
+<ul>
+<li>Video generation job queuing</li>
+<li>Integration with FFmpeg processing</li>
+<li>Status tracking and progress reporting</li>
+<li>Thumbnail extraction and optimization</li>
+<li>HLS streaming preparation</li>
+</ul></li>
+<li><strong>Project &amp; Collaboration Service</strong>
+<ul>
+<li>Project lifecycle management</li>
+<li>Kanban board implementation</li>
+<li>Task assignment and tracking</li>
+<li>Version control for documents</li>
+<li>Collaborator invitation system</li>
+</ul></li>
+<li><strong>Messaging Service</strong>
+<ul>
+<li>Real-time chat functionality</li>
+<li>Conversation management</li>
+<li>Message persistence and retrieval</li>
+<li>Read receipts and typing indicators</li>
+<li>File upload within messages</li>
+</ul></li>
+<li><strong>AI Assistance Service</strong>
+<ul>
+<li>RAG (Retrieval-Augmented Generation) pipeline</li>
+<li>Context-aware AI responses</li>
+<li>Document summarization</li>
+<li>Question answering based on uploaded research</li>
+<li>Content generation assistance</li>
+</ul></li>
+</ol>
+<h4 id="data-layer">Data Layer</h4>
+<ul>
+<li><strong>Primary Database</strong>: PostgreSQL 15
+<ul>
+<li>Connection pooling for efficient resource utilization</li>
+<li>Read replicas for scaling read operations</li>
+<li>Regular automated backups</li>
+<li>Migration system with node-pg-migrate</li>
+<li>Indexing strategy for query performance</li>
+</ul></li>
+<li><strong>Cache Layer</strong>: Redis 7
+<ul>
+<li>Session storage and OTP codes</li>
+<li>Frequently accessed data caching</li>
+<li>Pub/Sub for real-time notifications</li>
+<li>BullMQ job queue backend</li>
+<li>Distributed locking mechanisms</li>
+</ul></li>
+<li><strong>Vector Database</strong>: Qdrant (optional but recommended)
+<ul>
+<li>Embedding storage for semantic search</li>
+<li>Similarity search for research discovery</li>
+<li>Hybrid search capabilities (keyword + vector)</li>
+<li>Scalable horizontal partitioning</li>
+</ul></li>
+<li><strong>Object Storage</strong>: AWS S3 (optional but recommended
+for production)
+<ul>
+<li>Media file storage (images, videos, documents)</li>
+<li>CDN integration for global delivery</li>
+<li>Lifecycle policies for cost optimization</li>
+<li>Versioning for backup and recovery</li>
+</ul></li>
+</ul>
+<h3 id="rag-microservice-architecture">RAG Microservice
+Architecture</h3>
+<h4 id="overview">Overview</h4>
+<p>The Retrieval-Augmented Generation (RAG) microservice is responsible
+for enhancing AI capabilities with domain-specific knowledge from
+user-uploaded research documents.</p>
+<h4 id="core-components">Core Components</h4>
+<ol type="1">
+<li><strong>Document Ingestion Pipeline</strong>
+<ul>
+<li>File format support: PDF, DOCX, TXT, MD</li>
+<li>Text extraction and cleaning</li>
+<li>Language detection and processing</li>
+<li>Metadata extraction (authors, dates, DOI, etc.)</li>
+</ul></li>
+<li><strong>Text Processing Module</strong>
+<ul>
+<li>Sentence-level tokenization</li>
+<li>Semantic chunking strategies</li>
+<li>Embedding generation using Gemini</li>
+<li>Chunk overlap for context preservation</li>
+</ul></li>
+<li><strong>Vector Storage &amp; Retrieval</strong>
+<ul>
+<li>Qdrant collection management</li>
+<li>Similarity search with configurable thresholds</li>
+<li>Hybrid search (vector + keyword filtering)</li>
+<li>Result re-ranking and diversity enhancement</li>
+</ul></li>
+<li><strong>Generation Engine</strong>
+<ul>
+<li>Gemini API integration</li>
+<li>Prompt engineering for research domain</li>
+<li>Context injection from retrieved documents</li>
+<li>Temperature and token limit configuration</li>
+<li>Safety filtering and bias mitigation</li>
+</ul></li>
+<li><strong>Evaluation &amp; Feedback System</strong>
+<ul>
+<li>Response quality metrics</li>
+<li>User feedback collection</li>
+<li>A/B testing framework</li>
+<li>Continuous improvement loop</li>
+</ul></li>
+</ol>
+<h4 id="workflow-flow">Workflow Flow</h4>
+<ol type="1">
+<li>User uploads research document</li>
+<li>Document processed and stored in object storage</li>
+<li>Text extracted and cleaned</li>
+<li>Document chunked into semantic units</li>
+<li>Embeddings generated for each chunk</li>
+<li>Chunks stored in vector database with metadata</li>
+<li>When user queries, relevant chunks retrieved</li>
+<li>Retrieved context + query sent to Gemini</li>
+<li>Generated response returned to user</li>
+</ol>
+<h3 id="infrastructure-deployment">Infrastructure &amp; Deployment</h3>
+<h4 id="containerization-strategy">Containerization Strategy</h4>
+<ul>
+<li><strong>Docker Multi-stage Builds</strong>
+<ul>
+<li>Separate build and runtime stages</li>
+<li>Minimal base images (Alpine/Distroless)</li>
+<li>Security scanning in CI pipeline</li>
+<li>Layer caching for faster builds</li>
+</ul></li>
+</ul>
+<h4 id="orchestration">Orchestration</h4>
+<ul>
+<li><strong>Development</strong>: Docker Compose
+<ul>
+<li>Service definitions with health checks</li>
+<li>Volume mounting for development</li>
+<li>Environment-specific overrides</li>
+<li>Network isolation between services</li>
+</ul></li>
+<li><strong>Production</strong>: Kubernetes/EKS
+<ul>
+<li>Helm charts for each service</li>
+<li>Resource requests and limits</li>
+<li>Horizontal Pod Autoscaler (HPA)</li>
+<li>Pod Disruption Budgets (PDB)</li>
+<li>Node affinity and anti-affinity rules</li>
+<li>Tolerations and taints for specialized workloads</li>
+</ul></li>
+</ul>
+<h4 id="networking-security">Networking &amp; Security</h4>
+<ul>
+<li><strong>Service Mesh</strong>: Istio/Linkerd (optional for advanced
+traffic management)</li>
+<li><strong>API Gateway</strong>: Kong or AWS API Gateway (edge)</li>
+<li><strong>Service-to-Service</strong>: Internal cluster IP or service
+mesh</li>
+<li><strong>External Access</strong>: Ingress controller with TLS
+termination</li>
+<li><strong>Security Policies</strong>: Network policies,
+PodSecurityPolicies/RBAC</li>
+<li><strong>Secrets Management</strong>: Kubernetes Secrets or AWS
+Secrets Manager</li>
+<li><strong>Image Scanning</strong>: Trivy or similar in CI
+pipeline</li>
+</ul>
+<h4 id="observability">Observability</h4>
+<ul>
+<li><strong>Logging</strong>: Structured JSON logging (Winston for Node,
+standard logging for Python)
+<ul>
+<li>Centralized aggregation (ELK stack or similar)</li>
+<li>Correlation IDs for request tracing</li>
+<li>Different log levels (debug, info, warn, error)</li>
+<li>Audit trails for security-relevant events</li>
+</ul></li>
+<li><strong>Metrics</strong>: Prometheus + Grafana
+<ul>
+<li>Application-level metrics (request latency, error rates)</li>
+<li>Business metrics (active users, content uploads, reel
+generations)</li>
+<li>Infrastructure metrics (CPU, memory, disk, network)</li>
+<li>Custom metrics for domain-specific KPIs</li>
+</ul></li>
+<li><strong>Tracing</strong>: Jaeger or AWS X-Ray
+<ul>
+<li>Distributed tracing across services</li>
+<li>Span attributes for debugging</li>
+<li>Latency bottleneck identification</li>
+<li>Error propagation tracking</li>
+</ul></li>
+</ul>
+<h4 id="cicd-pipeline">CI/CD Pipeline</h4>
+<ul>
+<li><strong>Source Control</strong>: Git with trunk-based
+development</li>
+<li><strong>Continuous Integration</strong>:
+<ul>
+<li>Automated testing on pull requests</li>
+<li>Code quality checks (ESLint, Prettier)</li>
+<li>Security scanning (SAST, dependency checks)</li>
+<li>Docker image building and vulnerability scanning</li>
+<li>Deployment to staging environment</li>
+</ul></li>
+<li><strong>Continuous Deployment</strong>:
+<ul>
+<li>Blue-green or canary deployments</li>
+<li>Automated rollback on health check failures</li>
+<li>Database migration management</li>
+<li>Feature flag integration</li>
+<li>Performance benchmarking</li>
+</ul></li>
+</ul>
+<h3 id="data-models-relationships">Data Models &amp; Relationships</h3>
+<h4 id="core-entities">Core Entities</h4>
+<ol type="1">
+<li><strong>User</strong>
+<ul>
+<li>id: UUID (PK)</li>
+<li>email: string (unique)</li>
+<li>username: string (unique)</li>
+<li>password_hash: string</li>
+<li>full_name: string</li>
+<li>role: enum (guest, user, scholar, professor, moderator, admin)</li>
+<li>verification_status: enum</li>
+<li>orcid_id: string (nullable)</li>
+<li>institution_name: string (nullable)</li>
+<li>research_interests: string array</li>
+<li>created_at: timestamp</li>
+<li>updated_at: timestamp</li>
+</ul></li>
+<li><strong>Post</strong>
+<ul>
+<li>id: UUID (PK)</li>
+<li>author_id: UUID (FK to User)</li>
+<li>content_type: enum (text, paper, dataset, update)</li>
+<li>caption: string</li>
+<li>media_url: string (nullable)</li>
+<li>doi: string (nullable, unique)</li>
+<li>moderation_status: enum (pending, approved, rejected)</li>
+<li>created_at: timestamp</li>
+<li>updated_at: timestamp</li>
+</ul></li>
+<li><strong>Reel</strong>
+<ul>
+<li>id: UUID (PK)</li>
+<li>author_id: UUID (FK to User)</li>
+<li>source_post_id: UUID (FK to Post, nullable)</li>
+<li>title: string</li>
+<li>video_url: string</li>
+<li>hls_url: string (for streaming)</li>
+<li>thumbnail_url: string</li>
+<li>generation_status: enum (pending, processing, completed,
+failed)</li>
+<li>created_at: timestamp</li>
+<li>updated_at: timestamp</li>
+</ul></li>
+<li><strong>Message</strong>
+<ul>
+<li>id: UUID (PK)</li>
+<li>conversation_id: UUID (FK to Conversation)</li>
+<li>sender_id: UUID (FK to User)</li>
+<li>body: text</li>
+<li>read_at: timestamp (nullable)</li>
+<li>created_at: timestamp</li>
+</ul></li>
+<li><strong>Project</strong>
+<ul>
+<li>id: UUID (PK)</li>
+<li>owner_id: UUID (FK to User)</li>
+<li>title: string</li>
+<li>description: text</li>
+<li>visibility: enum (private, public, organization)</li>
+<li>created_at: timestamp</li>
+<li>updated_at: timestamp</li>
+</ul></li>
+<li><strong>ProjectTask</strong>
+<ul>
+<li>id: UUID (PK)</li>
+<li>project_id: UUID (FK to Project)</li>
+<li>title: string</li>
+<li>status: enum (todo, in_progress, review, done)</li>
+<li>assignee_id: UUID (FK to User, nullable)</li>
+<li>due_at: timestamp (nullable)</li>
+<li>created_at: timestamp</li>
+<li>updated_at: timestamp</li>
+</ul></li>
+<li><strong>ModerationReport</strong>
+<ul>
+<li>id: UUID (PK)</li>
+<li>reporter_id: UUID (FK to User)</li>
+<li>target_type: enum (post, reel, comment, user, message)</li>
+<li>target_id: UUID</li>
+<li>reason: string</li>
+<li>status: enum (pending, reviewed, action_taken, dismissed)</li>
+<li>reviewer_id: UUID (FK to User, nullable)</li>
+<li>created_at: timestamp</li>
+<li>updated_at: timestamp</li>
+</ul></li>
+</ol>
+<h4 id="relationships">Relationships</h4>
+<ul>
+<li>User 1:∞ Post (author)</li>
+<li>User 1:∞ Reel (author)</li>
+<li>Post 0:1 Reel (source)</li>
+<li>User 1:∞ Message (sender)</li>
+<li>Conversation 1:∞ Message</li>
+<li>User 1:∞ Project (owner)</li>
+<li>Project 1:∞ ProjectTask</li>
+<li>User 1:∞ ModerationReport (reporter)</li>
+<li>User 0:∞ ModerationReport (reviewer)</li>
+<li>Various entities 0:1 ModerationReport (target)</li>
+</ul>
+<h3 id="api-design">API Design</h3>
+<h4 id="restful-endpoints">RESTful Endpoints</h4>
+<h5 id="authentication">Authentication</h5>
+<pre><code>POST /api/auth/register     # User registration with OTP
+POST /api/auth/verify-otp   # OTP verification
+POST /api/auth/login        # User login
+POST /api/auth/logout       # User logout
+GET  /api/auth/me           # Get current user</code></pre>
+<h5 id="posts">Posts</h5>
+<pre><code>GET    /api/posts           # Get posts (with filtering/pagination)
+POST   /api/posts           # Create new post
+GET    /api/posts/:id       # Get specific post
+PUT    /api/posts/:id       # Update post
+DELETE /api/posts/:id       # Delete post
+POST   /api/posts/:id/media # Upload media for post</code></pre>
+<h5 id="reels">Reels</h5>
+<pre><code>GET    /api/reels           # Get reels (with filtering/pagination)
+POST   /api/reels           # Create new reel
+GET    /api/reels/:id       # Get specific reel</code></pre>
+<h5 id="media">Media</h5>
+<pre><code>POST   /api/media           # Upload and process media</code></pre>
+<h5 id="messages">Messages</h5>
+<pre><code>GET    /api/messages        # Get conversations
+GET    /api/messages/:conv  # Get messages in conversation
+POST   /api/messages        # Send new message</code></pre>
+<h5 id="projects">Projects</h5>
+<pre><code>GET    /api/projects        # Get projects (with filtering)
+POST   /api/projects        # Create new project
+GET    /api/projects/:id    # Get specific project
+PUT    /api/projects/:id    # Update project
+DELETE /api/projects/:id    # Delete project</code></pre>
+<h5 id="project-tasks">Project Tasks</h5>
+<pre><code>GET    /api/projects/:id/tasks     # Get project tasks
+POST   /api/projects/:id/tasks     # Create project task
+GET    /api/projects/:id/tasks/:t  # Get specific task
+PUT    /api/projects/:id/tasks/:t  # Update task
+DELETE /api/projects/:id/tasks/:t  # Delete task</code></pre>
+<h5 id="ai-assistance">AI Assistance</h5>
+<pre><code>POST   /api/ai                # AI chat/query endpoint</code></pre>
+<h5 id="moderation">Moderation</h5>
+<pre><code>GET    /api/moderation        # Get moderation queue
+POST   /api/moderation        # Submit report
+PUT    /api/moderation/:id    # Update report status</code></pre>
+<h4 id="websocket-events">WebSocket Events</h4>
+<pre><code>connection          # Client connects
+disconnect         # Client disconnects
+join_room          # Join a room (conversation, project, etc.)
+leave_room         # Leave a room
+message            # Send chat message
+typing_start       # User starts typing
+typing_stop        # User stops typing
+notification       # Server sends notification
+reel_update        # Reel generation progress
+project_update     # Project update notification</code></pre>
+<h3 id="security-architecture">Security Architecture</h3>
+<h4 id="authentication-authorization">Authentication &amp;
+Authorization</h4>
+<ul>
+<li><strong>JWT Tokens</strong>: Short-lived access tokens (15min) with
+refresh tokens</li>
+<li><strong>Password Security</strong>: Argon2id with configurable
+memory and time costs</li>
+<li><strong>OTP Verification</strong>: Time-based one-time passwords for
+registration</li>
+<li><strong>Role-Based Access Control</strong>: Fine-grained permissions
+per role</li>
+<li><strong>Resource Ownership</strong>: Users can only modify their own
+resources unless granted explicit permissions</li>
+<li><strong>Admin Functions</strong>: Protected endpoints requiring
+admin role</li>
+<li><strong>Moderation Workflow</strong>: Separate role for content
+moderation</li>
+</ul>
+<h4 id="data-protection">Data Protection</h4>
+<ul>
+<li><strong>Encryption in Transit</strong>: TLS 1.3 for all service
+communications</li>
+<li><strong>Encryption at Rest</strong>:
+<ul>
+<li>Database encryption at storage level (AWS RDS encryption or
+PostgreSQL TDE)</li>
+<li>File encryption for sensitive data in object storage</li>
+<li>Environment variable encryption (Kubernetes Secrets or AWS Secrets
+Manager)</li>
+</ul></li>
+<li><strong>Secrets Management</strong>: No hardcoded credentials; all
+via secure secret stores</li>
+<li><strong>Input Validation</strong>: Comprehensive validation using
+Zod schemas</li>
+<li><strong>Output Encoding</strong>: Context-aware encoding to prevent
+XSS</li>
+<li><strong>SQL Injection Prevention</strong>: Parameterized queries via
+pg library</li>
+<li><strong>NoSQl Injection Prevention</strong>: Input validation and
+sanitization</li>
+<li><strong>Command Injection Prevention</strong>: Avoid shell commands;
+use library APIs when necessary</li>
+</ul>
+<h4 id="network-security">Network Security</h4>
+<ul>
+<li><strong>Zero Trust Networking</strong>: Service-to-service
+authentication and authorization</li>
+<li><strong>Network Segmentation</strong>: Separate namespaces for
+different trust levels</li>
+<li><strong>Firewall Rules</strong>: Strict ingress/egress controls</li>
+<li><strong>DDoS Protection</strong>: Rate limiting at API gateway and
+cloud provider level</li>
+<li><strong>WAF</strong>: Web Application Firefilter for common web
+vulnerabilities</li>
+<li><strong>API Security</strong>: Rate limiting, request size limits,
+timeout protection</li>
+</ul>
+<h4 id="application-security">Application Security</h4>
+<ul>
+<li><strong>Dependency Scanning</strong>: Regular vulnerability checks
+(npm audit, safety)</li>
+<li><strong>Static Analysis</strong>: ESLint with security plugins,
+Bandit for Python</li>
+<li><strong>Dynamic Analysis</strong>: OWASP ZAP scans in CI/CD</li>
+<li><strong>Dependency Management</strong>: Locked versions with regular
+updates</li>
+<li><strong>Privilege Minimization</strong>: Least privilege principle
+for all services</li>
+<li><strong>Container Security</strong>: Non-root users, read-only
+filesystems where possible</li>
+<li><strong>Immutable Infrastructure</strong>: Infrastructure as Code
+with Terraform</li>
+</ul>
+<h3 id="performance-optimization">Performance Optimization</h3>
+<h4 id="frontend-optimizations">Frontend Optimizations</h4>
+<ul>
+<li><strong>Code Splitting</strong>: Route-based and component-based
+splitting</li>
+<li><strong>Lazy Loading</strong>: Images, components, and data loaded
+on demand</li>
+<li><strong>Caching Strategy</strong>:
+<ul>
+<li>HTTP caching with proper cache-control headers</li>
+<li>SWR/stale-while-revalidate for data fetching</li>
+<li>Service worker caching for offline capabilities</li>
+</ul></li>
+<li><strong>Bundle Optimization</strong>:
+<ul>
+<li>Tree shaking to remove unused code</li>
+<li>CSS purging with Tailwind</li>
+<li>Image optimization with Next.js Image</li>
+<li>Font optimization and preloading</li>
+</ul></li>
+<li><strong>Rendering Strategy</strong>:
+<ul>
+<li>Server-side rendering for SEO-critical pages</li>
+<li>Static site generation where appropriate</li>
+<li>Client-side rendering for dynamic dashboards</li>
+</ul></li>
+<li><strong>Performance Budgets</strong>:
+<ul>
+<li>First Contentful Paint &lt; 1.5s</li>
+<li>Time to Interactive &lt; 3s</li>
+<li>Largest Contentful Paint &lt; 2.5s</li>
+<li>Cumulative Layout Shift &lt; 0.1</li>
+</ul></li>
+</ul>
+<h4 id="backend-optimizations">Backend Optimizations</h4>
+<ul>
+<li><strong>Database Optimization</strong>:
+<ul>
+<li>Connection pooling (pgPool for PostgreSQL)</li>
+<li>Read replicas for distributing read load</li>
+<li>Query optimization with EXPLAIN ANALYZE</li>
+<li>Proper indexing strategy (BTREE, GIN, GiST as appropriate)</li>
+<li>Regular vacuum and analyze operations</li>
+<li>Partitioning for large tables (time-based for logs/events)</li>
+</ul></li>
+<li><strong>Caching Strategy</strong>:
+<ul>
+<li>Redis for session storage and frequent lookups</li>
+<li>Multi-level caching (L1: application memory, L2: Redis)</li>
+<li>Cache warming for predictable access patterns</li>
+<li>Cache invalidation strategies (time-based, event-based)</li>
+<li>Distributed locking to prevent cache stampede</li>
+</ul></li>
+<li><strong>Async Processing</strong>:
+<ul>
+<li>BullMQ for background job processing</li>
+<li>Dead letter queues for failed jobs</li>
+<li>Retry mechanisms with exponential backoff</li>
+<li>Priority queues for urgent tasks</li>
+<li>Rate limiting for external API calls</li>
+</ul></li>
+<li><strong>API Optimization</strong>:
+<ul>
+<li>Pagination for large result sets</li>
+<li>Field selection to reduce payload size</li>
+<li>ETag headers for conditional requests</li>
+<li>Compression (gzip/brotli) for responses</li>
+<li>HTTP/2 support where available</li>
+<li>Connection keep-alive and pooling</li>
+</ul></li>
+</ul>
+<h4 id="infrastructure-optimization">Infrastructure Optimization</h4>
+<ul>
+<li><strong>Container Resource Management</strong>:
+<ul>
+<li>CPU and memory requests/limits based on profiling</li>
+<li>Vertical Pod Autoscaler for right-sizing</li>
+<li>Node affinity for workload placement</li>
+<li>Taints and tolerations for specialized hardware</li>
+</ul></li>
+<li><strong>Storage Optimization</strong>:
+<ul>
+<li>SSD-backed storage for databases</li>
+<li>Object storage lifecycle policies</li>
+<li>CDN for static asset delivery</li>
+<li>Edge computing for latency-sensitive operations</li>
+</ul></li>
+<li><strong>Network Optimization</strong>:
+<ul>
+<li>Regional deployment for user proximity</li>
+<li>Connection pooling for external services</li>
+<li>Keep-alive connections for database pools</li>
+<li>HTTP/2 or gRPC for service-to-service communication</li>
+<li>Compression for inter-service communication</li>
+</ul></li>
+</ul>
+<h3 id="reliability-fault-tolerance">Reliability &amp; Fault
+Tolerance</h3>
+<h4 id="resilience-patterns">Resilience Patterns</h4>
+<ul>
+<li><strong>Circuit Breaker</strong>: Prevent cascading failures (using
+opossum or similar)</li>
+<li><strong>Retry Logic</strong>: Exponential backoff with jitter</li>
+<li><strong>Bulkhead Pattern</strong>: Isolate critical resources</li>
+<li><strong>Rate Limiting</strong>: Protect against traffic spikes</li>
+<li><strong>Timeouts</strong>: Configurable timeouts for all external
+calls</li>
+<li><strong>Fallback Mechanisms</strong>: Degraded functionality when
+services unavailable</li>
+<li><strong>Health Checks</strong>: Liveness and readiness probes for
+all services</li>
+</ul>
+<h4 id="data-durability">Data Durability</h4>
+<ul>
+<li><strong>Database Backup Strategy</strong>:
+<ul>
+<li>Automated daily snapshots</li>
+<li>Point-in-time recovery enabled</li>
+<li>Cross-region replication for disaster recovery</li>
+<li>Regular restore testing</li>
+</ul></li>
+<li><strong>Object Storage Durability</strong>:
+<ul>
+<li>Cross-region replication (AWS S3 Cross-Region Replication)</li>
+<li>Versioning enabled for all buckets</li>
+<li>Lifecycle policies for cost optimization</li>
+<li>Object lock for compliance requirements (if needed)</li>
+</ul></li>
+<li><strong>Message Queue Persistence</strong>:
+<ul>
+<li>RabbitMQ/Redeis persistence for critical queues</li>
+<li>Dead letter queues for failed message analysis</li>
+<li>Message TTL to prevent queue overflow</li>
+</ul></li>
+</ul>
+<h4 id="disaster-recovery">Disaster Recovery</h4>
+<ul>
+<li><strong>Multi-Region Deployment</strong>:
+<ul>
+<li>Active-passive or active-active setup</li>
+<li>Database replication across regions</li>
+<li>DNS failover with health checks</li>
+<li>Automated failover procedures</li>
+</ul></li>
+<li><strong>Backup and Restore</strong>:
+<ul>
+<li>Regular automated backups tested quarterly</li>
+<li>Runbook documentation for recovery procedures</li>
+<li>Recovery Time Objective (RTO) &lt; 4 hours</li>
+<li>Recovery Point Objective (RPO) &lt; 1 hour</li>
+</ul></li>
+</ul>
+<h4 id="monitoring-alerting">Monitoring &amp; Alerting</h4>
+<ul>
+<li><strong>Health Checks</strong>:
+<ul>
+<li>Liveness probes: Is the application running?</li>
+<li>Readiness probes: Is the application ready to serve traffic?</li>
+<li>Startup probes: Has the application finished starting?</li>
+</ul></li>
+<li><strong>Service Level Objectives (SLOs)</strong>:
+<ul>
+<li>Availability: 99.9% monthly uptime</li>
+<li>Latency: 95% of requests &lt; 200ms</li>
+<li>Error Rate: &lt; 0.5% error rate</li>
+<li>Throughput: Handle expected peak load</li>
+</ul></li>
+<li><strong>Alerting Strategy</strong>:
+<ul>
+<li>Critical: Page-ready alerts for system-down scenarios</li>
+<li>Warning: Ticket-generating alerts for performance degradation</li>
+<li>Info: Log-only notifications for trends and awareness</li>
+<li>Alert fatigue prevention through proper threshold tuning</li>
+</ul></li>
+</ul>
+<h3 id="development-practices">Development Practices</h3>
+<h4 id="code-quality">Code Quality</h4>
+<ul>
+<li><strong>Linting</strong>: ESLint (JavaScript/TypeScript), Flake8
+(Python)</li>
+<li><strong>Formatting</strong>: Prettier (JS/TS), Black (Python)</li>
+<li><strong>Type Checking</strong>: TypeScript strict mode, MyPy
+(Python)</li>
+<li><strong>Code Reviews</strong>: Mandatory pull request reviews</li>
+<li><strong>Branch Strategy</strong>: Trunk-based development with
+short-lived feature branches</li>
+<li><strong>Commit Standards</strong>: Conventional commits for
+changelog generation</li>
+</ul>
+<h4 id="testing-strategy">Testing Strategy</h4>
+<ul>
+<li><strong>Unit Testing</strong>:
+<ul>
+<li>Jest for JavaScript/TypeScript</li>
+<li>Pytest for Python</li>
+<li>Target: 80%+ line coverage</li>
+<li>Mock external dependencies</li>
+</ul></li>
+<li><strong>Integration Testing</strong>:
+<ul>
+<li>SuperTest for API endpoint testing</li>
+<li>Database fixtures for consistent state</li>
+<li>Service contract testing</li>
+</ul></li>
+<li><strong>End-to-End Testing</strong>:
+<ul>
+<li>Cypress for user flow testing</li>
+<li>Critical path coverage</li>
+<li>Cross-browser testing</li>
+</ul></li>
+<li><strong>Performance Testing</strong>:
+<ul>
+<li>k6 or JMeter for load testing</li>
+<li>Stress testing for breaking point determination</li>
+<li>Soak testing for memory leak detection</li>
+</ul></li>
+<li><strong>Security Testing</strong>:
+<ul>
+<li>SAST: SonarQube or similar</li>
+<li>DAST: OWASP ZAP in CI pipeline</li>
+<li>Dependency scanning: npm audit, safety, dependabot</li>
+<li>Container scanning: Trivy or Clair</li>
+</ul></li>
+</ul>
+<h4 id="documentation">Documentation</h4>
+<ul>
+<li><strong>API Documentation</strong>: Swagger/OpenAPI with automatic
+generation</li>
+<li><strong>Architecture Decision Records (ADR)</strong>: For
+significant architectural decisions</li>
+<li><strong>Runbooks</strong>: For operational procedures and incident
+response</li>
+<li><strong>User Guides</strong>: End-user documentation for platform
+features</li>
+<li><strong>Developer Guides</strong>: Onboarding and development setup
+instructions</li>
+</ul>
+<h3 id="compliance-governance">Compliance &amp; Governance</h3>
+<h4 id="data-protection-1">Data Protection</h4>
+<ul>
+<li><strong>GDPR Compliance</strong>:
+<ul>
+<li>Right to access, rectification, erasure</li>
+<li>Data portability provisions</li>
+<li>Privacy by design and default</li>
+<li>Data protection impact assessments</li>
+</ul></li>
+<li><strong>Data Retention</strong>:
+<ul>
+<li>Configurable retention policies per data type</li>
+<li>Automated deletion of expired data</li>
+<li>Audit trail preservation requirements</li>
+</ul></li>
+</ul>
+<h4 id="accessibility">Accessibility</h4>
+<ul>
+<li><strong>WCAG 2.1 AA Compliance</strong>:
+<ul>
+<li>Keyboard navigation support</li>
+<li>Screen reader compatibility</li>
+<li>Color contrast ratios</li>
+<li>Alternative text for media</li>
+<li>Form labeling and error identification</li>
+</ul></li>
+</ul>
+<h4 id="audit-logging">Audit &amp; Logging</h4>
+<ul>
+<li><strong>Immutable Logs</strong>: Write-once storage for audit
+trails</li>
+<li><strong>Log Retention</strong>: Configurable based on regulatory
+requirements</li>
+<li><strong>Log Integrity</strong>: Hash chaining or write-once
+storage</li>
+<li><strong>Access Logging</strong>: Who accessed what and when</li>
+<li><strong>Change Tracking</strong>: Field-level auditing for sensitive
+data</li>
+</ul>
+<h3 id="future-enhancements-roadmap">Future Enhancements &amp;
+Roadmap</h3>
+<h4 id="phase-1-foundation-current">Phase 1: Foundation (Current)</h4>
+<ul>
+<li>Core social networking features</li>
+<li>Basic AI assistance</li>
+<li>Document sharing and discussion</li>
+<li>Project collaboration workspaces</li>
+<li>Reel generation from text content</li>
+</ul>
+<h4 id="phase-2-enhancement">Phase 2: Enhancement</h4>
+<ul>
+<li>Advanced AI features (research summarization, literature review
+assistance)</li>
+<li>Enhanced multimedia support (interactive datasets, 3D models)</li>
+<li>Improved discovery algorithms (personalized recommendations)</li>
+<li>Mobile applications (iOS/Android)</li>
+<li>Offline capabilities with sync</li>
+</ul>
+<h4 id="phase-3-enterprise">Phase 3: Enterprise</h4>
+<ul>
+<li>Single Sign-On (SAML/OAuth)</li>
+<li>Advanced analytics and reporting</li>
+<li>Custom branding and white-labeling</li>
+<li>Advanced compliance features (HIPAA, GDPR automation)</li>
+<li>Dedicated support and SLAs</li>
+</ul>
+<h4 id="phase-4-innovation">Phase 4: Innovation</h4>
+<ul>
+<li>Real-time collaboration (multi-user editing)</li>
+<li>Augmented reality research visualization</li>
+<li>Blockchain-based provenance tracking</li>
+<li>Advanced predictive analytics for research trends</li>
+<li>Integration with academic repositories (arXiv, PubMed, etc.)</li>
+</ul>
+<h2 id="technical-specifications">Technical Specifications</h2>
+<h3 id="supported-technologies">Supported Technologies</h3>
+<ul>
+<li><strong>Frontend</strong>: Next.js 16.2.2, React 18, TypeScript,
+Tailwind CSS</li>
+<li><strong>Backend</strong>: Node.js 18+, Express.js, PostgreSQL 15,
+Redis 7</li>
+<li><strong>AI Services</strong>: Google Gemini API, Qdrant Vector
+Database</li>
+<li><strong>Media Processing</strong>: FFmpeg, ImageMagick/sharp</li>
+<li><strong>Deployment</strong>: Docker, Kubernetes/EKS, Helm</li>
+<li><strong>Monitoring</strong>: Prometheus, Grafana, ELK stack,
+Jaeger</li>
+<li><strong>Testing</strong>: Jest, Pytest, Cypress</li>
+<li><strong>CI/CD</strong>: GitHub Actions, Terraform</li>
+</ul>
+<h3 id="supported-browsers">Supported Browsers</h3>
+<ul>
+<li>Chrome: Latest 2 versions</li>
+<li>Firefox: Latest 2 versions</li>
+<li>Safari: Latest 2 versions</li>
+<li>Edge: Latest 2 versions</li>
+<li>Mobile Safari: Latest 2 versions</li>
+<li>Chrome Android: Latest 2 versions</li>
+</ul>
+<h3 id="database-schema-versioning">Database Schema Versioning</h3>
+<ul>
+<li>Migration tool: node-pg-migrate</li>
+<li>Backward compatible changes only</li>
+<li>Data migration scripts for breaking changes</li>
+<li>Rollback procedures for failed migrations</li>
+</ul>
+<h3 id="api-versioning">API Versioning</h3>
+<ul>
+<li>Version in URL path: <code>/api/v1/resource/</code></li>
+<li>Deprecation policy: 6-month notice for breaking changes</li>
+<li>Semantic versioning for API contract</li>
+<li>Backward compatibility maintained within major version</li>
+</ul>
+<h3 id="environmental-requirements">Environmental Requirements</h3>
+<h4 id="development">Development</h4>
+<ul>
+<li>Node.js &gt;= 18.0.0</li>
+<li>Python &gt;= 3.9.0</li>
+<li>Docker &gt;= 20.10.0</li>
+<li>Docker Compose &gt;= 2.0.0</li>
+<li>Git &gt;= 2.30.0</li>
+</ul>
+<h4 id="production">Production</h4>
+<ul>
+<li>Kubernetes &gt;= 1.24.0</li>
+<li>Helm &gt;= 3.0.0</li>
+<li>PostgreSQL &gt;= 15.0</li>
+<li>Redis &gt;= 7.0</li>
+<li>Object storage (S3-compatible)</li>
+</ul>
+<h3 id="licensing-dependencies">Licensing &amp; Dependencies</h3>
+<ul>
+<li><strong>Open Source Components</strong>: MIT, Apache 2.0, ISC
+licenses predominant</li>
+<li><strong>Commercial Licenses</strong>: None required for core
+functionality</li>
+<li><strong>Managed Services</strong>: AWS/GCP/Azure services used where
+appropriate</li>
+<li><strong>Distribution</strong>: Source available under appropriate
+open source license</li>
+</ul>

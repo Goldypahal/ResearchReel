@@ -111,6 +111,9 @@ const trackEvent = async ({ user_id, event_type, entity_id, entity_type, metadat
     await flushQueue();
   } else if (!batchTimeout) {
     batchTimeout = setTimeout(flushQueue, BATCH_INTERVAL_MS);
+    if (batchTimeout && typeof batchTimeout.unref === 'function') {
+      batchTimeout.unref();
+    }
   }
 };
 

@@ -25,6 +25,7 @@ import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { SocialProvider } from "@/context/SocialContext";
 import NavigationWrapper from "@/components/navigation/NavigationWrapper";
+import { Toaster } from "@/components/ui/Toast";
 
 export default function RootLayout({
   children,
@@ -43,6 +44,7 @@ export default function RootLayout({
               <NavigationWrapper>
                 {children}
               </NavigationWrapper>
+              <Toaster />
             </ThemeProvider>
           </SocialProvider>
         </AuthProvider>
