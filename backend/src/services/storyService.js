@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { notBlocked, notMuted } = require('./blockService');
 
 const MAX_STORY_LENGTH = 280;
 const GRADIENT_PATTERN = /^[a-z0-9:\-\/\s\[\]#().,%]{0,120}$/i;
@@ -13,7 +14,8 @@ const feed = async (viewerId) => {
      FROM stories s
      JOIN users u ON u.id = s.author_id
      WHERE s.expires_at > NOW()
-       AND (s.author_id = $1 OR s.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1))
+       AND (s.author_id = $1 OR (s.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1)
+            AND ${notBlocked('$1', 's.author_id')} AND ${notMuted('$1', 's.author_id')}))
      ORDER BY (s.author_id = $1) DESC, s.created_at ASC`,
     [viewerId]
   );

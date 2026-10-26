@@ -23,6 +23,7 @@ router.get('/me', authMiddleware, userController.getMe);
 router.get('/me/analytics', authMiddleware, userController.getAnalytics);
 router.get('/me/achievements', authMiddleware, social.getAchievements);
 router.get('/me/suggestions', authMiddleware, social.getSuggestions);
+router.get('/me/blocked', authMiddleware, social.listBlocked);
 router.put('/update', authMiddleware, rateLimiter.action('update-profile', { ip: 60, user: 30, window: 3600 }), userController.updateProfile);
 router.post('/me/avatar', authMiddleware, rateLimiter.action('upload-avatar', { ip: 30, user: 10, window: 3600 }), handleAvatar, virusScan, account.uploadAvatar);
 router.delete('/me/avatar', authMiddleware, account.removeAvatar);
@@ -42,5 +43,9 @@ router.get('/:username/followers', optionalAuth, social.getFollowers);
 router.get('/:username/following', optionalAuth, social.getFollowing);
 router.post('/:username/follow', authMiddleware, rateLimiter.action('follow', { ip: 120, user: 60, window: 3600 }), social.follow);
 router.delete('/:username/follow', authMiddleware, social.unfollow);
+router.post('/:username/block', authMiddleware, rateLimiter.action('block', { ip: 120, user: 60, window: 3600 }), social.block);
+router.delete('/:username/block', authMiddleware, social.unblock);
+router.post('/:username/mute', authMiddleware, rateLimiter.action('block', { ip: 120, user: 60, window: 3600 }), social.mute);
+router.delete('/:username/mute', authMiddleware, social.unmute);
 
 module.exports = router;

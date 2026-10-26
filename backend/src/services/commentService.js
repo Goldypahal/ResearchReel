@@ -1,6 +1,19 @@
 const db = require('../config/db');
 const { notify } = require('./notificationService');
 const { moderateText } = require('../utils/moderator');
+const { notBlocked, isBlockedEitherWay } = require('./blockService');
+
+/** Comments by accounts blocked either way are left out for that viewer. */
+const visibleAuthor = (viewer) => (viewer ? `AND (c.author_id = ${viewer} OR ${notBlocked(viewer, 'c.author_id')})` : '');
+
+/** A post whose author blocked the viewer (or vice versa) doesn't exist for them. */
+const assertPostVisible = async (postId, viewerId) => {
+  const post = isUuid(postId)
+    ? (await db.query('SELECT id, author_id FROM posts WHERE id = $1 AND deleted_at IS NULL', [postId])).rows[0]
+    : null;
+  if (!post || (viewerId && await isBlockedEitherWay(viewerId, post.author_id))) throw fail('Post not found.', 404, 'NOT_FOUND');
+  return post;
+};
 
 const MAX_LENGTH = 2000;
 const MAX_MENTIONS = 10;
@@ -63,6 +76,7 @@ const SELECT = (viewer) => `
 const listTopLevel = async (postId, { viewerId, sort = 'top', cursor, limit = PAGE } = {}) => {
   const size = Math.min(Math.max(Number(limit) || PAGE, 1), 50);
   const offset = Math.max(Number(cursor) || 0, 0);
+  await assertPostVisible(postId, viewerId);
   const params = [postId];
   const viewer = viewerId ? (params.push(viewerId), `$${params.length}`) : null;
   const order = sort === 'new'
@@ -71,7 +85,7 @@ const listTopLevel = async (postId, { viewerId, sort = 'top', cursor, limit = PA
   params.push(size + 1, offset);
   const res = await db.query(
     `SELECT * FROM (${SELECT(viewer)}
-       WHERE c.post_id = $1 AND c.parent_id IS NULL
+       WHERE c.post_id = $1 AND c.parent_id IS NULL ${visibleAuthor(viewer)}
      ) c
      -- Tombstones only stay while they still have replies.
      WHERE (NOT c.is_deleted OR c.reply_count > 0)
@@ -87,6 +101,7 @@ const listTopLevel = async (postId, { viewerId, sort = 'top', cursor, limit = PA
 const listReplies = async (postId, commentId, { viewerId, cursor, limit = REPLY_PAGE } = {}) => {
   if (!isUuid(commentId)) throw fail('Comment not found.', 404, 'NOT_FOUND');
   const size = Math.min(Math.max(Number(limit) || REPLY_PAGE, 1), 50);
+  await assertPostVisible(postId, viewerId);
   const params = [postId, commentId];
   const viewer = viewerId ? (params.push(viewerId), `$${params.length}`) : null;
   let after = '';
@@ -97,7 +112,7 @@ const listReplies = async (postId, commentId, { viewerId, cursor, limit = REPLY_
   params.push(size + 1);
   const res = await db.query(
     `${SELECT(viewer)}
-     WHERE c.post_id = $1 AND c.parent_id = $2 AND c.deleted_at IS NULL ${after}
+     WHERE c.post_id = $1 AND c.parent_id = $2 AND c.deleted_at IS NULL ${visibleAuthor(viewer)} ${after}
      ORDER BY c.created_at ASC
      LIMIT $${params.length}`,
     params
@@ -121,8 +136,7 @@ const getOne = async (commentId, viewerId) => {
  */
 const create = async ({ postId, authorId, content: raw, parentId }) => {
   const content = cleanContent(raw);
-  const post = (await db.query('SELECT id, author_id FROM posts WHERE id = $1 AND deleted_at IS NULL', [postId])).rows[0];
-  if (!post) throw fail('Post not found.', 404, 'NOT_FOUND');
+  const post = await assertPostVisible(postId, authorId);
 
   let rootId = null;
   let replyToUserId = null;
@@ -133,6 +147,7 @@ const create = async ({ postId, authorId, content: raw, parentId }) => {
       [parentId, postId]
     )).rows[0];
     if (!parent || parent.deleted_at) throw fail('The comment you replied to no longer exists.', 404, 'NOT_FOUND');
+    if (await isBlockedEitherWay(authorId, parent.author_id)) throw fail("You can't reply to this comment.", 403, 'BLOCKED');
     rootId = parent.parent_id || parent.id;
     replyToUserId = parent.author_id;
   }

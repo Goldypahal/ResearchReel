@@ -1,5 +1,9 @@
 const db = require('../config/db');
 const { notify } = require('./notificationService');
+const { notBlocked, isBlockedEitherWay } = require('./blockService');
+
+/** Hides accounts that blocked, or were blocked by, the viewer ($1). */
+const VISIBLE_TO_VIEWER = `($1::uuid IS NULL OR u.id = $1::uuid OR ${notBlocked('$1::uuid', 'u.id')})`;
 
 /** Public-safe user columns. $1 is the viewer id (may be NULL). */
 const USER_CARD = `
@@ -34,18 +38,28 @@ const getProfile = async (username, viewerId = null) => {
        (SELECT COUNT(*)::int FROM posts p WHERE p.author_id = u.id AND p.deleted_at IS NULL) AS post_count,
        (SELECT COUNT(*)::int FROM videos v WHERE v.author_id = u.id AND v.deleted_at IS NULL) AS reel_count,
        (SELECT COUNT(*)::int FROM reactions r JOIN posts p ON p.id = r.post_id WHERE p.author_id = u.id) AS reactions_received,
-       (u.id = $1::uuid) AS is_self
+       (u.id = $1::uuid) AS is_self,
+       EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1::uuid AND b.blocked_id = u.id) AS is_blocked,
+       EXISTS (SELECT 1 FROM user_mutes m WHERE m.muter_id = $1::uuid AND m.muted_id = u.id) AS is_muted,
+       EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1::uuid) AS has_blocked_viewer
      FROM users u
      WHERE lower(u.username) = lower($2) AND ${ACTIVE_USER}`,
     [viewerId, username]
   );
-  if (!result.rows.length) throw new SocialError('User not found.', 404, 'NOT_FOUND');
-  return result.rows[0];
+  const profile = result.rows[0];
+  // Someone who blocked you looks like they don't exist; someone you blocked
+  // stays visible (so you can unblock), without their posts.
+  if (!profile || profile.has_blocked_viewer) throw new SocialError('User not found.', 404, 'NOT_FOUND');
+  const { has_blocked_viewer, ...rest } = profile;
+  return rest;
 };
 
 const follow = async (followerId, username) => {
   const targetId = await findUserIdByUsername(username);
   if (targetId === followerId) throw new SocialError('You cannot follow yourself.');
+  if (await isBlockedEitherWay(followerId, targetId)) {
+    throw new SocialError("You can't follow this account.", 403, 'BLOCKED');
+  }
   const inserted = await db.query(
     'INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING follower_id',
     [followerId, targetId]
@@ -65,13 +79,17 @@ const unfollow = async (followerId, username) => {
 /** type: 'followers' | 'following' */
 const listConnections = async (username, type, viewerId = null, { limit = 50, offset = 0 } = {}) => {
   const userId = await findUserIdByUsername(username);
+  if (viewerId && viewerId !== userId) {
+    const hidden = await db.query('SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [userId, viewerId]);
+    if (hidden.rowCount) throw new SocialError('User not found.', 404, 'NOT_FOUND');
+  }
   const join = type === 'followers'
     ? 'JOIN follows c ON c.follower_id = u.id AND c.following_id = $2'
     : 'JOIN follows c ON c.following_id = u.id AND c.follower_id = $2';
   const result = await db.query(
     `SELECT ${USER_CARD}, c.created_at AS connected_at
      FROM users u ${join}
-     WHERE ${ACTIVE_USER}
+     WHERE ${ACTIVE_USER} AND ${VISIBLE_TO_VIEWER}
      ORDER BY c.created_at DESC
      LIMIT $3 OFFSET $4`,
     [viewerId, userId, Math.min(Number(limit) || 50, 100), Math.max(Number(offset) || 0, 0)]
@@ -95,6 +113,7 @@ const suggestions = async (viewerId, limit = 8) => {
      WHERE u.id <> $1::uuid AND ${ACTIVE_USER}
        AND u.verification_status <> 'unverified'
        AND NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1::uuid AND f.following_id = u.id)
+       AND ${VISIBLE_TO_VIEWER}
      ORDER BY mutual_count DESC,
               (COALESCE(u.research_interests, '{}') && COALESCE(me.research_interests, '{}')) DESC,
               follower_count DESC,
@@ -111,7 +130,7 @@ const searchUsers = async (query, viewerId = null, limit = 20) => {
   const result = await db.query(
     `SELECT ${USER_CARD}
      FROM users u
-     WHERE ${ACTIVE_USER} AND u.verification_status <> 'unverified'
+     WHERE ${ACTIVE_USER} AND u.verification_status <> 'unverified' AND ${VISIBLE_TO_VIEWER}
        AND (u.username ILIKE $2 OR u.full_name ILIKE $2 OR u.institution ILIKE $2
             OR EXISTS (SELECT 1 FROM unnest(u.research_interests) ri WHERE ri ILIKE $2))
      ORDER BY (lower(u.username) = lower($3)) DESC,
@@ -157,7 +176,7 @@ const leaderboard = async (viewerId = null, { period = 'month', field = null, li
        s.reactions, s.comments, s.posts, s.new_followers,
        (s.reactions * 3 + s.comments * 2 + s.posts * 5 + s.new_followers * 4) AS score
      FROM stats s JOIN users u ON u.id = s.id
-     WHERE (s.reactions + s.comments + s.posts + s.new_followers) > 0
+     WHERE ${VISIBLE_TO_VIEWER} AND (s.reactions + s.comments + s.posts + s.new_followers) > 0
      ORDER BY score DESC, u.username ASC
      LIMIT $3`,
     params

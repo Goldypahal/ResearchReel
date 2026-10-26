@@ -1,5 +1,6 @@
 const { Client } = require('@elastic/elasticsearch');
 const db = require('../config/db');
+const { notBlocked } = require('./blockService');
 
 // Instantiate Elasticsearch Client
 let esClient = null;
@@ -26,11 +27,13 @@ const stillVisible = async (hits, viewerId) => {
          AND (visibility = 'public' OR uploader_id = $2::uuid)`, true],
     ['researchreel_posts', idsFor('posts'),
       `SELECT p.id FROM posts p JOIN users u ON u.id = p.author_id
-        WHERE p.id = ANY($1::uuid[]) AND p.deleted_at IS NULL AND ${live}`],
+        WHERE p.id = ANY($1::uuid[]) AND p.deleted_at IS NULL AND ${live}
+          AND ($2::uuid IS NULL OR ${notBlocked('$2::uuid', 'p.author_id')})`, true],
     ['researchreel_videos', idsFor('videos'),
       'SELECT id FROM videos WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL'],
     ['researchreel_users', idsFor('users'),
-      `SELECT u.id FROM users u WHERE u.id = ANY($1::uuid[]) AND ${live} AND u.verification_status <> 'unverified'`],
+      `SELECT u.id FROM users u WHERE u.id = ANY($1::uuid[]) AND ${live} AND u.verification_status <> 'unverified'
+         AND ($2::uuid IS NULL OR ${notBlocked('$2::uuid', 'u.id')})`, true],
   ];
   const visible = new Set();
   await Promise.all(checks.map(async ([index, ids, sql, needsViewer]) => {
@@ -166,8 +169,9 @@ const searchDatabaseFallback = async (searchTerm, type, cursor, limit, viewerId 
           FROM users
           WHERE (is_deleted IS NULL OR is_deleted = FALSE) AND verification_status <> 'unverified'
             AND (username ILIKE $1 OR full_name ILIKE $1)
+            AND ($4::uuid IS NULL OR ${notBlocked('$4::uuid', 'users.id')})
           LIMIT $2 OFFSET $3
-        `, [ilikePattern, limit, offset]).then(res => res.rows)
+        `, [ilikePattern, limit, offset, viewerId]).then(res => res.rows)
       );
     }
 
@@ -178,8 +182,9 @@ const searchDatabaseFallback = async (searchTerm, type, cursor, limit, viewerId 
           SELECT id, 'post' AS type, caption AS title, array_to_string(tags, ' ') AS description, created_at
           FROM posts
           WHERE deleted_at IS NULL AND (caption ILIKE $1 OR lower($2) = ANY(tags))
+            AND ($5::uuid IS NULL OR ${notBlocked('$5::uuid', 'posts.author_id')})
           LIMIT $3 OFFSET $4
-        `, [ilikePattern, searchTerm, limit, offset]).then(res => res.rows)
+        `, [ilikePattern, searchTerm, limit, offset, viewerId]).then(res => res.rows)
       );
     }
 

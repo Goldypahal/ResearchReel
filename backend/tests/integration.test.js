@@ -184,9 +184,10 @@ describe('Integration Tests: Core Features', () => {
   const CONV_ID = '44444444-4444-4444-8444-444444444444';
 
   it('should send and retrieve messages', async () => {
-    // 1. Mock sending a message: participant check, insert, sender lookup, read receipt
+    // 1. Mock sending a message: participant check, block check, insert, sender lookup, read receipt
     db.query
       .mockResolvedValueOnce({ rows: [{ '?column?': 1 }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // no block between participants
       .mockResolvedValueOnce({ rows: [{ id: 1, sender_id: 1, content: 'Hello researcher', conversation_id: CONV_ID }] })
       .mockResolvedValueOnce({ rows: [{ username: 'researcher' }] })
       .mockResolvedValueOnce({ rows: [] });

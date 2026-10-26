@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { getIO } = require('./socketService');
 const { publishMessage } = require('./messagePublisher');
+const { isBlockedEitherWay } = require('./blockService');
 
 class ChatError extends Error {
   constructor(message, statusCode = 403) {
@@ -70,6 +71,7 @@ const startDirectConversation = async (user_id, username) => {
   if (!target.rows.length) throw new ChatError('User not found.', 404);
   const otherId = target.rows[0].id;
   if (otherId === user_id) throw new ChatError('You cannot message yourself.', 400);
+  if (await isBlockedEitherWay(user_id, otherId)) throw new ChatError("You can't message this account.", 403);
 
   const existing = await db.query(`
     SELECT c.id FROM conversations c
@@ -133,6 +135,15 @@ const getMessages = async (conversation_id, user_id, cursor, limit = 50) => {
 
 const sendMessage = async ({ conversation_id, sender_id, content, message_type, file_url }) => {
   await checkParticipant(conversation_id, sender_id);
+  // In a 1:1 chat, a block either way stops new messages (history stays).
+  const blocked = await db.query(
+    `SELECT 1 FROM conversations c
+       JOIN conversation_participants o ON o.conversation_id = c.id AND o.user_id <> $2
+       JOIN user_blocks b ON (b.blocker_id = o.user_id AND b.blocked_id = $2) OR (b.blocker_id = $2 AND b.blocked_id = o.user_id)
+      WHERE c.id = $1 AND c.is_group = FALSE LIMIT 1`,
+    [conversation_id, sender_id]
+  );
+  if (blocked && blocked.rowCount) throw new ChatError("You can't message this account.", 403);
 
   const newMessage = await db.query(
     `INSERT INTO messages (conversation_id, sender_id, content, message_type, file_url) 

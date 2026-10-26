@@ -1,6 +1,11 @@
 const db = require('../config/db');
 const searchService = require('./searchService');
 const { signedUrl } = require('../utils/fileAccess');
+const { notBlocked, notMuted } = require('./blockService');
+
+/** Viewer is $1. Blocked accounts (either way) never appear; muted ones leave feeds but not profiles. */
+const NOT_BLOCKED = `($1::uuid IS NULL OR p.author_id = $1::uuid OR ${notBlocked('$1::uuid', 'p.author_id')})`;
+const NOT_MUTED = `($1::uuid IS NULL OR ${notMuted('$1::uuid', 'p.author_id')})`;
 
 /**
  * Shared post projection. $1 is always the viewer id (or NULL for anonymous),
@@ -39,7 +44,8 @@ const clampLimit = (limit, fallback = 20) => Math.min(Math.max(parseInt(limit, 1
  */
 const getFeed = async (cursor, limit = 20, { viewerId = null, scope = 'all', authorId = null, tag = null } = {}) => {
   const params = [viewerId];
-  const where = ['p.deleted_at IS NULL', '(u.is_deleted IS NULL OR u.is_deleted = FALSE)'];
+  const where = ['p.deleted_at IS NULL', '(u.is_deleted IS NULL OR u.is_deleted = FALSE)', NOT_BLOCKED];
+  if (!authorId) where.push(NOT_MUTED);
 
   if (scope === 'following' && viewerId) {
     where.push('(p.author_id = $1::uuid OR p.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1::uuid))');
@@ -68,7 +74,7 @@ const getFeed = async (cursor, limit = 20, { viewerId = null, scope = 'all', aut
 };
 
 const getPostById = async (postId, viewerId = null) => {
-  const result = await db.query(`${POST_SELECT} WHERE p.id = $2 AND p.deleted_at IS NULL`, [viewerId, postId]);
+  const result = await db.query(`${POST_SELECT} WHERE p.id = $2 AND p.deleted_at IS NULL AND ${NOT_BLOCKED}`, [viewerId, postId]);
   return present(result.rows[0] || null);
 };
 
@@ -76,7 +82,7 @@ const getPostById = async (postId, viewerId = null) => {
 const getTrending = async ({ viewerId = null, days = 7, limit = 20 } = {}) => {
   const result = await db.query(
     `${POST_SELECT}
-     WHERE p.deleted_at IS NULL AND p.created_at > NOW() - ($2 || ' days')::interval
+     WHERE p.deleted_at IS NULL AND p.created_at > NOW() - ($2 || ' days')::interval AND ${NOT_BLOCKED} AND ${NOT_MUTED}
      ORDER BY reaction_count DESC, comment_count DESC, p.created_at DESC
      LIMIT $3`,
     [viewerId, String(days), clampLimit(limit)]
@@ -108,7 +114,7 @@ const getBookmarked = async (viewerId, { cursor, limit = 20 } = {}) => {
   const result = await db.query(
     `${POST_SELECT}
      JOIN bookmarks bm ON bm.post_id = p.id AND bm.user_id = $1::uuid
-     WHERE p.deleted_at IS NULL ${cursorSql}
+     WHERE p.deleted_at IS NULL AND ${NOT_BLOCKED} ${cursorSql}
      ORDER BY bm.created_at DESC
      LIMIT $${params.length}`,
     params
