@@ -62,7 +62,8 @@ class SessionRepository {
       const newHash = this.hashToken(newRefreshToken);
       const query = `
         UPDATE user_sessions
-        SET refresh_token_hash = $1, expires_at = $2, last_used_at = NOW(),
+        SET previous_refresh_token_hash = refresh_token_hash, rotated_at = NOW(),
+            refresh_token_hash = $1, expires_at = $2, last_used_at = NOW(),
             sid = COALESCE($4, sid), ip_address = COALESCE($5, ip_address), user_agent = COALESCE($6, user_agent)
         WHERE id = $3 AND revoked_at IS NULL
         RETURNING id, user_id, expires_at;
@@ -127,6 +128,20 @@ SessionRepository.prototype.revokeOwned = async function revokeOwned(userId, ses
     [sessionId, userId]
   );
   return rows[0] ? rows[0].sid : undefined;
+};
+
+/**
+ * A refresh token that was already rotated away from. Returns the session it
+ * belonged to (if still active) and how many seconds ago it was rotated.
+ */
+SessionRepository.prototype.findByPreviousToken = async function findByPreviousToken(refreshToken) {
+  const { rows } = await db.query(
+    `SELECT id, user_id, sid, EXTRACT(EPOCH FROM (NOW() - rotated_at))::int AS seconds_since_rotation
+       FROM user_sessions
+      WHERE previous_refresh_token_hash = $1 AND revoked_at IS NULL`,
+    [this.hashToken(refreshToken)]
+  );
+  return rows[0] || null;
 };
 
 /** Revokes the session with this sid (one device). Returns the sid, or null if none was active. */

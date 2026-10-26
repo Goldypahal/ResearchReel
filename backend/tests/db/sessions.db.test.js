@@ -133,3 +133,27 @@ describe('signing out', () => {
     expect((await request(app).post('/api/v1/auth/login').send({ email: user.email, password: PASSWORD })).status).toBe(401);
   });
 });
+
+describe('refresh token theft', () => {
+  it('ends the session when an old refresh token is replayed later', async () => {
+    const user = await signedInUser();
+    const device = await secondDevice(user);
+    const first = await device.agent.post('/api/v1/auth/refresh');
+    expect(first.status).toBe(200);
+    // Pretend the rotation happened a while ago, then replay the original token.
+    await db.query("UPDATE user_sessions SET rotated_at = NOW() - interval '5 minutes' WHERE user_id = $1 AND rotated_at IS NOT NULL", [user.id]);
+    expect((await request(app).post('/api/v1/auth/refresh').send({ refreshToken: device.refresh })).status).toBe(401);
+    // The legitimate holder of that session is signed out too; other devices aren't.
+    expect(await me(device.agent)).toBe(401);
+    expect((await device.agent.post('/api/v1/auth/refresh')).status).toBe(401);
+    expect(await me(user.agent)).toBe(200);
+  });
+
+  it('tolerates two tabs refreshing at the same moment', async () => {
+    const user = await signedInUser();
+    const device = await secondDevice(user);
+    expect((await device.agent.post('/api/v1/auth/refresh')).status).toBe(200);
+    expect((await request(app).post('/api/v1/auth/refresh').send({ refreshToken: device.refresh })).status).toBe(401);
+    expect(await me(device.agent)).toBe(200);
+  });
+});

@@ -189,6 +189,8 @@ const login = async ({ email, password, reqInfo }) => {
   return { user, accessToken, refreshToken };
 };
 
+const REFRESH_REUSE_GRACE_SECONDS = 30;
+
 const refreshTokens = async (token, reqInfo) => {
   if (!token) {
     throw new AuthError('Refresh token required', 401);
@@ -206,17 +208,25 @@ const refreshTokens = async (token, reqInfo) => {
 
   const { id: userId, sid } = decoded;
 
+  const dbSession = await sessionRepository.findActiveSession(token);
+  if (!dbSession) {
+    // An already-rotated token being replayed: someone else has a copy.
+    // Two tabs refreshing at once look the same for a moment, so allow a short grace window.
+    const reused = await sessionRepository.findByPreviousToken(token);
+    if (reused && reused.seconds_since_rotation > REFRESH_REUSE_GRACE_SECONDS) {
+      await sessionRepository.revokeSession(reused.id);
+      await dropRedisSessions(reused.user_id, [reused.sid]);
+      console.warn(`[auth] refresh token reuse for user ${reused.user_id}; session ${reused.id} revoked`);
+    }
+    throw new AuthError('Session revoked or expired', 401);
+  }
+
   if (sid) {
     const sessionData = await redisClient.get(`session:${userId}:${sid}`);
     if (!sessionData) {
       throw new AuthError('Session revoked or expired', 401);
     }
     await redisClient.del(`session:${userId}:${sid}`);
-  }
-
-  const dbSession = await sessionRepository.findActiveSession(token);
-  if (!dbSession) {
-    throw new AuthError('Active session not found or revoked', 401);
   }
 
   const userRes = await db.query(
