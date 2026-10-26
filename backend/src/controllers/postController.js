@@ -79,10 +79,26 @@ exports.deletePost = async (req, res, next) => {
   }
 };
 
+// ---- Comments (threaded: top-level comments with replies) --------------------
+
+const commentService = require('../services/commentService');
+
 exports.getComments = async (req, res, next) => {
   try {
     if (!isUuid(req.params.id)) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
-    return sendSuccess(res, await feedService.getComments(req.params.id, req.query), 'Comments fetched.');
+    const { sort, cursor, limit } = req.query;
+    const page = await commentService.listTopLevel(req.params.id, { viewerId: req.user?.id, sort, cursor, limit });
+    return res.status(200).json({ success: true, data: page.items, nextCursor: page.nextCursor });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getReplies = async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
+    const page = await commentService.listReplies(req.params.id, req.params.commentId, { viewerId: req.user?.id, cursor: req.query.cursor, limit: req.query.limit });
+    return res.status(200).json({ success: true, data: page.items, nextCursor: page.nextCursor });
   } catch (error) {
     next(error);
   }
@@ -90,23 +106,23 @@ exports.getComments = async (req, res, next) => {
 
 exports.addComment = async (req, res, next) => {
   try {
-    const content = String((req.body && req.body.content) || '').trim();
-    if (!content) return sendError(res, 'Comment cannot be empty.', 400, 'VALIDATION_ERROR', req);
-    if (content.length > 2000) return sendError(res, 'Comments are limited to 2000 characters.', 400, 'VALIDATION_ERROR', req);
-    const mod = moderateText(content);
-    if (!mod.clean) return sendError(res, 'Comment violates our community guidelines.', 400, 'CONTENT_POLICY', req);
-
-    const post = await feedService.getPostById(req.params.id, null);
-    if (!post) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
-
-    const comment = await feedService.addComment({
-      postId: post.id,
+    if (!isUuid(req.params.id)) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
+    const comment = await commentService.create({
+      postId: req.params.id,
       authorId: req.user.id,
-      content,
-      parentId: isUuid(req.body.parent_id) ? req.body.parent_id : null
+      content: req.body?.content,
+      parentId: req.body?.parent_id || null,
     });
-    await notify({ userId: post.author_id, actorId: req.user.id, type: 'comment', entityType: 'post', entityId: post.id, message: content.slice(0, 140) });
     return sendSuccess(res, comment, 'Comment added.', 201);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateComment = async (req, res, next) => {
+  try {
+    const comment = await commentService.update({ postId: req.params.id, commentId: req.params.commentId, userId: req.user.id, content: req.body?.content });
+    return sendSuccess(res, comment, 'Comment updated.');
   } catch (error) {
     next(error);
   }
@@ -114,9 +130,18 @@ exports.addComment = async (req, res, next) => {
 
 exports.deleteComment = async (req, res, next) => {
   try {
-    const ok = await feedService.deleteComment(req.params.commentId, req.user.id);
+    const ok = await commentService.remove({ postId: req.params.id, commentId: req.params.commentId, userId: req.user.id });
     if (!ok) return sendError(res, 'Comment not found.', 404, 'NOT_FOUND', req);
     return sendSuccess(res, {}, 'Comment deleted.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.likeComment = async (req, res, next) => {
+  try {
+    const liked = req.method === 'POST';
+    return sendSuccess(res, await commentService.setLike({ postId: req.params.id, commentId: req.params.commentId, userId: req.user.id, liked }), liked ? 'Liked.' : 'Unliked.');
   } catch (error) {
     next(error);
   }
