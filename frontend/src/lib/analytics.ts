@@ -1,4 +1,5 @@
 import posthog from 'posthog-js';
+import { API_BASE_URL } from '@/lib/api/client';
 
 const POSTHOG_KEY = process.env.NEXT_PUBLIC_POSTHOG_KEY || '';
 const POSTHOG_HOST = process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://app.posthog.com';
@@ -17,32 +18,32 @@ export const initAnalytics = () => {
   }
 };
 
+/**
+ * Product events go to ResearchReel's own /analytics/track endpoint (stored in
+ * analytics_events), and to PostHog as well when a key is configured.
+ * Fire-and-forget: telemetry must never break the UI.
+ */
 export const trackEvent = (event: string, properties?: Record<string, unknown>) => {
-  if (typeof window !== 'undefined') {
-    if (POSTHOG_KEY) {
-      posthog.capture(event, properties);
-    } else {
-      console.log(`[Analytics MOCK] Event: ${event}`, properties);
-    }
+  if (typeof window === 'undefined') return;
+  if (POSTHOG_KEY) posthog.capture(event, properties);
+  try {
+    const body = JSON.stringify({ eventName: event, payload: properties || {} });
+    fetch(`${API_BASE_URL}/analytics/track`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body,
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    // ignore
   }
 };
 
 export const identifyUser = (userId: string, email?: string, properties?: Record<string, unknown>) => {
-  if (typeof window !== 'undefined') {
-    if (POSTHOG_KEY) {
-      posthog.identify(userId, { email, ...properties });
-    } else {
-      console.log(`[Analytics MOCK] Identify User: ${userId}`, { email, ...properties });
-    }
-  }
+  if (typeof window !== 'undefined' && POSTHOG_KEY) posthog.identify(userId, { email, ...properties });
 };
 
 export const resetAnalytics = () => {
-  if (typeof window !== 'undefined') {
-    if (POSTHOG_KEY) {
-      posthog.reset();
-    } else {
-      console.log(`[Analytics MOCK] Reset`);
-    }
-  }
+  if (typeof window !== 'undefined' && POSTHOG_KEY) posthog.reset();
 };

@@ -71,3 +71,11 @@ exports.sendStudentCode = (email, code) =>
     html: codeEmail('Confirm your university email', 'Enter this code on ResearchReel to get the verified student badge:', code),
     devNote: `student verification code: ${code}`,
   });
+
+exports.sendPasswordReset = (email, code) =>
+  send({
+    to: email,
+    subject: 'Reset your ResearchReel password',
+    html: codeEmail('Reset your password', 'Enter this code on ResearchReel to choose a new password:', code).replace('expires in 10 minutes', 'expires in 15 minutes'),
+    devNote: `password reset code: ${code}`,
+  });

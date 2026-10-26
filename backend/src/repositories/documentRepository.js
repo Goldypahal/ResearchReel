@@ -76,6 +76,23 @@ class DocumentRepository {
     return result.rows[0] || null;
   }
 
+  /** Only provided fields change; `doi: null` clears it. */
+  async updateOwned(documentId, ownerId, { title, doi, visibility }) {
+    const sets = [];
+    const params = [documentId, ownerId];
+    if (title !== undefined) { params.push(title); sets.push(`title = $${params.length}`); }
+    if (doi !== undefined) { params.push(doi); sets.push(`doi = $${params.length}`); }
+    if (visibility !== undefined) { params.push(visibility); sets.push(`visibility = $${params.length}`); }
+    if (!sets.length) return this.findById(documentId);
+    const result = await pool.query(
+      `UPDATE documents SET ${sets.join(', ')}, updated_at = NOW()
+       WHERE id = $1 AND uploader_id = $2 AND deleted_at IS NULL
+       RETURNING *`,
+      params
+    );
+    return this.toPublic(result.rows[0] || null);
+  }
+
   async softDelete(documentId, ownerId) {
     const result = await pool.query(
       `UPDATE documents SET deleted_at = NOW()

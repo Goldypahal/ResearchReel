@@ -1,7 +1,6 @@
 const reelService = require('../services/reelGeneratorService');
 const { canAccessDocument } = require('../authorization/documentAuthorization');
 const { canAccessReel } = require('../authorization/reelAuthorization');
-const queueManager = require('../queues/queueManager');
 const { sendSuccess, sendError } = require('../utils/response');
 const db = require('../config/db');
 const analyticsService = require('../services/analyticsService');
@@ -10,7 +9,7 @@ const analyticsService = require('../services/analyticsService');
 exports.getReelFeed = async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 30);
-    const params = [limit];
+    const params = [limit, req.user ? req.user.id : null];
     const where = ['v.deleted_at IS NULL'];
     if (req.query.cursor) {
       params.push(req.query.cursor);
@@ -25,7 +24,8 @@ exports.getReelFeed = async (req, res, next) => {
               v.duration_seconds, v.tags, v.view_count, v.created_at, v.linked_paper_id,
               d.title AS paper_title, d.doi AS paper_doi,
               u.id AS author_id, u.username, u.full_name, u.verification_status,
-              COALESCE(u.avatar_url, u.profile_picture_url) AS avatar_url
+              COALESCE(u.avatar_url, u.profile_picture_url) AS avatar_url,
+              ($2::uuid IS NOT NULL AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $2 AND f.following_id = u.id)) AS is_following
        FROM videos v
        JOIN users u ON u.id = v.author_id
        LEFT JOIN documents d ON d.id = v.linked_paper_id
@@ -111,14 +111,8 @@ exports.generateDraft = async (req, res, next) => {
       title
     });
 
-    // Queue reel generation background job (Section 34: Return 202 Accepted)
-    await queueManager.addJob('reel-generation', {
-      reelId: draft.id,
-      documentId: document_id,
-      authorId: req.user.id
-    });
-
-    return sendSuccess(res, draft, 'Reel draft created and processing queued.', 202);
+    // Scripts are generated synchronously; rendering happens on publish.
+    return sendSuccess(res, draft, Array.isArray(draft) ? `Created ${draft.length} drafts.` : 'Reel draft created.', 201);
   } catch (error) {
     next(error);
   }
@@ -134,6 +128,17 @@ exports.updateDraft = async (req, res, next) => {
 
     const draft = await reelService.updateDraft(id, req.user.id, req.body);
     return sendSuccess(res, draft, 'Reel draft updated.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deleteDraft = async (req, res, next) => {
+  try {
+    const { allowed, isAuthor } = await canAccessReel(req.user.id, req.params.id);
+    if (!allowed || !isAuthor) return sendError(res, 'Draft not found.', 404, 'NOT_FOUND', req);
+    await reelService.deleteDraft(req.params.id, req.user.id);
+    return sendSuccess(res, { id: req.params.id }, 'Draft deleted.');
   } catch (error) {
     next(error);
   }

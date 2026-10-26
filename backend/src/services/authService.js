@@ -3,7 +3,7 @@ const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const redisClient = require('../config/redisClient');
-const { sendOTP } = require('../utils/emailService');
+const { sendOTP, sendPasswordReset } = require('../utils/emailService');
 const searchService = require('./searchService');
 
 const OTP_TTL_SECONDS = Number(process.env.OTP_TTL_SECONDS || 600);
@@ -13,12 +13,13 @@ class AuthError extends Error {
     super(message);
     this.name = 'AuthError';
     this.statusCode = statusCode;
+    this.code = statusCode === 401 ? 'AUTHENTICATION_ERROR' : statusCode === 403 ? 'AUTHORIZATION_ERROR' : statusCode === 409 ? 'CONFLICT' : statusCode === 404 ? 'NOT_FOUND' : 'VALIDATION_ERROR';
   }
 }
 
 const sessionRepository = require('../repositories/sessionRepository');
 
-const createTokenPair = async (userData, reqInfo = {}) => {
+const createTokenPair = async (userData, reqInfo = {}, { sessionId = null } = {}) => {
   const sid = crypto.randomUUID();
   const sessionKey = `session:${userData.id}:${sid}`;
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
@@ -42,16 +43,21 @@ const createTokenPair = async (userData, reqInfo = {}) => {
     expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d'
   });
 
-  // DB Session persistence (Section 6)
+  // DB session row (one per device): refresh rotates it in place.
   try {
-    await sessionRepository.createSession({
-      userId: userData.id,
-      refreshToken,
-      deviceName: reqInfo.deviceName || 'Web Browser',
-      ipAddress: reqInfo.ipAddress || null,
-      userAgent: reqInfo.userAgent || null,
-      expiresAt
-    });
+    if (sessionId) {
+      await sessionRepository.rotateSession(sessionId, refreshToken, expiresAt, sid, reqInfo);
+    } else {
+      await sessionRepository.createSession({
+        userId: userData.id,
+        refreshToken,
+        deviceName: reqInfo.deviceName || 'Web Browser',
+        ipAddress: reqInfo.ipAddress || null,
+        userAgent: reqInfo.userAgent || null,
+        expiresAt,
+        sid
+      });
+    }
   } catch (err) {
     console.error('Failed to record user session in DB:', err.message);
   }
@@ -70,6 +76,40 @@ const toPublicUser = (row) => ({
   subscription_tier: row.subscription_tier || 'free',
   role: row.role || 'user'
 });
+
+
+const MAX_CODE_ATTEMPTS = 5;
+
+/** Stores a fresh 6-digit code under `key` and returns it. */
+const issueCode = async (key, ttlSeconds = OTP_TTL_SECONDS) => {
+  const code = crypto.randomInt(100000, 1000000).toString();
+  await redisClient.set(key, JSON.stringify({ otp: code, attempts: 0 }), { EX: ttlSeconds });
+  return code;
+};
+
+/**
+ * Checks a code stored by issueCode. A wrong guess counts against the code and
+ * the code is burned after MAX_CODE_ATTEMPTS, so six digits can't be brute-forced.
+ */
+const consumeCode = async (key, submitted) => {
+  const raw = await redisClient.get(key);
+  const record = raw ? JSON.parse(raw) : null;
+  if (!record) return false;
+  const a = Buffer.from(String(record.otp));
+  const b = Buffer.from(String(submitted || ''));
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+    await redisClient.del(key);
+    return true;
+  }
+  const attempts = (record.attempts || 0) + 1;
+  if (attempts >= MAX_CODE_ATTEMPTS) {
+    await redisClient.del(key);
+  } else {
+    const ttl = await redisClient.ttl(key);
+    await redisClient.set(key, JSON.stringify({ ...record, attempts }), { EX: ttl > 0 ? ttl : OTP_TTL_SECONDS });
+  }
+  return false;
+};
 
 const register = async ({ email, username, password, full_name }) => {
   const userExists = await db.query('SELECT * FROM users WHERE email = $1 OR username = $2', [email, username]);
@@ -95,22 +135,18 @@ const register = async ({ email, username, password, full_name }) => {
     console.error('Failed to index user in search:', err.message);
   }
 
-  const otp = crypto.randomInt(100000, 999999).toString();
-  await redisClient.set(`otp:${email}`, JSON.stringify({ otp }), { EX: OTP_TTL_SECONDS });
-  await sendOTP(email, otp);
+  await sendOTP(email, await issueCode(`otp:${email}`));
 
   return user;
 };
 
 const verifyOTP = async ({ email, otp, reqInfo }) => {
-  const recordJson = await redisClient.get(`otp:${email}`);
-  const record = recordJson ? JSON.parse(recordJson) : null;
-  if (!record || record.otp !== otp) {
-    throw new AuthError('Invalid or expired OTP', 400);
+  if (!(await consumeCode(`otp:${email}`, otp))) {
+    throw new AuthError('That code is incorrect or has expired. Request a new one.', 400);
   }
 
-  await db.query('UPDATE users SET verification_status = $1 WHERE email = $2', ['verified', email]);
-  await redisClient.del(`otp:${email}`);
+  // Only promote accounts that are still unverified; never downgrade a student/researcher badge.
+  await db.query("UPDATE users SET verification_status = 'verified' WHERE email = $1 AND verification_status = 'unverified'", [email]);
 
   const userRes = await db.query('SELECT * FROM users WHERE email = $1', [email]);
   const user = toPublicUser(userRes.rows[0]);
@@ -136,9 +172,7 @@ const login = async ({ email, password, reqInfo }) => {
 
   // Accounts that never confirmed their email get a fresh code instead of a session.
   if (row.verification_status === 'unverified') {
-    const otp = crypto.randomInt(100000, 999999).toString();
-    await redisClient.set(`otp:${email}`, JSON.stringify({ otp }), { EX: OTP_TTL_SECONDS });
-    await sendOTP(email, otp);
+    await sendOTP(email, await issueCode(`otp:${email}`));
     return { requiresVerification: true, user: null };
   }
 
@@ -183,11 +217,7 @@ const refreshTokens = async (token, reqInfo) => {
   }
 
   const user = userRes.rows[0];
-  const { accessToken, refreshToken: newRefreshToken, sid: newSid } = await createTokenPair(user, reqInfo);
-
-  // Rotate in sessionRepository
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  await sessionRepository.rotateSession(dbSession.id, newRefreshToken, expiresAt);
+  const { accessToken, refreshToken: newRefreshToken } = await createTokenPair(user, reqInfo, { sessionId: dbSession.id });
 
   return { user, accessToken, refreshToken: newRefreshToken };
 };
@@ -206,8 +236,118 @@ const revokeSession = async (userId, sid, refreshToken) => {
   }
 };
 
+const dropRedisSessions = async (userId, sids) => {
+  await Promise.all(sids.filter(Boolean).map((sid) => redisClient.del(`session:${userId}:${sid}`).catch(() => {})));
+};
+
+/** Signed-in devices for the account settings page. */
+const listSessions = async (userId, currentSid) => {
+  const rows = await sessionRepository.listActive(userId);
+  return rows.map(({ sid, ...r }) => ({ ...r, current: Boolean(currentSid && sid === currentSid) }));
+};
+
+const revokeSessionById = async (userId, sessionId) => {
+  const sid = await sessionRepository.revokeOwned(userId, sessionId);
+  if (sid === undefined) throw new AuthError('Session not found', 404);
+  await dropRedisSessions(userId, [sid]);
+};
+
+const revokeOtherSessions = async (userId, currentSid) => {
+  const sids = await sessionRepository.revokeOthers(userId, currentSid);
+  await dropRedisSessions(userId, sids);
+  return sids.length;
+};
+
+const verifyPassword = async (userId, password) => {
+  const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1 AND (is_deleted IS NULL OR is_deleted = FALSE)', [userId]);
+  if (!rows[0] || !password || !(await argon2.verify(rows[0].password_hash, password))) {
+    throw new AuthError('Your current password is incorrect.', 400);
+  }
+};
+
+/** Changes the password and signs out every other device. */
+const changePassword = async (userId, currentPassword, newPassword, currentSid) => {
+  if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 200) {
+    throw new AuthError('New password must be at least 8 characters.', 400);
+  }
+  await verifyPassword(userId, currentPassword);
+  if (currentPassword === newPassword) throw new AuthError('Choose a password you have not used here.', 400);
+  await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [await argon2.hash(newPassword), userId]);
+  return revokeOtherSessions(userId, currentSid);
+};
+
+/**
+ * Deletes an account: content stays attributed to a tombstone so threads make
+ * sense, but personal fields are wiped, the email/username are freed, and all
+ * sessions end.
+ */
+const deleteAccount = async (userId, password) => {
+  await verifyPassword(userId, password);
+  const tomb = `deleted_${crypto.randomBytes(6).toString('hex')}`;
+  await db.query(
+    `UPDATE users SET is_deleted = TRUE, email = $2, username = $3, full_name = 'Deleted user', bio = NULL,
+       avatar_url = NULL, institution = NULL, research_interests = '{}', orcid_id = NULL,
+       password_hash = $4, updated_at = NOW()
+     WHERE id = $1`,
+    [userId, `${tomb}@deleted.invalid`, tomb, await argon2.hash(crypto.randomBytes(32).toString('hex'))]
+  );
+  await db.query('UPDATE posts SET deleted_at = NOW() WHERE author_id = $1 AND deleted_at IS NULL', [userId]);
+  await db.query('UPDATE documents SET deleted_at = NOW() WHERE uploader_id = $1 AND deleted_at IS NULL', [userId]);
+  await db.query('DELETE FROM follows WHERE follower_id = $1 OR following_id = $1', [userId]);
+  const sids = await sessionRepository.revokeOthers(userId, null);
+  await dropRedisSessions(userId, sids);
+  try { await searchService.removeEntity('users', userId); } catch { /* search optional */ }
+};
+
+
+/** Re-sends the sign-up code. Silent for unknown or already-verified emails so it can't enumerate accounts. */
+const resendVerification = async (email) => {
+  const res = await db.query('SELECT verification_status, is_deleted FROM users WHERE email = $1', [email]);
+  const row = res.rows[0];
+  if (!row || row.is_deleted || row.verification_status !== 'unverified') return;
+  await sendOTP(email, await issueCode(`otp:${email}`));
+};
+
+const RESET_TTL_SECONDS = 15 * 60;
+
+/** Emails a password-reset code. Always succeeds from the caller's view (no account enumeration). */
+const requestPasswordReset = async (email) => {
+  const res = await db.query('SELECT id, is_deleted FROM users WHERE email = $1', [email]);
+  const row = res.rows[0];
+  if (!row || row.is_deleted) return;
+  await sendPasswordReset(email, await issueCode(`pwreset:${email}`, RESET_TTL_SECONDS));
+};
+
+/** Sets a new password from a reset code and signs out every existing session. */
+const resetPassword = async ({ email, code, newPassword }) => {
+  if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 200) {
+    throw new AuthError('New password must be at least 8 characters.', 400);
+  }
+  if (!(await consumeCode(`pwreset:${email}`, code))) {
+    throw new AuthError('That reset code is incorrect or has expired. Request a new one.', 400);
+  }
+  const res = await db.query('SELECT id FROM users WHERE email = $1 AND (is_deleted IS NOT TRUE)', [email]);
+  const row = res.rows[0];
+  if (!row) throw new AuthError('That reset code is incorrect or has expired. Request a new one.', 400);
+  // A reset proves control of the inbox, so it also confirms the email.
+  await db.query(
+    "UPDATE users SET password_hash = $1, verification_status = CASE WHEN verification_status = 'unverified' THEN 'verified' ELSE verification_status END, updated_at = NOW() WHERE id = $2",
+    [await argon2.hash(newPassword), row.id]
+  );
+  const sids = await sessionRepository.revokeOthers(row.id, null);
+  await dropRedisSessions(row.id, sids);
+};
+
 module.exports = {
+  resendVerification,
+  requestPasswordReset,
+  resetPassword,
   register,
+  listSessions,
+  revokeSessionById,
+  revokeOtherSessions,
+  changePassword,
+  deleteAccount,
   verifyOTP,
   login,
   refreshTokens,

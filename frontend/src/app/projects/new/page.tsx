@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, Globe, ArrowLeft, Loader2 } from 'lucide-react';
 import { projectsApi } from '@/lib/api/projects';
+import { errorMessage } from '@/lib/api';
 
 export default function CreateProjectPage() {
   const router = useRouter();
@@ -28,9 +29,8 @@ export default function CreateProjectPage() {
         visibility
       });
       router.push(`/projects/${newProject.id}`);
-    } catch (err: any) {
-      console.error('Create Project Error:', err);
-      setError(err.message || 'Failed to create project');
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to create project'));
       setIsSubmitting(false);
     }
   };

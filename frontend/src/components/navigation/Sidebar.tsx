@@ -4,11 +4,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useSocial } from '@/context/SocialContext';
 import { useTheme } from '@/context/ThemeContext';
+import Avatar from '@/components/common/Avatar';
+import { displayName } from '@/lib/utils';
 import { 
   Home, Search, Compass, PlaySquare, MessageCircle, 
-  Heart, PlusSquare, Menu, FileText,
-  Bookmark, Sun, LogOut, Users, Moon, Library, User, BookOpen, Bot, Settings
+  Heart, PlusSquare, Menu,
+  Bookmark, Sun, LogOut, Users, Moon, Library, User, Bot, Settings, LogIn
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -18,6 +21,7 @@ interface SidebarProps {
 export default function Sidebar({ onOpenCreate }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { unreadMessages, unreadNotifications } = useSocial();
   const { theme, setTheme } = useTheme();
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -45,19 +49,27 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
     };
   }, []);
 
-  const navItems = [
-    { name: 'Home', href: '/home', icon: Home, hint: 'G H' },
-    { name: 'Discover', href: '/discover', icon: Compass, hint: 'G D' },
-    { name: 'Library', href: '/library', icon: Bookmark, hint: 'G L' },
-    { name: 'AI Research', href: '/ai', icon: Bot, hint: 'A' },
-    { name: 'Projects', href: '/projects', icon: Users, hint: 'G P' },
-    { name: 'Reels', href: '/reels', icon: PlaySquare, hint: 'G R' },
-    { name: 'Messages', href: '/messages', icon: MessageCircle, hint: 'G M' },
-    { name: 'Notifications', href: '/notifications', icon: Heart },
-    { name: 'Create', href: '#create', icon: PlusSquare, isCreate: true, hint: 'N' },
-    { name: 'Profile', href: `/profile/${user?.username || 'julianewton'}`, icon: User, isAvatar: true },
-    { name: 'Settings', href: '/settings', icon: Settings },
-  ];
+  type NavItem = { name: string; href: string; icon: React.ElementType; isCreate?: boolean; isAvatar?: boolean; badge?: number };
+  const navItems: NavItem[] = user
+    ? [
+        { name: 'Home', href: '/home', icon: Home },
+        { name: 'Explore', href: '/explore', icon: Search },
+        { name: 'Discover', href: '/discover', icon: Compass },
+        { name: 'Library', href: '/library', icon: Bookmark },
+        { name: 'AI Research', href: '/ai', icon: Bot },
+        { name: 'Projects', href: '/projects', icon: Users },
+        { name: 'Reels', href: '/reels', icon: PlaySquare },
+        { name: 'Messages', href: '/messages', icon: MessageCircle, badge: unreadMessages },
+        { name: 'Notifications', href: '/notifications', icon: Heart, badge: unreadNotifications },
+        { name: 'Create', href: '#create', icon: PlusSquare, isCreate: true },
+        { name: 'Profile', href: `/profile/${user.username}`, icon: User, isAvatar: true },
+        { name: 'Settings', href: '/settings', icon: Settings },
+      ]
+    : [
+        { name: 'Explore', href: '/explore', icon: Search },
+        { name: 'Reels', href: '/reels', icon: PlaySquare },
+        { name: 'Sign in', href: '/auth/login', icon: LogIn },
+      ];
 
 
   return (
@@ -122,12 +134,15 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
             >
               <div className={`relative transition-transform duration-200 group-hover:scale-105 ${isActive ? 'scale-105' : ''} shrink-0`}>
                 {item.isAvatar ? (
-                  <div className={`w-6 h-6 rounded-full bg-[var(--foreground)]/10 border overflow-hidden flex items-center justify-center text-[10px] ${isActive ? 'border-indigo-500 border-2' : 'border-[var(--border)]/20'}`}>
-                    {user?.full_name?.slice(0,1) || 'U'}
-                  </div>
+                  <Avatar src={user?.avatar_url} name={displayName(user)} size="xs" ring={isActive} />
                 ) : (
                   <Icon size={24} strokeWidth={isActive ? 2.5 : 2} className={isActive ? 'text-indigo-500 font-bold' : ''} />
                 )}
+                {item.badge ? (
+                  <span className="absolute -right-2 -top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-bold text-white" aria-label={`${item.badge} unread`}>
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                ) : null}
               </div>
               <span 
                 className={`text-[15px] whitespace-nowrap transition-all duration-300 ${
@@ -147,18 +162,14 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
         {isMoreOpen && (
           <div className="absolute bottom-16 left-0 w-64 bg-[var(--background)] rounded-2xl shadow-2xl overflow-hidden border border-[var(--border)] animate-in fade-in slide-in-from-bottom-4 duration-200 z-[60] backdrop-blur-xl">
             <div className="p-2 border-b border-[var(--border)]">
-              <Link href="/editor" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
-                <FileText size={18} />
-                <span>Editor</span>
-              </Link>
-              <Link href="/saved" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
+              {user && <><Link href="/saved" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
                 <Bookmark size={18} />
                 <span>Saved</span>
               </Link>
-              <Link href="/reels/generator" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
-                <PlaySquare size={18} className="text-indigo-500 animate-pulse" />
-                <span>Reel Generator</span>
-              </Link>
+              <Link href="/reels/create" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
+                <PlaySquare size={18} className="text-indigo-500" />
+                <span>Reel studio</span>
+              </Link></>}
               
               {/* Appearance Submenu */}
               <div className="px-4 py-2 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] mt-2 border-t border-[var(--border)]">Appearance</div>
@@ -179,12 +190,7 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
                  </button>
               </div>
             </div>
-            <div className="p-2">
-              <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold">
-                <Users size={18} />
-                <span>Switch accounts</span>
-              </button>
-              <div className="h-px bg-[var(--border)] my-1" />
+            {user && <div className="p-2">
               <button 
                 onClick={logout}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-red-500/10 transition-colors text-sm font-semibold text-red-500"
@@ -192,7 +198,7 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
                 <LogOut size={18} />
                 <span>Log out</span>
               </button>
-            </div>
+            </div>}
           </div>
         )}
         

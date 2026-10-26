@@ -1,133 +1,74 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Bot, Send, Sparkles, Copy, FileText, Check, Loader2 } from 'lucide-react';
-import { aiApi, CitationSource } from '@/lib/api/ai';
+import React, { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Bot, FileText } from 'lucide-react';
+import PaperChat from '@/components/ai/PaperChat';
+import { LoadingBlock } from '@/components/common/States';
+import { documentsApi, type LibraryDocument } from '@/lib/api';
 
-interface Message {
-  id: string;
-  sender: 'user' | 'ai';
-  text: string;
-  sources?: CitationSource[];
+function AskInner() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const documentId = params.get('document') || '';
+  const q = params.get('q') || undefined;
+  const [docs, setDocs] = useState<LibraryDocument[] | null>(null);
+  const [scopedTitle, setScopedTitle] = useState<string | null>(null);
+
+  useEffect(() => { documentsApi.getUserAssets().then(setDocs).catch(() => setDocs([])); }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
+    if (!documentId) { setScopedTitle(null); return; }
+    const own = docs?.find((d) => d.id === documentId);
+    if (own) { setScopedTitle(own.title); return; }
+    documentsApi.getDocument(documentId).then((d) => setScopedTitle(d.title)).catch(() => setScopedTitle('a shared paper'));
+  }, [documentId, docs]);
+
+  const ready = (docs || []).filter((d) => d.status === 'ready' && d.has_text !== false);
+
+  return (
+    <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-4xl flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-extrabold tracking-tight"><Bot size={22} className="text-indigo-400" /> Ask AI</h1>
+          <p className="text-xs text-muted-foreground">
+            {documentId ? <>Answering from <span className="font-semibold text-[var(--foreground)]">{scopedTitle || '…'}</span>.</> : 'Answers draw on the papers in your library.'}
+          </p>
+        </div>
+        <select
+          aria-label="Choose which papers to ask about"
+          value={documentId}
+          onChange={(e) => router.replace(e.target.value ? `/ai/ask?document=${e.target.value}` : '/ai/ask')}
+          className="max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs"
+        >
+          <option value="">All my papers</option>
+          {documentId && !ready.some((d) => d.id === documentId) && <option value={documentId}>{scopedTitle || 'This paper'}</option>}
+          {ready.map((d) => <option key={d.id} value={d.id}>{d.title.slice(0, 70)}</option>)}
+        </select>
+      </div>
+
+      {docs && docs.length === 0 && !documentId ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[var(--border)] p-10 text-center">
+          <FileText className="text-indigo-400" />
+          <p className="text-sm font-semibold">Upload a paper to start asking questions</p>
+          <p className="max-w-sm text-xs text-muted-foreground">AI answers are grounded in your papers, so there needs to be at least one in your library.</p>
+          <Link href="/library" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Go to library</Link>
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-[var(--border)]">
+          <PaperChat
+            key={documentId || 'all'}
+            documentId={documentId || undefined}
+            initialQuestion={q}
+            suggestions={documentId ? ['Summarise the key findings', 'What methods were used?', 'What are the limitations?'] : ['Which of my papers discuss evaluation methods?', 'Compare the main results across my papers']}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function AIAskPage() {
-  const [query, setQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      sender: 'ai',
-      text: 'Ask any research question. I will synthesize literature and provide exact citations.',
-      sources: []
-    }
-  ]);
-
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim() || isLoading) return;
-
-    const currentQ = query.trim();
-    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: currentQ, sources: [] };
-    
-    setMessages(prev => [...prev, userMsg]);
-    setQuery('');
-    setIsLoading(true);
-
-    try {
-      const response = await aiApi.askGemini(currentQ);
-      setMessages(prev => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          sender: 'ai',
-          text: response.answer || 'No detailed synthesis returned for this query.',
-          sources: response.sources || []
-        }
-      ]);
-    } catch (err: any) {
-      console.error('AI Q&A Error:', err);
-      setMessages(prev => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          sender: 'ai',
-          text: `Error: ${err.message || 'Failed to communicate with AI research copilot service.'}`,
-          sources: []
-        }
-      ]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <div className="max-w-4xl mx-auto h-[calc(100vh-8rem)] flex flex-col space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
-        <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
-          <Bot size={20} />
-          <span>AI Research Copilot</span>
-        </div>
-      </div>
-
-      {/* Messages Feed */}
-      <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`p-4 rounded-2xl space-y-3 ${
-              msg.sender === 'ai'
-                ? 'bg-[var(--foreground)]/[0.03] border border-[var(--border)] text-[var(--foreground)]'
-                : 'bg-indigo-600 text-white ml-auto max-w-[85%]'
-            }`}
-          >
-            <p className="text-xs md:text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-
-            {msg.sources && msg.sources.length > 0 && (
-              <div className="pt-2 border-t border-[var(--border)]/50 space-y-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Sources & Citations:</span>
-                <div className="flex flex-wrap gap-2">
-                  {msg.sources.map((src: CitationSource, i: number) => (
-                    <span
-                      key={i}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[11px] font-medium"
-                    >
-                      <FileText size={12} />
-                      <span>{src.section || src.documentId || 'Paper Citation'} {src.page ? `(p. ${src.page})` : ''}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-        {isLoading && (
-          <div className="p-4 rounded-2xl bg-[var(--foreground)]/[0.03] border border-[var(--border)] flex items-center gap-2 text-indigo-400 text-xs">
-            <Loader2 size={16} className="animate-spin" />
-            <span>Analyzing research literature and constructing vector citations...</span>
-          </div>
-        )}
-      </div>
-
-      {/* Input Composer */}
-      <form onSubmit={handleSend} className="relative flex items-center">
-        <input
-          type="text"
-          placeholder="Ask a question about your research library or academic literature..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          disabled={isLoading}
-          className="w-full pl-4 pr-12 py-3 bg-[var(--foreground)]/5 border border-[var(--border)] rounded-xl text-xs md:text-sm focus:outline-none focus:border-indigo-500/50 transition-all text-[var(--foreground)] placeholder:text-muted-foreground disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={!query.trim() || isLoading}
-          className="absolute right-2 p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg transition-colors"
-        >
-          {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-        </button>
-      </form>
-    </div>
-  );
+  return <Suspense fallback={<LoadingBlock />}><AskInner /></Suspense>;
 }

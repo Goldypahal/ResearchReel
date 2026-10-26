@@ -3,25 +3,23 @@ const { AuthorizationError, NotFoundError } = require('../utils/errors');
 
 /**
  * Validates document access permission for a given user
- * Checks: 1. Owner, 2. Project Member via project_documents junction, 3. Public visibility
+ * Checks: 1. Owner, 2. Project member (via project_documents), 3. Shared in a live post, 4. Public visibility
  */
 async function canAccessDocument(userId, documentId) {
   if (!documentId || !/^[0-9a-f-]{36}$/i.test(String(documentId))) return { allowed: false, permission: null };
 
   const query = `
-    SELECT 
-      d.id, 
-      d.uploader_id AS owner_id, 
-      d.visibility,
-      pd.project_id,
-      pm.role as project_role
+    SELECT d.id, d.uploader_id AS owner_id, d.visibility,
+           (SELECT pm.role FROM project_documents pd
+              JOIN project_members pm ON pm.project_id = pd.project_id AND pm.user_id = $2
+             WHERE pd.document_id = d.id
+             ORDER BY (pm.role = 'viewer') ASC LIMIT 1) AS project_role,
+           EXISTS (SELECT 1 FROM posts p WHERE p.document_id = d.id AND p.deleted_at IS NULL) AS shared_in_post
     FROM documents d
-    LEFT JOIN project_documents pd ON pd.document_id = d.id
-    LEFT JOIN project_members pm ON pm.project_id = pd.project_id AND pm.user_id = $2
-    WHERE d.id = $1 AND (d.deleted_at IS NULL);
+    WHERE d.id = $1 AND d.deleted_at IS NULL;
   `;
 
-  const result = await pool.query(query, [documentId, userId]);
+  const result = await pool.query(query, [documentId, userId || null]);
   if (result.rows.length === 0) {
     return { allowed: false, permission: null };
   }
@@ -33,9 +31,14 @@ async function canAccessDocument(userId, documentId) {
     return { allowed: true, permission: 'owner' };
   }
 
-  // Project member access
+  // Project member access (best role across every project the paper is in)
   if (row.project_role) {
     return { allowed: true, permission: row.project_role === 'viewer' ? 'viewer' : 'editor' };
+  }
+
+  // Sharing a paper in a post makes it readable to the people who see that post.
+  if (row.shared_in_post) {
+    return { allowed: true, permission: 'viewer' };
   }
 
   // Public document view permission

@@ -158,6 +158,9 @@ const sendMessage = async ({ conversation_id, sender_id, content, message_type, 
   try {
     const io = getIO();
     io.to(conversation_id).emit('receive_message', payload);
+    // Inbox/badge updates for every participant, wherever they are in the app.
+    const members = await db.query('SELECT user_id FROM conversation_participants WHERE conversation_id = $1', [conversation_id]);
+    for (const m of members.rows) io.to(`user:${m.user_id}`).emit('new_message', payload);
   } catch (socketError) {
     console.warn('Socket broadcast skipped:', socketError.message);
   }

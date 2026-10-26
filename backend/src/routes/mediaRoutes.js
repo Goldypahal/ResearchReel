@@ -39,6 +39,7 @@ const upload = multer({
 
 // Route for video upload
 router.post('/upload', authMiddleware, upload.single('video'), virusScanMiddleware, mediaController.uploadVideo);
+router.get('/jobs/:id', authMiddleware, mediaController.getJob);
 router.get('/health', mediaController.healthCheck);
 
 module.exports = router;

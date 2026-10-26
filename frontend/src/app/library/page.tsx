@@ -1,149 +1,141 @@
 "use client";
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Bookmark, Upload, FileText, MoreVertical, Bot, Film, Users, History, Trash2, ExternalLink } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { Bot, FileText, Globe, Lock, Search, Upload } from 'lucide-react';
+import { documentsApi, errorMessage, type LibraryDocument } from '@/lib/api';
 import UploadPaperModal from '@/components/ui/UploadPaperModal';
+import { EmptyState, ErrorState, SkeletonRows } from '@/components/common/States';
+import { cn, formatBytes, timeAgo } from '@/lib/utils';
+
+type Filter = 'all' | 'public' | 'private' | 'needs_attention';
+type Sort = 'recent' | 'title';
+
+const STATUS: Record<string, { label: string; className: string }> = {
+  ready: { label: 'Ready', className: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' },
+  processing: { label: 'Processing', className: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+  failed: { label: 'No text', className: 'text-red-400 bg-red-500/10 border-red-500/20' },
+};
 
 export default function LibraryPage() {
-  const [activeTab, setActiveTab] = useState<'all' | 'recent' | 'favorites' | 'shared'>('all');
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const router = useRouter();
+  const [docs, setDocs] = useState<LibraryDocument[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [sort, setSort] = useState<Sort>('recent');
 
-  const documents = [
-    {
-      id: 'doc_1',
-      title: 'Attention Is All You Need',
-      authors: 'Vaswani et al.',
-      addedDate: '2 days ago',
-      hasSummary: true,
-      favorite: true
-    },
-    {
-      id: 'doc_2',
-      title: 'BERT: Pre-training of Deep Bidirectional Transformers',
-      authors: 'Devlin et al.',
-      addedDate: '1 week ago',
-      hasSummary: true,
-      favorite: false
-    },
-    {
-      id: 'doc_3',
-      title: 'Retrieval-Augmented Generation for Knowledge-Intensive Tasks',
-      authors: 'Lewis et al.',
-      addedDate: '2 weeks ago',
-      hasSummary: true,
-      favorite: true
-    }
-  ];
+  const load = useCallback(async () => {
+    setError(null);
+    try { setDocs(await documentsApi.getUserAssets()); } catch (err) { setError(errorMessage(err)); }
+  }, []);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
+  useEffect(() => { load(); }, [load]);
+
+  // Keep processing papers fresh without a manual reload.
+  useEffect(() => {
+    if (!docs?.some((d) => d.status === 'processing')) return;
+    const t = window.setTimeout(load, 2500);
+    return () => window.clearTimeout(t);
+  }, [docs, load]);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = (docs || []).filter((d) =>
+      !q || d.title.toLowerCase().includes(q) || (d.abstract || '').toLowerCase().includes(q) || (d.doi || '').toLowerCase().includes(q));
+    if (filter === 'public') list = list.filter((d) => d.visibility === 'public');
+    if (filter === 'private') list = list.filter((d) => d.visibility !== 'public');
+    if (filter === 'needs_attention') list = list.filter((d) => d.status !== 'ready');
+    return [...list].sort((a, b) => (sort === 'title' ? a.title.localeCompare(b.title) : +new Date(b.created_at) - +new Date(a.created_at)));
+  }, [docs, query, filter, sort]);
+
+  const counts = useMemo(() => ({
+    all: docs?.length || 0,
+    public: docs?.filter((d) => d.visibility === 'public').length || 0,
+    private: docs?.filter((d) => d.visibility !== 'public').length || 0,
+    needs_attention: docs?.filter((d) => d.status !== 'ready').length || 0,
+  }), [docs]);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-6xl space-y-6 pb-12">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-[var(--foreground)]">
-            My Research Library
-          </h1>
-          <p className="text-xs md:text-sm text-muted-foreground mt-1">
-            Manage your uploaded papers, AI indexed research documents, and saved literature.
-          </p>
+          <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">Library</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Your papers. Private unless you share them or make them public.</p>
         </div>
-
-        <button
-          onClick={() => setIsUploadOpen(true)}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors flex items-center gap-2"
-        >
-          <Upload size={16} />
-          <span>Upload Paper</span>
-        </button>
-      </div>
-
-      {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-[var(--border)]">
-        {(['all', 'recent', 'favorites', 'shared'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-3 text-xs font-semibold capitalize border-b-2 transition-all ${
-              activeTab === tab
-                ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-muted-foreground hover:text-[var(--foreground)]'
-            }`}
-          >
-            {tab}
+        <div className="flex gap-2">
+          {!!docs?.length && (
+            <Link href="/ai/ask" className="flex items-center gap-2 rounded-xl border border-[var(--border)] px-4 py-2 text-xs font-semibold hover:bg-[var(--foreground)]/5"><Bot size={16} /> Ask across library</Link>
+          )}
+          <button onClick={() => setUploadOpen(true)} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-indigo-500">
+            <Upload size={16} /> Upload paper
           </button>
-        ))}
+        </div>
       </div>
 
-      {/* Document Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {documents.map((doc) => (
-          <div
-            key={doc.id}
-            className="p-5 rounded-2xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] hover:border-indigo-500/40 transition-all space-y-4 relative group"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
-                <FileText size={20} />
-              </div>
-              <div className="flex items-center gap-1">
-                {doc.favorite && (
-                  <Bookmark size={16} className="text-amber-400 fill-amber-400" />
-                )}
-              </div>
+      {error ? (
+        <ErrorState message={error} onRetry={load} />
+      ) : !docs ? (
+        <SkeletonRows rows={4} />
+      ) : docs.length === 0 ? (
+        <EmptyState
+          icon={<FileText size={20} />}
+          title="No papers yet"
+          description="Upload a PDF or DOCX. We extract the title, abstract and DOI, and you can ask AI about it or turn it into a reel."
+          action={<button onClick={() => setUploadOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Upload your first paper</button>}
+        />
+      ) : (
+        <>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-wrap gap-1">
+              {([['all', 'All'], ['public', 'Public'], ['private', 'Private'], ['needs_attention', 'Needs attention']] as const).map(([key, label]) => (
+                (key !== 'needs_attention' || counts.needs_attention > 0) && (
+                  <button key={key} onClick={() => setFilter(key)} aria-pressed={filter === key} className={cn('rounded-full px-3 py-1.5 text-xs font-semibold', filter === key ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:bg-[var(--foreground)]/5')}>
+                    {label} <span className="opacity-70">{counts[key]}</span>
+                  </button>
+                )
+              ))}
             </div>
-
-            <div className="space-y-1">
-              <h3 
-                onClick={() => router.push(`/library/documents/${doc.id}`)}
-                className="text-sm font-bold text-[var(--foreground)] hover:text-indigo-400 cursor-pointer transition-colors line-clamp-1"
-              >
-                {doc.title}
-              </h3>
-              <p className="text-xs text-muted-foreground">{doc.authors}</p>
-              <p className="text-[11px] text-muted-foreground/70">Added {doc.addedDate}</p>
-            </div>
-
-            {doc.hasSummary && (
-              <span className="inline-block px-2.5 py-0.5 text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md">
-                AI Summary Ready
-              </span>
-            )}
-
-            <div className="pt-2 border-t border-[var(--border)]/50 flex items-center justify-between text-xs">
-              <button
-                onClick={() => router.push(`/library/documents/${doc.id}`)}
-                className="text-indigo-400 font-semibold hover:underline flex items-center gap-1"
-              >
-                <ExternalLink size={14} /> Open Reader
-              </button>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => router.push(`/ai/ask?doc=${doc.id}`)}
-                  title="Ask AI"
-                  className="p-1.5 rounded-lg hover:bg-[var(--foreground)]/10 text-muted-foreground hover:text-indigo-400"
-                >
-                  <Bot size={15} />
-                </button>
-                <button
-                  onClick={() => router.push('/reels/create')}
-                  title="Generate Reel"
-                  className="p-1.5 rounded-lg hover:bg-[var(--foreground)]/10 text-muted-foreground hover:text-purple-400"
-                >
-                  <Film size={15} />
-                </button>
+            <div className="flex gap-2">
+              <div className="relative flex-1 md:w-64">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your papers" aria-label="Search your papers" className="w-full rounded-lg border border-[var(--border)] bg-[var(--foreground)]/5 py-2 pl-8 pr-3 text-xs focus:border-indigo-500/50 focus:outline-none" />
               </div>
+              <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort" className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 text-xs">
+                <option value="recent">Newest</option>
+                <option value="title">Title A–Z</option>
+              </select>
             </div>
           </div>
-        ))}
-      </div>
 
-      <UploadPaperModal
-        isOpen={isUploadOpen}
-        onClose={() => setIsUploadOpen(false)}
-      />
+          {shown.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">No papers match.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {shown.map((d) => {
+                const st = STATUS[d.status] || STATUS.ready;
+                return (
+                  <Link key={d.id} href={`/library/documents/${d.id}`} className="group flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--foreground)]/[0.02] p-4 transition-all hover:border-indigo-500/40">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={cn('rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', st.className)}>{st.label}</span>
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        {d.visibility === 'public' ? <><Globe size={11} /> Public</> : <><Lock size={11} /> Private</>}
+                      </span>
+                    </div>
+                    <h3 className="line-clamp-2 text-sm font-bold group-hover:text-indigo-400">{d.title}</h3>
+                    <p className="line-clamp-3 flex-1 text-xs text-muted-foreground">{d.summary_text || d.abstract || d.file_name}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {[d.metadata?.pages ? `${d.metadata.pages} pages` : null, formatBytes(d.file_size), timeAgo(d.created_at), d.summary_text ? 'AI summary' : null].filter(Boolean).join(' · ')}
+                    </p>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      <UploadPaperModal isOpen={uploadOpen} onClose={() => { setUploadOpen(false); load(); }} onSuccess={() => load()} />
     </div>
   );
 }

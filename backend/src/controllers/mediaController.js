@@ -1,5 +1,6 @@
 const mediaService = require('../services/mediaService');
-const { addVideoJob } = require('../queues/videoQueue');
+const { addVideoJob, videoQueue } = require('../queues/videoQueue');
+const { sendSuccess, sendError } = require('../utils/response');
 const fs = require('fs');
 
 exports.uploadVideo = async (req, res) => {
@@ -79,6 +80,25 @@ exports.uploadVideo = async (req, res) => {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
     }
     res.status(500).json({ success: false, message: error.message || 'Video processing failed' });
+  }
+};
+
+/** Status of one of the viewer's own video uploads. */
+exports.getJob = async (req, res, next) => {
+  try {
+    const job = await videoQueue.getJob(String(req.params.id));
+    if (!job || job.data.author_id !== req.user.id) return sendError(res, 'Upload not found.', 404, 'NOT_FOUND', req);
+    const state = await job.getState();
+    const value = job.returnvalue || null;
+    return sendSuccess(res, {
+      id: job.id,
+      state, // waiting | active | completed | failed | delayed
+      title: job.data.title,
+      error: state === 'failed' ? String(job.failedReason || 'Processing failed').slice(0, 300) : null,
+      video_id: value && value.id ? value.id : null,
+    }, 'Upload status.');
+  } catch (error) {
+    next(error);
   }
 };
 

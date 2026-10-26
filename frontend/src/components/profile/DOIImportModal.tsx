@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback } from 'react';
+import { errorMessage, fetchApi, postsApi, type Post } from '@/lib/api';
 import {
   X, Search, Plus, Loader2, CheckCircle2, AlertCircle,
   BookOpen, ExternalLink, ChevronDown, ChevronUp, Trash2, Import
@@ -34,13 +35,21 @@ export interface ImportedPaper {
 interface DOIImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImport: (papers: ImportedPaper[]) => void;
+  /** Receives the posts that were created on the server. */
+  onImport: (posts: Post[]) => void;
 }
 
 type InputMode = 'orcid' | 'doi_list';
 type FetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+/** A Crossref record becomes a "published" text post carrying the DOI. */
+const toCaption = (p: ImportedPaper) => {
+  const authors = p.authors.slice(0, 3).map((a) => a.name).join(', ') + (p.authors.length > 3 ? ' et al.' : '');
+  const venue = [p.journal, p.year].filter(Boolean).join(', ');
+  const lines = [p.title, [authors, venue].filter(Boolean).join(' · ')];
+  if (p.abstract) lines.push('', p.abstract.length > 1200 ? `${p.abstract.slice(0, 1200)}…` : p.abstract);
+  return lines.join('\n');
+};
 
 export default function DOIImportModal({ isOpen, onClose, onImport }: DOIImportModalProps) {
   const [inputMode, setInputMode] = useState<InputMode>('orcid');
@@ -76,15 +85,12 @@ export default function DOIImportModal({ isOpen, onClose, onImport }: DOIImportM
     setStatus('loading');
     setErrorMsg('');
     try {
-      const res = await fetch(`${API_BASE}/doi/author?orcid=${encodeURIComponent(clean)}`);
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.message || 'Fetch failed');
-      const papers: ImportedPaper[] = json.data;
+      const papers = await fetchApi<ImportedPaper[]>(`/doi/author?orcid=${encodeURIComponent(clean)}`);
       setFetchedPapers(papers);
       setSelectedIds(new Set(papers.map((p: ImportedPaper) => p.id)));
       setStatus('success');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unknown error');
+      setErrorMsg(errorMessage(err, 'Could not reach Crossref. Try again.'));
       setStatus('error');
     }
   }, [orcidValue]);
@@ -102,19 +108,12 @@ export default function DOIImportModal({ isOpen, onClose, onImport }: DOIImportM
     setStatus('loading');
     setErrorMsg('');
     try {
-      const res = await fetch(`${API_BASE}/doi/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
-        body: JSON.stringify({ dois: lines }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.message || 'Batch import failed');
-      const papers: ImportedPaper[] = json.data;
+      const papers = await fetchApi<ImportedPaper[]>('/doi/import', { method: 'POST', body: JSON.stringify({ dois: lines }) });
       setFetchedPapers(papers);
       setSelectedIds(new Set(papers.map((p: ImportedPaper) => p.id)));
       setStatus('success');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unknown error');
+      setErrorMsg(errorMessage(err, 'Could not reach Crossref. Try again.'));
       setStatus('error');
     }
   }, [doiListValue]);
@@ -136,11 +135,35 @@ export default function DOIImportModal({ isOpen, onClose, onImport }: DOIImportM
   const selectAll = () => setSelectedIds(new Set(fetchedPapers.map(p => p.id)));
   const clearAll = () => setSelectedIds(new Set());
 
-  const handleImport = () => {
+  const [posting, setPosting] = useState(false);
+  const handleImport = async () => {
     const selected = fetchedPapers.filter(p => selectedIds.has(p.id));
     if (!selected.length) return;
-    onImport(selected);
-    handleClose();
+    setPosting(true);
+    setErrorMsg('');
+    const created: Post[] = [];
+    const failed: string[] = [];
+    for (const paper of selected) {
+      try {
+        created.push(await postsApi.create({
+          content_type: 'text',
+          caption: toCaption(paper),
+          doi: paper.doi || null,
+          publication_status: 'published',
+          tags: (paper.tags || []).slice(0, 5).map((t) => t.replace(/[^\w-]/g, '').slice(0, 40)).filter(Boolean),
+        }));
+      } catch {
+        failed.push(paper.title);
+      }
+    }
+    setPosting(false);
+    if (created.length) onImport(created);
+    if (failed.length) {
+      setErrorMsg(`${failed.length} of ${selected.length} could not be posted: ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? '…' : ''}`);
+      setSelectedIds(new Set(fetchedPapers.filter((p) => failed.includes(p.title)).map((p) => p.id)));
+    } else {
+      handleClose();
+    }
   };
 
   if (!isOpen) return null;
@@ -251,7 +274,7 @@ export default function DOIImportModal({ isOpen, onClose, onImport }: DOIImportM
           )}
 
           {/* Error */}
-          {status === 'error' && (
+          {errorMsg && (
             <div className="mt-3 flex items-center gap-2 text-red-400 text-xs bg-red-500/8 border border-red-500/20 rounded-xl px-4 py-3">
               <AlertCircle size={14} className="shrink-0" />
               <span>{errorMsg}</span>
@@ -397,11 +420,11 @@ export default function DOIImportModal({ isOpen, onClose, onImport }: DOIImportM
               </button>
               <button
                 onClick={handleImport}
-                disabled={selectedIds.size === 0}
+                disabled={selectedIds.size === 0 || posting}
                 className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-40 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2"
               >
-                <BookOpen size={13} />
-                Post {selectedIds.size} Paper{selectedIds.size !== 1 ? 's' : ''}
+                {posting ? <Loader2 size={13} className="animate-spin" /> : <BookOpen size={13} />}
+                {posting ? 'Posting…' : `Post ${selectedIds.size} paper${selectedIds.size !== 1 ? 's' : ''}`}
               </button>
             </div>
           </div>

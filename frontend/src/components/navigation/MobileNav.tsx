@@ -16,13 +16,19 @@ export default function MobileNav({ onOpenCreate }: MobileNavProps) {
 
   const profileHref = user?.username ? `/profile/${user.username}` : '/settings';
 
-  const items = [
-    { name: 'Home', href: '/home', icon: Home },
-    { name: 'Discover', href: '/discover', icon: Compass },
-    { name: 'Create', href: '#create', icon: PlusCircle, isCreate: true },
-    { name: 'Reels', href: '/reels', icon: PlaySquare },
-    { name: 'Profile', href: profileHref, icon: User },
-  ];
+  const items: { name: string; href: string; icon: React.ElementType; isCreate?: boolean }[] = user
+    ? [
+        { name: 'Home', href: '/home', icon: Home },
+        { name: 'Explore', href: '/explore', icon: Compass },
+        { name: 'Create', href: '#create', icon: PlusCircle, isCreate: true },
+        { name: 'Reels', href: '/reels', icon: PlaySquare },
+        { name: 'Profile', href: profileHref, icon: User },
+      ]
+    : [
+        { name: 'Explore', href: '/explore', icon: Compass },
+        { name: 'Reels', href: '/reels', icon: PlaySquare },
+        { name: 'Sign in', href: '/auth/login', icon: User },
+      ];
 
   return (
     <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 border-t border-[var(--border)] bg-[var(--background)]/95 backdrop-blur-xl z-40 flex items-center justify-around px-2">

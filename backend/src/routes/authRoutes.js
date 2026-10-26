@@ -4,7 +4,7 @@ const authController = require('../controllers/authController');
 const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const rateLimiter = require('../middleware/rateLimiter');
 const validate = require('../middleware/validationMiddleware');
-const { registerSchema, loginSchema, otpSchema } = require('../utils/validators');
+const { registerSchema, loginSchema, otpSchema, emailOnlySchema, resetPasswordSchema } = require('../utils/validators');
 
 // Specific Rate Limiters
 const registerLimiter = rateLimiter(5, 3600); // 5 per hour
@@ -101,6 +101,11 @@ router.post('/verify-otp', otpLimiter, validate(otpSchema), authController.verif
  */
 router.post('/login', loginLimiter, validate(loginSchema), authController.login);
 
+// Sign-up code resend and password recovery (responses never reveal whether an account exists)
+router.post('/resend-otp', otpLimiter, validate(emailOnlySchema), authController.resendVerification);
+router.post('/password/forgot', otpLimiter, validate(emailOnlySchema), authController.forgotPassword);
+router.post('/password/reset', otpLimiter, validate(resetPasswordSchema), authController.resetPassword);
+
 /**
  * @swagger
  * /api/v1/auth/logout:
@@ -173,5 +178,12 @@ router.delete('/orcid', authMiddleware, authController.orcidDisconnect);
  */
 router.post('/verify/student', authMiddleware, otpLimiter, authController.studentVerification);
 router.post('/verify/student/confirm', authMiddleware, otpLimiter, authController.confirmStudentVerification);
+
+// Account security (signed-in devices, password)
+const account = require('../controllers/accountController');
+router.get('/sessions', authMiddleware, account.listSessions);
+router.delete('/sessions/:id', authMiddleware, account.revokeSession);
+router.post('/sessions/revoke-others', authMiddleware, account.revokeOtherSessions);
+router.put('/password', authMiddleware, loginLimiter, account.changePassword);
 
 module.exports = router;

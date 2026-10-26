@@ -13,6 +13,18 @@ router.get('/saved', authMiddleware, postController.getSaved);
 
 // Writing
 router.post('/create', authMiddleware, validate(postSchema), postController.createPost);
+
+const os = require('os');
+const path = require('path');
+const multer = require('multer');
+const imageUpload = multer({ dest: path.join(os.tmpdir(), 'researchreel-uploads'), limits: { fileSize: 10 * 1024 * 1024, files: 4 } });
+router.post('/media', authMiddleware, (req, res, next) => imageUpload.array('images', 4)(req, res, (err) => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') { err.statusCode = 413; err.message = 'Images are limited to 10 MB each.'; }
+  if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') { err.statusCode = 400; err.message = 'Attach up to 4 images.'; }
+  err.statusCode = err.statusCode || 400;
+  next(err);
+}), postController.uploadPostImages);
 router.post('/react', authMiddleware, postController.reactToPost);
 router.post('/view', optionalAuth, postController.viewPost);
 

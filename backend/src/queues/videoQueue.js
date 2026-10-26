@@ -27,12 +27,12 @@ videoQueue.on('error', (err) => {
 });
 
 const addVideoJob = async (data) => {
+  // One attempt: processing deletes the staged upload on failure, and failures
+  // (bad file, wrong duration) are deterministic, so a retry would only hide the reason.
   return await videoQueue.add('transcode', data, {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 5000,
-    },
+    attempts: 1,
+    removeOnComplete: { age: 24 * 3600 },
+    removeOnFail: { age: 7 * 24 * 3600 },
   });
 };
 

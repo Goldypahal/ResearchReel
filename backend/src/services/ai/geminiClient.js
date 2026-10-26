@@ -176,4 +176,6 @@ module.exports = {
   generateReelScript,
   generateReelSeries,
   extractiveScenes,
+  sanitizeScenes,
+  STYLES,
 };

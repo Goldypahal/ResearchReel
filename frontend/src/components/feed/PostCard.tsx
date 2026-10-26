@@ -1,783 +1,522 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import Image from 'next/image';
-import { useAuth } from '@/context/AuthContext';
-import { useSocial } from '@/context/SocialContext';
-import { 
-  MoreHorizontal, Heart, MessageCircle, Send, Bookmark, Sparkles, 
-  X, Check, Copy, AlertTriangle, UserMinus, BookOpen
+import { useRouter } from 'next/navigation';
+import {
+  MoreHorizontal, MessageCircle, Bookmark, Share2, BookOpen, FileText, Sparkles,
+  AlertTriangle, Copy, Trash2, Send, X,
 } from 'lucide-react';
-import dynamic from 'next/dynamic';
+import { useAuth } from '@/context/AuthContext';
+import { postsApi, REACTIONS, errorMessage, type Comment, type Post, type ReactionType } from '@/lib/api';
+import { cn, displayName, formatCount, timeAgo } from '@/lib/utils';
+import { toast } from '@/components/ui/use-toast';
+import Avatar from '@/components/common/Avatar';
+import VerifiedBadge from '@/components/common/VerifiedBadge';
+import FollowButton from '@/components/common/FollowButton';
+import { Spinner } from '@/components/common/States';
 import ResearchPaperReader from '@/components/reader/ResearchPaperReader';
-import { trackEvent } from '@/lib/analytics';
 
-const PDFPreview = dynamic(() => import('./PDFPreview'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-full bg-zinc-950 flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
-    </div>
-  )
-});
+const REPORT_REASONS = [
+  { value: 'spam', label: 'Spam or misleading' },
+  { value: 'plagiarism', label: 'Plagiarism or stolen work' },
+  { value: 'misinformation', label: 'Scientific misinformation' },
+  { value: 'harassment', label: 'Harassment or hate' },
+  { value: 'other', label: 'Something else' },
+];
 
-export interface PostProps {
-  id: string;
-  author_name: string;
-  author_username: string;
-  author_avatar?: string;
-  author_img?: string;
-  verification_status: string;
-  content_type: 'text' | 'image' | 'document' | 'code' | 'video';
-  caption: string;
-  media_urls?: string[];
-  document_name?: string;
-  summary_text?: string;
-  abstract?: string;
-  tags?: string[];
-  reaction_count: number;
-  // DOI / research paper fields (from Crossref import)
-  doi?: string | null;
-  doi_url?: string | null;
-  pdf_url?: string | null;
-  landing_url?: string | null;
-  title?: string;
-  authors?: { name: string; orcid?: string | null }[];
-  journal?: string;
-  year?: number | null;
-  cited_by_count?: number;
+const STATUS_LABEL: Record<string, string> = { preprint: 'Preprint', published: 'Published', wip: 'Work in progress' };
+
+interface PostCardProps {
+  post: Post;
+  onDeleted?: (id: string) => void;
+  /** Called when the viewer un-saves a post (used by the Saved page to drop it). */
+  onUnsaved?: (id: string) => void;
+  /** Start with the comment thread open (single-post page). */
+  defaultCommentsOpen?: boolean;
 }
 
-export default function PostCard({ post }: { post: PostProps }) {
-  const { user, token } = useAuth();
-  const { followingMap, followUser, unfollowUser } = useSocial();
+export default function PostCard({ post, onDeleted, onUnsaved, defaultCommentsOpen = false }: PostCardProps) {
+  const { user } = useAuth();
+  const router = useRouter();
+  const isOwn = user?.id === post.author_id;
 
-  // Derive clean username first so it can be used for follow state
-  const cleanUsername = post.author_username?.startsWith('@')
-    ? post.author_username.slice(1)
-    : (post.author_username || 'anonymous');
+  const [reaction, setReaction] = useState<ReactionType | null>(post.viewer_reaction ?? null);
+  const [reactionCount, setReactionCount] = useState(post.reaction_count);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [saved, setSaved] = useState(post.is_bookmarked);
 
-  const followerUsername = user?.username
-    ? (user.username.startsWith('@') ? user.username.slice(1) : user.username)
-    : 'julianewton';
-  const targetUsername = cleanUsername;
-  const isFollowing = followingMap[followerUsername]?.includes(targetUsername) || false;
+  const [commentsOpen, setCommentsOpen] = useState(defaultCommentsOpen);
+  const [comments, setComments] = useState<Comment[] | null>(null);
+  const [commentCount, setCommentCount] = useState(post.comment_count);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [posting, setPosting] = useState(false);
 
-  // Interaction States
-  const [reactions, setReactions] = useState(post.reaction_count);
-  const [reacted, setReacted] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
-  
-  // Overlay Menu States
-  const [isOptionsMenuOpen, setIsOptionsMenuOpen] = useState(false);
-  const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState(REPORT_REASONS[0].value);
+  const [reportDetails, setReportDetails] = useState('');
+  const [reporting, setReporting] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(false);
 
-  // Content Report States
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [reportReason, setReportReason] = useState("spam");
-  const [reportDetails, setReportDetails] = useState("");
-  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const requireAuth = () => {
+    if (user) return true;
+    router.push(`/auth/login?next=${encodeURIComponent(window.location.pathname)}`);
+    return false;
+  };
 
-  // In-app paper reader
-  const [isReaderOpen, setIsReaderOpen] = useState(false);
-  
-  // Comments Flow States
-  const [showComments, setShowComments] = useState(false);
-  const [commentInput, setCommentInput] = useState("");
-  const [commentsList, setCommentsList] = useState([
-    {
-      id: "c1",
-      username: "@julianewton",
-      verification: "scholar",
-      text: "Fascinating methodology! The Lorentz-covariance wave-function proof is exceptionally solid.",
-      time: "2h"
-    },
-    {
-      id: "c2",
-      username: "@athompson_cs",
-      verification: "student",
-      text: "Is there an open repository for the Minkowski spacetime code templates used here?",
-      time: "1h"
+  const applyReaction = async (next: ReactionType | null) => {
+    if (!requireAuth()) return;
+    setPickerOpen(false);
+    const prev = { reaction, reactionCount };
+    setReaction(next);
+    setReactionCount((c) => c + (next && !reaction ? 1 : !next && reaction ? -1 : 0));
+    try {
+      const res = await postsApi.react(post.id, next);
+      setReaction(res.viewer_reaction);
+      setReactionCount(res.reaction_count);
+    } catch (err) {
+      setReaction(prev.reaction);
+      setReactionCount(prev.reactionCount);
+      toast({ title: 'Reaction failed', description: errorMessage(err), variant: 'destructive' });
     }
-  ]);
+  };
 
-  // Gemini Chat States
-  const [isGeminiChatOpen, setIsGeminiChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-  const [chatHistory, setChatHistory] = useState<{ sender: 'user' | 'gemini', text: string }[]>([]);
-  const [isChatTyping, setIsChatTyping] = useState(false);
+  const toggleSave = async () => {
+    if (!requireAuth()) return;
+    const next = !saved;
+    setSaved(next);
+    try {
+      if (next) await postsApi.bookmark(post.id);
+      else {
+        await postsApi.unbookmark(post.id);
+        onUnsaved?.(post.id);
+      }
+      toast({ title: next ? 'Saved to your collection' : 'Removed from saved', variant: 'success' });
+    } catch (err) {
+      setSaved(!next);
+      toast({ title: 'Could not update saved posts', description: errorMessage(err), variant: 'destructive' });
+    }
+  };
 
-  const [isMounted, setIsMounted] = useState(false);
+  // Count a view once the card has been at least half on screen for a second.
+  const cardRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    let timer: number | undefined;
+    const obs = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        timer = window.setTimeout(() => { postsApi.recordView(post.id); obs.disconnect(); }, 1000);
+      } else if (timer) {
+        window.clearTimeout(timer);
+      }
+    }, { threshold: 0.5 });
+    obs.observe(el);
+    return () => { obs.disconnect(); if (timer) window.clearTimeout(timer); };
+  }, [post.id]);
+
+  const loadComments = async () => {
+    setCommentsError(null);
+    try {
+      const rows = await postsApi.getComments(post.id);
+      setComments(rows);
+      setCommentCount(rows.length);
+    } catch (err) {
+      setCommentsError(errorMessage(err, 'Could not load the discussion.'));
+    }
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsMounted(true);
-    }, 0);
-    return () => clearTimeout(timer);
+    if (defaultCommentsOpen) loadComments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (isGeminiChatOpen && chatHistory.length === 0) {
-      const timer = setTimeout(() => {
-        setChatHistory([
-          { 
-            sender: 'gemini', 
-            text: `Hi, I am the Gemini RAG Agent. I've processed the document '${post.document_name || "Post Context"}'. Ask me anything about its findings, methodology, or equations.` 
-          }
-        ]);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [isGeminiChatOpen, chatHistory.length, post.document_name]);
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => {
-      setToast(null);
-    }, 2500);
+  const toggleComments = () => {
+    const next = !commentsOpen;
+    setCommentsOpen(next);
+    if (next && comments === null) loadComments();
   };
 
-  const handleReact = () => {
-    if (reacted) {
-      setReacted(false);
-      setReactions(prev => prev - 1);
-    } else {
-      setReacted(true);
-      setReactions(prev => prev + 1);
-      showToast("Added to liked posts");
-      trackEvent('first_reaction', {
-        postId: post.id,
-        authorUsername: post.author_username,
-        contentType: post.content_type
-      });
-    }
-  };
-
-  const handleSave = () => {
-    if (isSaved) {
-      setIsSaved(false);
-      showToast("Removed from Research Library");
-    } else {
-      setIsSaved(true);
-      showToast("Saved to Research Library");
-    }
-  };
-
-  const handleCopyLink = () => {
-    const linkText = typeof window !== 'undefined' ? `${window.location.origin}/paper/${post.id}` : "";
-    navigator.clipboard.writeText(linkText);
-    setIsOptionsMenuOpen(false);
-    setIsShareMenuOpen(false);
-    showToast("Link copied to clipboard!");
-  };
-
-  const handleToggleFollow = () => {
-    if (isFollowing) {
-      unfollowUser(followerUsername, targetUsername);
-      showToast(`Unfollowed ${post.author_username}`);
-    } else {
-      followUser(followerUsername, targetUsername);
-      showToast(`Following ${post.author_username}`);
-    }
-    setIsOptionsMenuOpen(false);
-  };
-
-  const handleReport = () => {
-    setIsOptionsMenuOpen(false);
-    if (!token) {
-      showToast("Authentication required to report posts");
-      return;
-    }
-    setIsReportModalOpen(true);
-  };
-
-  const handleSubmitReport = async () => {
-    if (!token) return;
-    setIsSubmittingReport(true);
+  const submitComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = draft.trim();
+    if (!text || !requireAuth()) return;
+    setPosting(true);
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
-      const res = await fetch(`${API_BASE}/moderation/report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          post_id: post.id,
-          reason: reportReason,
-          details: reportDetails
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to submit report');
-
-      showToast("Report submitted successfully");
-      setIsReportModalOpen(false);
-      setReportDetails("");
-    } catch (error) {
-      const err = error as Error;
-      showToast(err.message || "Failed to submit report");
+      const created = await postsApi.addComment(post.id, text);
+      setComments((prev) => [...(prev || []), created]);
+      setCommentCount((c) => c + 1);
+      setDraft('');
+      setCommentsOpen(true);
+    } catch (err) {
+      toast({ title: 'Comment not posted', description: errorMessage(err), variant: 'destructive' });
     } finally {
-      setIsSubmittingReport(false);
+      setPosting(false);
     }
   };
 
-  const handleShareToWorkspace = (workspaceName: string) => {
-    showToast(`Shared to ${workspaceName} successfully!`);
-    setIsShareMenuOpen(false);
-  };
-
-  const handleAddComment = () => {
-    if (!commentInput.trim()) return;
-    
-    const newComment = {
-      id: `c-${Date.now()}`,
-      username: user?.username ? `@${user.username.replace(/^@/, '')}` : "@anonymous",
-      verification: user?.role === 'scholar' || user?.role === 'professor' ? 'scholar' : 'student',
-      text: commentInput,
-      time: "1s"
-    };
-
-    setCommentsList(prev => [...prev, newComment]);
-    setCommentInput("");
-    setShowComments(true);
-    showToast("Comment posted!");
-    trackEvent('first_comment', {
-      postId: post.id,
-      commentLength: commentInput.length,
-      authorUsername: post.author_username
-    });
-  };
-
-  const getSuggestions = () => {
-    if (post.document_name?.includes("Relativity")) {
-      return [
-        "Summarize the key contribution",
-        "Explain the methodology",
-        "What are the limitations?"
-      ];
+  const removeComment = async (id: string) => {
+    try {
+      await postsApi.deleteComment(post.id, id);
+      setComments((prev) => (prev || []).filter((c) => c.id !== id));
+      setCommentCount((c) => Math.max(0, c - 1));
+    } catch (err) {
+      toast({ title: 'Could not delete comment', description: errorMessage(err), variant: 'destructive' });
     }
-    if (post.document_name?.includes("Radiological")) {
-      return [
-        "What was the cryogenic decay anomaly?",
-        "Explain the methodology",
-        "What are the experimental uncertainties?"
-      ];
-    }
-    return [
-      "Summarize the main topic",
-      "Who is the lead author?",
-      "Are there code implementation details?"
-    ];
   };
 
-  const handleSendPrompt = (promptText: string) => {
-    if (!promptText.trim()) return;
-    
-    setChatHistory(prev => [...prev, { sender: 'user', text: promptText }]);
-    setChatInput("");
-    setIsChatTyping(true);
+  const postUrl = () => `${window.location.origin}/post/${post.id}`;
 
-    let responseText = "Based on my context analysis of this paper, the findings represent a key milestone in this domain. However, additional experiments will be required to validate the quantitative baseline improvements.";
-    const cleanPrompt = promptText.toLowerCase();
-
-    if (post.document_name?.includes("Relativity")) {
-      if (cleanPrompt.includes("summarize") || cleanPrompt.includes("contribution")) {
-        responseText = "This paper integrates the core principles of special relativity with modern quantum observers. It proves that wave-function collapse duration is Lorentz-covariant and depends on the reference frame velocity of the measurement device.";
-      } else if (cleanPrompt.includes("methodology") || cleanPrompt.includes("explain")) {
-        responseText = "The methodology employs a modified Minkowski spacetime formulation where observer state vectors are parameterized using quantum density matrices, leading to coordinate-free quantum measurements.";
-      } else if (cleanPrompt.includes("limitation") || cleanPrompt.includes("limit")) {
-        responseText = "The primary limitation is the neglect of general relativistic gravity effects; the current model is strictly restricted to flat spacetime (special relativity) and does not scale to strong gravitational fields near black holes.";
+  const share = async () => {
+    setMenuOpen(false);
+    const url = postUrl();
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: post.document_title || `Post by ${displayName(post)}`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast({ title: 'Link copied', variant: 'success' });
       }
-    } else if (post.document_name?.includes("Radiological")) {
-      if (cleanPrompt.includes("anomaly") || cleanPrompt.includes("cryogenic") || cleanPrompt.includes("decay")) {
-        responseText = "The paper documents a minor anomalous decay acceleration of 0.04% in radium isotope samples when cooled to extreme cryogenic temperatures (below 4K) compared to ambient conditions.";
-      } else if (cleanPrompt.includes("methodology") || cleanPrompt.includes("explain")) {
-        responseText = "The experiment uses a custom-insulated liquid helium cryostat combined with high-precision ionization chambers to isolate and record emission rates over a continuous 72-hour cycle.";
-      } else if (cleanPrompt.includes("uncertainty") || cleanPrompt.includes("limitation")) {
-        responseText = "Thermal leakage during liquid helium refilling cycles introduced a ±0.01% measurement uncertainty. Furthermore, the decay rate acceleration mechanism remains theoretical and requires validation from standard thermodynamic nuclear theories.";
-      }
-    } else if (post.document_name?.includes("NeurSymbolic")) {
-      if (cleanPrompt.includes("summarize") || cleanPrompt.includes("contribution")) {
-        responseText = "The paper proposes a novel Neuro-Symbolic integration layer for transformers. By embedding first-order logic constraints directly into the attention mechanism, it reduces out-of-distribution reasoning errors by 24%.";
-      } else if (cleanPrompt.includes("methodology") || cleanPrompt.includes("explain")) {
-        responseText = "The authors introduce a differentiable SAT solver that acts as a regularizer during backpropagation, penalizing transformer attention patterns that violate pre-defined symbolic axioms.";
-      } else if (cleanPrompt.includes("limitation") || cleanPrompt.includes("limit")) {
-        responseText = "The SAT regularizer scales quadratically with the number of symbolic logic constraints, making it computationally heavy for large databases with thousands of rules.";
-      }
+    } catch {
+      // user dismissed the share sheet
     }
-
-    setTimeout(() => {
-      setIsChatTyping(false);
-      setChatHistory(prev => [...prev, { sender: 'gemini', text: responseText }]);
-    }, 1200);
   };
 
+  const copyLink = async () => {
+    setMenuOpen(false);
+    try {
+      await navigator.clipboard.writeText(postUrl());
+      toast({ title: 'Link copied', variant: 'success' });
+    } catch {
+      toast({ title: 'Could not copy link', variant: 'destructive' });
+    }
+  };
+
+  const deletePost = async () => {
+    setMenuOpen(false);
+    if (!window.confirm('Delete this post? This cannot be undone.')) return;
+    try {
+      await postsApi.remove(post.id);
+      toast({ title: 'Post deleted', variant: 'success' });
+      onDeleted?.(post.id);
+    } catch (err) {
+      toast({ title: 'Could not delete post', description: errorMessage(err), variant: 'destructive' });
+    }
+  };
+
+  const submitReport = async () => {
+    setReporting(true);
+    try {
+      await postsApi.report(post.id, reportReason, reportDetails.trim() || undefined);
+      toast({ title: 'Report submitted', description: 'Our moderators will review it.', variant: 'success' });
+      setReportOpen(false);
+      setReportDetails('');
+    } catch (err) {
+      toast({ title: 'Report failed', description: errorMessage(err), variant: 'destructive' });
+    } finally {
+      setReporting(false);
+    }
+  };
+
+  const activeReaction = REACTIONS.find((r) => r.type === reaction);
+  const hasDocument = post.content_type === 'document' && post.document_url;
 
   return (
-    <div className="w-full bg-transparent border-b border-[var(--border)]/10 pb-8 mb-8 text-[var(--foreground)] max-w-[600px] mx-auto transition-all relative">
-      
+    <article ref={cardRef} className="mx-auto w-full max-w-[600px] border-b border-[var(--border)] pb-6 mb-6 text-[var(--foreground)]">
       {/* Header */}
-      <div className="flex items-center justify-between px-0 py-3">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center border border-[var(--border)]/10 shadow-sm bg-zinc-900">
-            {post.author_img ? (
-              <Image src={post.author_img} alt={post.author_name} width={36} height={36} className="w-full h-full object-cover transition-all" />
-            ) : (
-              <div className="w-full h-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-xs text-white">
-                {cleanUsername.slice(0, 1).toUpperCase()}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col">
+      <header className="flex items-center justify-between py-3">
+        <Link href={`/profile/${post.username}`} className="flex min-w-0 items-center gap-3">
+          <Avatar src={post.avatar_url} name={displayName(post)} size="md" />
+          <div className="min-w-0">
             <div className="flex items-center gap-1">
-              <span className="font-bold text-sm hover:underline cursor-pointer transition-colors tracking-tight lowercase">{cleanUsername}</span>
-              {post.verification_status === 'scholar' && (
-                <span className="text-[#0095f6] text-[11px] font-bold" title="Verified Scholar">✓</span>
-              )}
-              {isFollowing ? (
-                <span className="text-zinc-500 text-xs ml-1">• 2h</span>
-              ) : (
-                <button 
-                  onClick={handleToggleFollow}
-                  className="text-xs text-indigo-500 font-semibold hover:text-indigo-400 ml-2 transition-all"
-                >
-                  • Follow
-                </button>
-              )}
+              <span className="truncate text-sm font-bold hover:underline">{displayName(post)}</span>
+              <VerifiedBadge status={post.verification_status} />
+            </div>
+            <p className="truncate text-xs text-muted-foreground">
+              @{post.username}
+              {post.institution ? ` · ${post.institution}` : ''} · <time dateTime={post.created_at}>{timeAgo(post.created_at)}</time>
+            </p>
+          </div>
+        </Link>
+        <div className="flex items-center gap-2">
+          {!isOwn && <FollowButton username={post.username} initialFollowing={false} size="sm" className="hidden" />}
+          <button
+            onClick={() => setMenuOpen(true)}
+            className="rounded-full p-2 text-muted-foreground hover:bg-[var(--foreground)]/5 hover:text-[var(--foreground)]"
+            aria-label="Post options"
+          >
+            <MoreHorizontal size={18} />
+          </button>
+        </div>
+      </header>
+
+      {/* Body */}
+      {post.caption && (
+        <p className="mb-3 whitespace-pre-wrap text-[15px] leading-relaxed">{post.caption}</p>
+      )}
+
+      {post.content_type === 'image' && !!post.media_urls?.length && (
+        <div className={cn('mb-3 grid gap-1 overflow-hidden rounded-xl border border-[var(--border)]', post.media_urls.length > 1 && 'grid-cols-2')}>
+          {post.media_urls.slice(0, 4).map((src, i) => (
+            <a key={src} href={src} target="_blank" rel="noreferrer" className={cn('relative block bg-[var(--foreground)]/5', post.media_urls!.length === 1 ? 'aspect-video' : 'aspect-square', post.media_urls!.length === 3 && i === 0 && 'row-span-2 aspect-auto')}>
+              <Image src={src} alt={post.media_urls!.length > 1 ? `Image ${i + 1} of ${post.media_urls!.length}` : post.caption?.slice(0, 120) || 'Post image'} fill className="object-cover" />
+            </a>
+          ))}
+        </div>
+      )}
+
+      {post.content_type !== 'document' && post.doi && (
+        <a href={`https://doi.org/${post.doi}`} target="_blank" rel="noreferrer" className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-3 py-1 text-xs font-medium text-indigo-400 hover:bg-[var(--foreground)]/5">
+          <BookOpen size={12} /> doi:{post.doi}
+        </a>
+      )}
+
+      {post.content_type === 'document' && (
+        <div className="mb-3 rounded-xl border border-[var(--border)] bg-[var(--foreground)]/[0.03] p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400">
+              <FileText size={20} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="line-clamp-2 text-sm font-bold">{post.document_title || post.file_name || 'Research paper'}</h3>
+              {post.summary_text && <p className="mt-1 line-clamp-3 text-xs text-muted-foreground">{post.summary_text}</p>}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {hasDocument && (
+                  <button
+                    onClick={() => setReaderOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                  >
+                    <BookOpen size={12} /> Read paper
+                  </button>
+                )}
+                {post.document_id && (
+                  <Link
+                    href={`/ai/ask?document=${post.document_id}`}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-3 py-1.5 text-xs font-semibold hover:bg-[var(--foreground)]/5"
+                  >
+                    <Sparkles size={12} className="text-indigo-400" /> Ask AI
+                  </Link>
+                )}
+                {post.doi && (
+                  <a
+                    href={`https://doi.org/${post.doi}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-medium text-indigo-400 hover:underline"
+                  >
+                    doi:{post.doi}
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </div>
-        <button 
-          onClick={() => setIsOptionsMenuOpen(true)}
-          className="text-[var(--foreground)] opacity-50 hover:opacity-100 transition-opacity p-2 hover:bg-[var(--foreground)]/5 rounded-full"
-        >
-          <MoreHorizontal size={20} />
-        </button>
-      </div>
+      )}
 
-      {/* Content Area (Image/Video/Doc) */}
-      <div className={`w-full bg-[var(--foreground)]/[0.03] border border-[var(--border)]/10 rounded-lg relative group cursor-pointer overflow-hidden shadow-sm flex items-center justify-center ${
-        post.content_type === 'document' ? 'aspect-[3/4]' : 'aspect-square'
-      }`}>
-        {post.content_type === 'document' ? (
-          isMounted ? (
-            <PDFPreview 
-              file={`/${post.document_name}`} 
-              fallbackName={post.document_name || "Research Document"} 
-              fallbackSummary={post.summary_text || ""} 
-            />
-          ) : (
-            <div className="w-full h-full bg-zinc-950 flex items-center justify-center">
-              <div className="w-8 h-8 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
-            </div>
-          )
-        ) : post.content_type === 'image' ? (
-           <Image 
-             src={post.media_urls?.[0] || ""} 
-             alt={post.caption} 
-             fill 
-             className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-500" 
-           />
-        ) : (
-           <div className="p-10 text-center text-base font-semibold leading-relaxed px-12">
-             {post.caption}
-           </div>
-        )}
-      </div>
-
-      {/* Action Bar (Icons) */}
-      <div className="flex justify-between px-0 pt-3.5 pb-1.5">
-        <div className="flex gap-4">
-          <button onClick={handleReact} className="transition-transform active:scale-125 text-[var(--foreground)]">
-            {reacted ? (
-              <Heart size={24} fill="#ef4444" className="text-red-500" />
-            ) : (
-              <Heart size={24} strokeWidth={1.8} className="hover:text-red-500 transition-colors" />
-            )}
-          </button>
-          <button 
-            onClick={() => setShowComments(prev => !prev)}
-            className={`hover:text-indigo-500 transition-colors text-[var(--foreground)] ${showComments ? 'text-indigo-500' : ''}`}
-          >
-            <MessageCircle size={24} strokeWidth={1.8} />
-          </button>
-          <button 
-            onClick={() => setIsShareMenuOpen(true)}
-            className="hover:text-indigo-500 transition-colors text-[var(--foreground)]"
-          >
-            <Send size={24} strokeWidth={1.8} />
-          </button>
-        </div>
-        <button 
-          onClick={handleSave}
-          className="hover:text-indigo-500 transition-colors text-[var(--foreground)]"
-        >
-          {isSaved ? (
-            <Bookmark size={24} fill="currentColor" className="text-indigo-500" />
-          ) : (
-            <Bookmark size={24} strokeWidth={1.8} />
-          )}
-        </button>
-      </div>
-
-      {/* Likes */}
-      <div className="px-0 mb-1.5">
-        <span className="text-sm font-bold">{reactions.toLocaleString()} likes</span>
-      </div>
-
-      {/* Caption */}
-      <div className="px-0 mb-2 flex items-start gap-1.5">
-        <span className="font-bold text-sm lowercase shrink-0">{cleanUsername}</span>
-        <span className="text-sm text-[var(--foreground)] opacity-95 leading-relaxed">{post.caption}</span>
-      </div>
-
-      {/* Tags */}
-      {post.tags && post.tags.length > 0 && (
-        <div className="px-0 mb-2 flex flex-wrap gap-x-2">
-          {post.tags.map(tag => (
-            <span key={tag} className="text-sm font-normal text-indigo-500 hover:underline cursor-pointer">
-              #{tag.toLowerCase()}
+      {(post.tags?.length || post.publication_status) ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {post.publication_status && (
+            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-400">
+              {STATUS_LABEL[post.publication_status]}
             </span>
+          )}
+          {post.tags?.map((tag) => (
+            <Link key={tag} href={`/explore?tag=${encodeURIComponent(tag)}`} className="text-sm text-indigo-400 hover:underline">
+              #{tag}
+            </Link>
           ))}
         </div>
-      )}
+      ) : null}
 
-      {/* Read Full Paper Button + Ask Gemini */}
-      {post.content_type === 'document' && (
-        <div className="px-0 mb-2 flex items-center justify-between">
-          <button 
-            onClick={() => setIsReaderOpen(true)}
-            className="flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 px-3.5 py-1.5 rounded-full transition-all shadow-md shadow-indigo-600/20 active:scale-95"
+      {/* Actions */}
+      <div className="flex items-center justify-between pt-1">
+        <div className="flex items-center gap-1">
+          <div className="relative">
+            <button
+              onClick={() => (reaction ? applyReaction(null) : setPickerOpen((o) => !o))}
+              onContextMenu={(e) => { e.preventDefault(); setPickerOpen(true); }}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors hover:bg-[var(--foreground)]/5',
+                reaction && 'text-indigo-400'
+              )}
+              aria-label={reaction ? `Remove reaction (${activeReaction?.label})` : 'React'}
+            >
+              <span aria-hidden>{activeReaction?.emoji || '💡'}</span>
+              <span>{activeReaction?.label || 'React'}</span>
+              {reactionCount > 0 && <span className="text-muted-foreground">· {formatCount(reactionCount)}</span>}
+            </button>
+            {pickerOpen && (
+              <div className="absolute bottom-full left-0 z-20 mb-2 flex gap-1 rounded-full border border-[var(--border)] bg-[var(--background)] p-1 shadow-xl">
+                {REACTIONS.map((r) => (
+                  <button
+                    key={r.type}
+                    onClick={() => applyReaction(r.type)}
+                    title={r.label}
+                    className="rounded-full px-2.5 py-1.5 text-sm hover:bg-[var(--foreground)]/10"
+                  >
+                    <span aria-hidden>{r.emoji}</span> <span className="text-xs">{r.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={toggleComments}
+            className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm hover:bg-[var(--foreground)]/5', commentsOpen && 'text-indigo-400')}
           >
-            <BookOpen size={12} />
-            <span>Read Full Paper</span>
+            <MessageCircle size={17} />
+            <span>{commentCount > 0 ? formatCount(commentCount) : 'Discuss'}</span>
           </button>
-          <button 
-            onClick={() => setIsGeminiChatOpen(true)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-indigo-500 hover:text-indigo-400 transition-colors"
-          >
-            <Sparkles size={13} />
-            <span>Ask Gemini</span>
+          <button onClick={share} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm hover:bg-[var(--foreground)]/5">
+            <Share2 size={16} /> <span className="hidden sm:inline">Share</span>
           </button>
         </div>
-      )}
+        <button
+          onClick={toggleSave}
+          className={cn('rounded-full p-2 hover:bg-[var(--foreground)]/5', saved && 'text-indigo-400')}
+          aria-label={saved ? 'Remove from saved' : 'Save'}
+          aria-pressed={saved}
+        >
+          <Bookmark size={18} fill={saved ? 'currentColor' : 'none'} />
+        </button>
+      </div>
 
-      {/* Comments List (Toggled) */}
-      {showComments && (
-        <div className="mt-3.5 space-y-3.5 pl-1 max-h-[220px] overflow-y-auto border-l-2 border-zinc-800/40 pl-3 transition-all scrollbar-thin">
-          {commentsList.map(c => (
-            <div key={c.id} className="flex flex-col text-sm">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold lowercase text-xs">{c.username}</span>
-                {c.verification === 'scholar' && (
-                  <span className="text-[#0095f6] text-[10px]">✓</span>
-                )}
-                <span className="text-zinc-500 text-[10px]">{c.time}</span>
+      {/* Discussion */}
+      {commentsOpen && (
+        <div className="mt-3 space-y-3 border-l-2 border-[var(--border)] pl-4">
+          {comments === null && !commentsError && <Spinner size={16} />}
+          {commentsError && (
+            <p className="text-xs text-red-400">
+              {commentsError} <button onClick={loadComments} className="underline">Retry</button>
+            </p>
+          )}
+          {comments?.length === 0 && <p className="text-xs text-muted-foreground">No comments yet. Start the discussion.</p>}
+          {comments?.map((c) => (
+            <div key={c.id} className="group flex gap-2.5">
+              <Avatar src={c.avatar_url} name={displayName(c)} size="xs" className="mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1 text-xs">
+                  <Link href={`/profile/${c.username}`} className="font-semibold hover:underline">{displayName(c)}</Link>
+                  <VerifiedBadge status={c.verification_status} size={11} />
+                  <span className="text-muted-foreground">· {timeAgo(c.created_at)}</span>
+                  {(user?.id === c.author_id || isOwn) && (
+                    <button
+                      onClick={() => removeComment(c.id)}
+                      className="ml-auto text-muted-foreground opacity-0 hover:text-red-400 group-hover:opacity-100"
+                      aria-label="Delete comment"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+                <p className="mt-0.5 whitespace-pre-wrap text-sm">{c.content}</p>
               </div>
-              <p className="text-zinc-300 text-xs mt-0.5 leading-relaxed">{c.text}</p>
             </div>
           ))}
         </div>
       )}
 
-      {/* Comments Toggle Button */}
-      <div className="px-0 mb-2 mt-1">
-        <button 
-          onClick={() => setShowComments(prev => !prev)}
-          className={`text-sm text-zinc-500 hover:text-zinc-400 transition-colors`}
-        >
-          {showComments ? "Hide discussions" : `View all ${commentsList.length} discussions`}
-        </button>
-      </div>
-      
-      {/* Add comment input */}
-      {user?.role !== 'viewer' ? (
-        <div className="px-0 flex items-center justify-between border-t border-[var(--border)]/5 pt-3 mt-2">
-          <input 
-            type="text" 
-            value={commentInput}
-            onChange={(e) => setCommentInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
-            placeholder="Add a comment..."
-            className="bg-transparent text-sm w-full outline-none placeholder:text-zinc-500 placeholder:text-sm text-[var(--foreground)]"
+      {user && (
+        <form onSubmit={submitComment} className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-3">
+          <Avatar src={user.avatar_url} name={displayName(user)} size="xs" />
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={() => { if (!commentsOpen) toggleComments(); }}
+            placeholder="Add to the discussion…"
+            maxLength={2000}
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
-          <button 
-            onClick={handleAddComment}
-            className="text-indigo-500 text-sm font-semibold hover:text-indigo-400 transition-colors pl-2"
+          <button
+            type="submit"
+            disabled={!draft.trim() || posting}
+            className="text-indigo-400 disabled:opacity-40"
+            aria-label="Post comment"
           >
-            Post
+            {posting ? <Spinner size={14} /> : <Send size={16} />}
           </button>
-        </div>
-      ) : (
-        <div className="px-0 py-1.5 mt-2 text-left border-t border-[var(--border)]/5">
-           <span className="text-xs text-zinc-500">Verification required to join discussions</span>
-        </div>
+        </form>
       )}
 
-      {/* --- MODALS & INTERACTION OVERLAYS --- */}
-
-      {/* Options Menu Modal (Three dots) */}
-      {isOptionsMenuOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[99999] flex items-center justify-center animate-fade-in">
-          <div className="absolute inset-0" onClick={() => setIsOptionsMenuOpen(false)} />
-          <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl w-[90%] max-w-[320px] overflow-hidden shadow-2xl z-10 flex flex-col">
-            <button 
-              onClick={handleCopyLink}
-              className="px-4 py-3.5 text-sm font-semibold border-b border-zinc-850 hover:bg-zinc-800/40 text-indigo-400 transition-all flex items-center justify-center gap-2"
-            >
-              <Copy size={16} />
-              <span>Copy Document Link</span>
+      {/* Options sheet */}
+      {menuOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setMenuOpen(false)}>
+          <div className="w-[90%] max-w-xs overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <button onClick={copyLink} className="flex w-full items-center justify-center gap-2 border-b border-[var(--border)] px-4 py-3.5 text-sm font-semibold hover:bg-[var(--foreground)]/5">
+              <Copy size={15} /> Copy link
             </button>
-            <button 
-              onClick={handleToggleFollow}
-              className="px-4 py-3.5 text-sm font-semibold border-b border-zinc-850 hover:bg-zinc-800/40 text-red-400 transition-all flex items-center justify-center gap-2"
-            >
-              <UserMinus size={16} />
-              <span>{isFollowing ? `Unfollow ${post.author_username}` : `Follow ${post.author_username}`}</span>
-            </button>
-            <button 
-              onClick={handleReport}
-              className="px-4 py-3.5 text-sm font-semibold border-b border-zinc-850 hover:bg-zinc-800/40 text-zinc-400 hover:text-red-400 transition-all flex items-center justify-center gap-2"
-            >
-              <AlertTriangle size={16} />
-              <span>Report Paper</span>
-            </button>
-            <button 
-              onClick={() => setIsOptionsMenuOpen(false)}
-              className="px-4 py-3.5 text-sm font-medium hover:bg-zinc-800/40 text-zinc-500 transition-all"
-            >
+            {isOwn ? (
+              <button onClick={deletePost} className="flex w-full items-center justify-center gap-2 border-b border-[var(--border)] px-4 py-3.5 text-sm font-semibold text-red-400 hover:bg-[var(--foreground)]/5">
+                <Trash2 size={15} /> Delete post
+              </button>
+            ) : (
+              <button
+                onClick={() => { setMenuOpen(false); if (requireAuth()) setReportOpen(true); }}
+                className="flex w-full items-center justify-center gap-2 border-b border-[var(--border)] px-4 py-3.5 text-sm font-semibold text-red-400 hover:bg-[var(--foreground)]/5"
+              >
+                <AlertTriangle size={15} /> Report
+              </button>
+            )}
+            <button onClick={() => setMenuOpen(false)} className="w-full px-4 py-3.5 text-sm text-muted-foreground hover:bg-[var(--foreground)]/5">
               Cancel
             </button>
           </div>
         </div>
       )}
 
-      {/* Share / Send Workspace Modal */}
-      {isShareMenuOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[99999] flex items-center justify-center animate-fade-in">
-          <div className="absolute inset-0" onClick={() => setIsShareMenuOpen(false)} />
-          <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl w-[90%] max-w-[380px] p-5 shadow-2xl z-10 flex flex-col text-zinc-100">
-            <div className="flex justify-between items-center mb-4 border-b border-zinc-800 pb-3">
-              <h3 className="font-bold text-sm">Share paper</h3>
-              <button onClick={() => setIsShareMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300">
-                <X size={18} />
-              </button>
+      {/* Report dialog */}
+      {reportOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !reporting && setReportOpen(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby={`report-${post.id}`} className="w-[92%] max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 id={`report-${post.id}`} className="font-bold">Report post</h3>
+              <button onClick={() => setReportOpen(false)} aria-label="Close"><X size={18} /></button>
             </div>
-
-            {/* Direct Send to Users */}
-            <div className="space-y-2 mb-4">
-              <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Direct Message</span>
-              <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-1">
-                {[
-                  { name: "Albert Einstein", username: "@the_einstein" },
-                  { name: "Marie Curie", username: "@m_curie" },
-                  { name: "Nikola Tesla", username: "@tesla" },
-                  { name: "Alan Turing", username: "@a_turing" }
-                ].map(u => (
-                  <div key={u.username} className="flex justify-between items-center p-1.5 hover:bg-zinc-800/20 rounded">
-                    <div className="flex flex-col">
-                      <span className="text-xs font-medium">{u.name}</span>
-                      <span className="text-[10px] text-zinc-500">{u.username}</span>
-                    </div>
-                    <button 
-                      onClick={() => handleShareToWorkspace(u.username)}
-                      className="text-[10px] font-semibold border border-zinc-700 hover:bg-zinc-800 px-2 py-0.5 rounded transition-all"
-                    >
-                      Send
-                    </button>
-                  </div>
-                ))}
-              </div>
+            <div className="space-y-2">
+              {REPORT_REASONS.map((r) => (
+                <label key={r.value} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-[var(--foreground)]/5">
+                  <input type="radio" name={`reason-${post.id}`} value={r.value} checked={reportReason === r.value} onChange={() => setReportReason(r.value)} />
+                  {r.label}
+                </label>
+              ))}
             </div>
-
-            {/* Copy link option */}
-            <button 
-              onClick={handleCopyLink}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 hover:border-indigo-500/30 rounded-xl text-indigo-400 text-xs font-bold transition-all mt-2"
+            <textarea
+              value={reportDetails}
+              onChange={(e) => setReportDetails(e.target.value)}
+              placeholder="Anything else moderators should know? (optional)"
+              rows={3}
+              maxLength={1000}
+              className="mt-3 w-full rounded-lg border border-[var(--border)] bg-transparent p-2 text-sm outline-none focus:border-indigo-500"
+            />
+            <button
+              onClick={submitReport}
+              disabled={reporting}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-60"
             >
-              <Copy size={14} />
-              <span>Copy Share Link</span>
+              {reporting && <Spinner size={14} className="text-white" />} Submit report
             </button>
           </div>
         </div>
       )}
 
-      {/* Gemini RAG Chat Side Panel */}
-      {isGeminiChatOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[99999] flex justify-end animate-fade-in">
-          <div className="absolute inset-0" onClick={() => setIsGeminiChatOpen(false)} />
-          
-          <div className="relative w-full max-w-[460px] h-full bg-zinc-950 border-l border-zinc-800/80 shadow-2xl flex flex-col justify-between p-6 text-zinc-100 z-10 animate-slide-in">
-            {/* Header */}
-            <div>
-              <div className="flex justify-between items-center mb-4">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="text-indigo-500 animate-pulse" size={20} />
-                  <h3 className="font-bold text-lg text-white">Gemini RAG Agent</h3>
-                </div>
-                <button onClick={() => setIsGeminiChatOpen(false)} className="text-zinc-400 hover:text-white transition-colors">
-                  <X size={20} />
-                </button>
-              </div>
-              <p className="text-xs text-zinc-500 border-b border-zinc-800 pb-3">
-                Analyzing paper: <span className="text-indigo-400 font-mono">{post.document_name || "Context Document"}</span>
-              </p>
-            </div>
-
-            {/* Chat History */}
-            <div className="flex-1 overflow-y-auto my-4 space-y-4 pr-1 text-sm scrollbar-thin">
-              {chatHistory.map((msg, i) => (
-                <div key={i} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 leading-relaxed text-xs ${
-                    msg.sender === 'user' 
-                      ? 'bg-indigo-600 text-white rounded-tr-none shadow-md' 
-                      : 'bg-zinc-900 border border-zinc-800 text-zinc-100 rounded-tl-none shadow-sm'
-                  }`}>
-                    {msg.text}
-                  </div>
-                </div>
-              ))}
-              {isChatTyping && (
-                <div className="flex justify-start">
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl rounded-tl-none px-4 py-2.5 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
-                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.4s]" />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Prompt suggestions & Chat Input */}
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {getSuggestions().map((s, idx) => (
-                  <button 
-                    key={idx}
-                    onClick={() => handleSendPrompt(s)}
-                    className="text-[10px] font-medium bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 hover:border-indigo-500/30 px-2.5 py-1.5 rounded-full transition-all text-left"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2 border border-zinc-800 bg-zinc-900/50 rounded-xl px-3 py-2">
-                <input 
-                  type="text" 
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendPrompt(chatInput)}
-                  placeholder="Ask a question about this paper..."
-                  className="bg-transparent outline-none flex-1 text-xs text-zinc-100 placeholder:text-zinc-500"
-                />
-                <button 
-                  onClick={() => handleSendPrompt(chatInput)}
-                  className="text-indigo-500 hover:text-indigo-400 transition-colors p-1"
-                >
-                  <Send size={16} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {hasDocument && (
+        <ResearchPaperReader
+          isOpen={readerOpen}
+          onClose={() => setReaderOpen(false)}
+          paper={{
+            title: post.document_title || post.file_name || 'Research paper',
+            author_name: displayName(post),
+            doi: post.doi,
+            doi_url: post.doi ? `https://doi.org/${post.doi}` : null,
+            pdf_url: post.document_url,
+            abstract: post.summary_text || undefined,
+            tags: post.tags || undefined,
+          }}
+        />
       )}
-
-      {/* Report Modal */}
-      {isReportModalOpen && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-md z-[99999] flex items-center justify-center animate-fade-in p-4">
-          <div className="absolute inset-0" onClick={() => setIsReportModalOpen(false)} />
-          <div className="relative bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-[420px] p-6 shadow-2xl z-10 flex flex-col text-zinc-100">
-            <div className="flex justify-between items-center mb-5 border-b border-zinc-800 pb-3">
-              <div className="flex items-center gap-2 text-red-500">
-                <AlertTriangle size={18} />
-                <h3 className="font-bold text-sm">Report Content</h3>
-              </div>
-              <button onClick={() => setIsReportModalOpen(false)} className="text-zinc-500 hover:text-zinc-300">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold block mb-2">Reason for Report</label>
-                <select 
-                  value={reportReason} 
-                  onChange={(e) => setReportReason(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                >
-                  <option value="spam">Spam or Misleading</option>
-                  <option value="plagiarism">Plagiarism / Unattributed Work</option>
-                  <option value="inappropriate">Inappropriate content</option>
-                  <option value="copyright">Intellectual property/Copyright violation</option>
-                  <option value="other">Other issue</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold block mb-2">Details (Optional)</label>
-                <textarea 
-                  value={reportDetails}
-                  onChange={(e) => setReportDetails(e.target.value)}
-                  placeholder="Provide any additional context or proof links..."
-                  rows={4}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 resize-none"
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button 
-                  onClick={() => setIsReportModalOpen(false)}
-                  className="flex-1 h-9 bg-zinc-950 border border-zinc-850 hover:bg-zinc-850 text-[10px] font-bold uppercase tracking-widest rounded-xl transition-all"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleSubmitReport}
-                  disabled={isSubmittingReport}
-                  className="flex-1 h-9 bg-red-600 hover:bg-red-500 text-[10px] font-bold uppercase tracking-widest rounded-xl transition-all disabled:opacity-50"
-                >
-                  {isSubmittingReport ? "Submitting..." : "Submit Report"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Floating Global Toast Notification */}
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-zinc-900/95 border border-zinc-800 text-zinc-100 px-4 py-2.5 rounded-full shadow-2xl z-[99999] text-xs font-semibold flex items-center gap-2 animate-bounce">
-          <Check size={14} className="text-indigo-500" />
-          <span>{toast}</span>
-        </div>
-      )}
-
-      {/* In-App Research Paper Reader */}
-      <ResearchPaperReader
-        isOpen={isReaderOpen}
-        onClose={() => setIsReaderOpen(false)}
-        paper={{
-          title: post.title || post.document_name || post.caption,
-          authors: post.authors,
-          author_name: post.author_name,
-          journal: post.journal,
-          year: post.year,
-          doi: post.doi,
-          doi_url: post.doi_url,
-          pdf_url: post.pdf_url,
-          landing_url: post.landing_url,
-          abstract: post.abstract,
-          summary_text: post.summary_text,
-          document_name: post.document_name,
-          cited_by_count: post.cited_by_count,
-          tags: post.tags,
-        }}
-      />
-
-    </div>
+    </article>
   );
 }

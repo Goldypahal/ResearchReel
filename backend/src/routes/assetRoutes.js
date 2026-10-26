@@ -37,6 +37,7 @@ router.use(authMiddleware);
 router.post('/upload', handleUpload, assetController.uploadDocument);
 router.get('/', assetController.getUserAssets);
 router.get('/:id', assetController.getAsset);
+router.patch('/:id', assetController.updateAsset);
 router.delete('/:id', assetController.softDeleteAsset);
 
 module.exports = router;

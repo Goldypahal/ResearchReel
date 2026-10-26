@@ -15,6 +15,7 @@ const ffmpegRun = (args) => new Promise((resolve, reject) => {
 });
 const axios = require('axios');
 const db = require('../config/db');
+const { AppError } = require('../utils/errors');
 const { generateReelScript } = require('./ai/geminiClient');
 const searchService = require('./searchService');
 
@@ -112,19 +113,19 @@ const generateDraftFromPaper = async (documentId, userId, options = {}) => {
   );
   const doc = docResult && docResult.rows ? docResult.rows[0] : null;
   if (!doc) {
-    throw new Error('Document not found or access denied');
+    throw new AppError('Only papers in your own library can be turned into reels.', 404, 'NOT_FOUND');
   }
 
 
   if (doc.status === 'processing') {
-    throw new Error('This paper is still being processed. Try again in a moment.');
+    throw new AppError('This paper is still being processed. Try again in a moment.', 409, 'NOT_READY');
   }
   const paperTitle = doc.title || (doc.file_name || 'Untitled paper').replace(/\.[^/.]+$/, '');
   // Prefer the paper's own words: AI summary, then extracted abstract, then the start of the full text.
   const sourceText = [doc.summary_text, doc.abstract, doc.extracted_text ? String(doc.extracted_text).slice(0, 14000) : null]
     .filter(Boolean).join('\n\n');
   if (!sourceText.trim()) {
-    throw new Error('No text could be extracted from this paper, so a script cannot be generated.');
+    throw new AppError('No text could be extracted from this paper, so a script cannot be generated.', 422, 'NO_TEXT');
   }
   const keyPoints = Array.isArray(doc.key_points) ? doc.key_points : [];
 
@@ -185,25 +186,47 @@ const generateDraftFromPaper = async (documentId, userId, options = {}) => {
   }
 };
 
+const MAX_SCENES = 12;
+const MIN_TOTAL_SECONDS = 30;
+const MAX_TOTAL_SECONDS = 60;
+
 const updateDraft = async (id, userId, updates) => {
-  const { title, description, scenes } = updates;
+  const { title, description, scenes } = updates || {};
   const currentDraft = await getDraftById(id, userId);
-  if (!currentDraft) {
-    throw new Error('Draft not found');
+  if (!currentDraft) throw new AppError('Draft not found.', 404, 'NOT_FOUND');
+  if (currentDraft.status === 'generating') throw new AppError('This reel is rendering — wait for it to finish before editing.', 409, 'BUSY');
+
+  if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 200)) {
+    throw new AppError('Title must be 1-200 characters.', 400, 'VALIDATION_ERROR');
+  }
+  let newScenes = currentDraft.scenes;
+  if (scenes !== undefined) {
+    if (!Array.isArray(scenes) || scenes.length === 0 || scenes.length > MAX_SCENES) {
+      throw new AppError(`A reel needs between 1 and ${MAX_SCENES} scenes.`, 400, 'VALIDATION_ERROR');
+    }
+    const { sanitizeScenes } = require('./ai/geminiClient');
+    newScenes = sanitizeScenes(scenes);
+    if (newScenes.length !== scenes.length) throw new AppError('Every scene needs a title or narration.', 400, 'VALIDATION_ERROR');
   }
 
-  const newTitle = title !== undefined ? title : currentDraft.title;
-  const newDescription = description !== undefined ? description : currentDraft.description;
-  const newScenes = scenes !== undefined ? JSON.stringify(scenes) : JSON.stringify(currentDraft.scenes);
-
   const result = await db.query(
-    `UPDATE reel_drafts 
-     SET title = $1, description = $2, scenes = $3, updated_at = NOW()
+    `UPDATE reel_drafts
+     SET title = $1, description = $2, scenes = $3,
+         status = CASE WHEN status IN ('failed', 'completed') THEN 'draft' ELSE status END,
+         error_message = NULL, updated_at = NOW()
      WHERE id = $4 AND author_id = $5 RETURNING *`,
-    [newTitle, newDescription, newScenes, id, userId]
+    [title !== undefined ? title.trim() : currentDraft.title, description !== undefined ? String(description).slice(0, 1000) : currentDraft.description,
+      JSON.stringify(newScenes), id, userId]
   );
-
   return result.rows[0];
+};
+
+const deleteDraft = async (id, userId) => {
+  const result = await db.query(
+    "DELETE FROM reel_drafts WHERE id = $1 AND author_id = $2 AND status <> 'generating' RETURNING id",
+    [id, userId]
+  );
+  if (!result.rows.length) throw new AppError('Draft not found, or it is rendering right now.', 404, 'NOT_FOUND');
 };
 
 const compileVideo = async (draftId) => {
@@ -217,8 +240,7 @@ const compileVideo = async (draftId) => {
     return;
   }
 
-  // Update status to generating
-  await db.query('UPDATE reel_drafts SET status = $1 WHERE id = $2', ['generating', draftId]);
+  // Status was set to 'generating' by publishDraft.
 
   const reelId = `reel_${Date.now()}`;
   const outputSubDir = path.join(processedDir, reelId);
@@ -426,9 +448,9 @@ const compileVideo = async (draftId) => {
     // 9. Update Draft to Completed
     await db.query(
       `UPDATE reel_drafts 
-       SET status = 'completed', video_url = $1, updated_at = NOW() 
+       SET status = 'completed', video_url = $1, video_id = $3, updated_at = NOW()
        WHERE id = $2`,
-      [videoUrl, draftId]
+      [videoUrl, draftId, videoRecord.id]
     );
 
     // 10. Automatically post to feed
@@ -466,22 +488,38 @@ const compileVideo = async (draftId) => {
 
   } catch (error) {
     console.error(`[Reel Service] Error during reel compilation for ${draftId}:`, error);
-    await db.query(`UPDATE reel_drafts SET status = 'failed', updated_at = NOW() WHERE id = $1`, [draftId]);
+    const reason = /ENOENT|ffmpeg/i.test(String(error && error.message)) && !(await checkFFmpegAvailable())
+      ? 'Video rendering is unavailable on this server.'
+      : 'Rendering failed. Try again, or shorten long scene text.';
+    await db.query(`UPDATE reel_drafts SET status = 'failed', error_message = $2, updated_at = NOW() WHERE id = $1`, [draftId, reason]);
   }
 };
 
 const publishDraft = async (id, userId) => {
   const draft = await getDraftById(id, userId);
-  if (!draft) {
-    throw new Error('Draft not found');
+  if (!draft) throw new AppError('Draft not found.', 404, 'NOT_FOUND');
+  if (draft.status === 'completed') throw new AppError('This draft has already been published.', 409, 'ALREADY_PUBLISHED');
+
+  const scenes = Array.isArray(draft.scenes) ? draft.scenes : JSON.parse(draft.scenes || '[]');
+  const total = scenes.reduce((n, sc) => n + Math.min(20, Math.max(2, parseInt(sc.duration, 10) || 8)), 0);
+  if (total < MIN_TOTAL_SECONDS || total > MAX_TOTAL_SECONDS) {
+    throw new AppError(`Reels must be ${MIN_TOTAL_SECONDS}–${MAX_TOTAL_SECONDS} seconds; this one is ${total}s. Adjust scene durations.`, 400, 'INVALID_DURATION');
+  }
+  if (!(await checkFFmpegAvailable())) {
+    throw new AppError('Video rendering is unavailable on this server (FFmpeg is not installed).', 503, 'MEDIA_UNAVAILABLE');
   }
 
-  // Trigger compilation asynchronously so client doesn't hang
+  // Claim the draft atomically so a double-click can't render it twice.
+  const claimed = await db.query(
+    "UPDATE reel_drafts SET status = 'generating', error_message = NULL, updated_at = NOW() WHERE id = $1 AND author_id = $2 AND status NOT IN ('generating', 'completed') RETURNING id",
+    [id, userId]
+  );
+  if (!claimed.rows.length) throw new AppError('This reel is already rendering.', 409, 'BUSY');
+
   compileVideo(draft.id).catch(err => {
     console.error('[Reel Service] Error in compileVideo async trigger:', err);
   });
-
-  return { success: true, message: 'Reel compilation started in the background.' };
+  return { id: draft.id, status: 'generating' };
 };
 
 const getAutomationSettings = async (userId) => {
@@ -598,6 +636,7 @@ module.exports = {
   getDraftById,
   generateDraftFromPaper,
   updateDraft,
+  deleteDraft,
   publishDraft,
   getAutomationSettings,
   updateAutomationSettings,

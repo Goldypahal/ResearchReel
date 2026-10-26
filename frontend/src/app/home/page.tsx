@@ -1,303 +1,215 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ArrowRight, BookOpen, Bot, ChevronRight, Clock, FileText, Film, FolderKanban, Sparkles, Upload, Users } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { 
-  Bot, ArrowRight, Upload, Sparkles, Film, Users, BookOpen, 
-  Clock, Bookmark, Search, Star, MessageSquare, Play, ChevronRight 
-} from 'lucide-react';
 import Feed from '@/components/feed/Feed';
+import { EmptyState, ErrorState, SkeletonRows } from '@/components/common/States';
+import { aiApi, documentsApi, errorMessage, projectsApi, type LibraryDocument, type Project, type Recommendation } from '@/lib/api';
+import { displayName, timeAgo } from '@/lib/utils';
+
+type Load<T> = { data: T | null; error: string | null };
+const initial = { data: null, error: null };
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
+function SectionHeader({ icon: Icon, title, href, linkLabel }: { icon: React.ElementType; title: string; href: string; linkLabel: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <h3 className="flex items-center gap-2 text-base font-bold"><Icon size={17} className="text-indigo-500" /> {title}</h3>
+      <Link href={href} className="flex items-center gap-1 text-xs font-semibold text-indigo-400 hover:underline">{linkLabel} <ChevronRight size={14} /></Link>
+    </div>
+  );
+}
+
+const STATUS_STYLE: Record<string, string> = {
+  ready: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  processing: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  failed: 'bg-red-500/10 text-red-400 border-red-500/20',
+};
 
 export default function HomeDashboard() {
   const { user } = useAuth();
   const router = useRouter();
   const [aiPrompt, setAiPrompt] = useState('');
+  const [papers, setPapers] = useState<Load<LibraryDocument[]>>(initial);
+  const [recs, setRecs] = useState<Load<Recommendation[]>>(initial);
+  const [projects, setProjects] = useState<Load<Project[]>>(initial);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const settle = <T,>(p: Promise<T>, set: (v: Load<T>) => void) =>
+      p.then((data) => !cancelled && set({ data, error: null }))
+        .catch((err) => !cancelled && set({ data: null, error: errorMessage(err) }));
+    settle(documentsApi.getUserAssets(), setPapers);
+    settle(aiApi.getRecommendations(4), setRecs);
+    settle(projectsApi.getProjects(), setProjects);
+    return () => { cancelled = true; };
+  }, [user]);
 
   const handleAiAsk = (e: React.FormEvent) => {
     e.preventDefault();
-    if (aiPrompt.trim()) {
-      router.push(`/ai/ask?q=${encodeURIComponent(aiPrompt.trim())}`);
-    } else {
-      router.push('/ai/ask');
-    }
+    router.push(aiPrompt.trim() ? `/ai/ask?q=${encodeURIComponent(aiPrompt.trim())}` : '/ai/ask');
   };
 
-  const continueResearching = [
-    {
-      id: 'doc_1',
-      title: 'Attention Is All You Need',
-      authors: 'Vaswani et al. (Google Brain)',
-      lastOpened: '2 hours ago',
-      progress: 85,
-      tag: 'Transformer'
-    },
-    {
-      id: 'doc_2',
-      title: 'BERT: Pre-training of Deep Bidirectional Transformers',
-      authors: 'Devlin et al. (Google AI Language)',
-      lastOpened: 'Yesterday',
-      progress: 60,
-      tag: 'NLP'
-    },
-    {
-      id: 'doc_3',
-      title: 'Retrieval-Augmented Generation for Knowledge-Intensive Tasks',
-      authors: 'Lewis et al. (Meta AI)',
-      lastOpened: '3 days ago',
-      progress: 40,
-      tag: 'RAG'
-    }
-  ];
-
-  const recommendedPapers = [
-    {
-      id: 'rec_1',
-      title: 'Graph Attention Networks for Molecular Property Prediction',
-      authors: 'Veličković et al. • Cambridge University',
-      year: '2025',
-      citations: 342,
-      reason: 'Because you saved Attention Is All You Need'
-    },
-    {
-      id: 'rec_2',
-      title: 'Direct Preference Optimization: Your Language Model is Secretly a Reward Model',
-      authors: 'Rafailov et al. • Stanford University',
-      year: '2024',
-      citations: 580,
-      reason: 'Recommended based on your AI/ML research profile'
-    }
-  ];
-
-  const activeProjects = [
-    {
-      id: 'proj_1',
-      title: 'AI Text Detection Research',
-      members: 4,
-      papers: 12,
-      tasks: 8,
-      progress: 72
-    },
-    {
-      id: 'proj_2',
-      title: 'Quantum Computing Benchmark',
-      members: 3,
-      papers: 6,
-      tasks: 4,
-      progress: 45
-    }
-  ];
+  const recentPapers = (papers.data || []).slice(0, 3);
+  const activeProjects = (projects.data || []).slice(0, 3);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-12">
-      {/* Header Greeting */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-[var(--foreground)]">
-            Good morning, {user?.full_name || user?.username || 'Researcher'}
-          </h1>
-          <p className="text-xs md:text-sm text-muted-foreground mt-1">
-            Welcome to your AI research workspace.
-          </p>
-        </div>
+    <div className="mx-auto max-w-6xl space-y-8 pb-12">
+      <div>
+        <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">{greeting()}, {displayName(user)}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Here&apos;s what&apos;s happening in your research.</p>
       </div>
 
-      {/* Hero AI Copilot Card */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-900/80 via-purple-900/60 to-slate-900 border border-indigo-500/30 p-6 md:p-8 shadow-2xl space-y-4">
-        <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
-          <Bot size={180} className="text-indigo-400" />
-        </div>
-
-        <div className="flex items-center gap-2 text-indigo-400 font-semibold text-xs uppercase tracking-wider">
-          <Sparkles size={16} />
-          <span>Research Copilot</span>
-        </div>
-
-        <h2 className="text-xl md:text-2xl font-bold text-white max-w-xl">
-          What are you researching today?
-        </h2>
-
+      {/* AI copilot */}
+      <div className="relative space-y-4 overflow-hidden rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-900/80 via-purple-900/60 to-slate-900 p-6 shadow-2xl md:p-8">
+        <Bot size={180} className="pointer-events-none absolute right-6 top-4 text-indigo-400 opacity-10" />
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-indigo-300"><Sparkles size={16} /> Research copilot</div>
+        <h2 className="max-w-xl text-xl font-bold text-white md:text-2xl">What are you researching today?</h2>
         <form onSubmit={handleAiAsk} className="relative max-w-2xl">
           <input
             type="text"
-            placeholder="Ask anything about papers, methods, dataset benchmarks, or research gaps..."
+            aria-label="Ask the research copilot"
+            placeholder="Ask about your papers, methods, or results…"
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
-            className="w-full pl-4 pr-12 py-3.5 text-sm bg-white/10 backdrop-blur-md border border-white/20 rounded-xl focus:outline-none focus:border-indigo-400 text-white placeholder:text-zinc-400 shadow-inner"
+            className="w-full rounded-xl border border-white/20 bg-white/10 py-3.5 pl-4 pr-12 text-sm text-white shadow-inner backdrop-blur-md placeholder:text-zinc-400 focus:border-indigo-400 focus:outline-none"
           />
-          <button
-            type="submit"
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
-          >
+          <button type="submit" aria-label="Ask" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg bg-indigo-600 p-2 text-white hover:bg-indigo-500">
             <ArrowRight size={18} />
           </button>
         </form>
-
-        {/* Quick Action Pills */}
-        <div className="flex flex-wrap items-center gap-2 pt-2 text-xs">
-          <span className="text-zinc-400 font-medium">Quick Actions:</span>
-          <button 
-            onClick={() => router.push('/library')} 
-            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
-          >
-            <Upload size={14} /> Upload Paper
-          </button>
-          <button 
-            onClick={() => router.push('/ai/ask')} 
-            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
-          >
-            <Bot size={14} /> Ask AI
-          </button>
-          <button 
-            onClick={() => router.push('/reels/create')} 
-            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
-          >
-            <Film size={14} /> Create Reel
-          </button>
-          <button 
-            onClick={() => router.push('/projects/new')} 
-            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/10 flex items-center gap-1.5 transition-colors"
-          >
-            <Users size={14} /> New Project
-          </button>
-        </div>
-      </div>
-
-      {/* Continue Researching Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-[var(--foreground)] flex items-center gap-2">
-            <Clock size={18} className="text-indigo-500" />
-            <span>Continue Researching</span>
-          </h3>
-          <Link href="/library" className="text-xs font-semibold text-indigo-400 hover:underline flex items-center gap-1">
-            <span>View Library</span> <ChevronRight size={14} />
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {continueResearching.map((item) => (
-            <div
-              key={item.id}
-              onClick={() => router.push(`/library/documents/${item.id}`)}
-              className="p-4 rounded-xl bg-[var(--foreground)]/[0.03] border border-[var(--border)] hover:border-indigo-500/40 hover:bg-indigo-500/[0.03] transition-all cursor-pointer space-y-3 group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  {item.tag}
-                </span>
-                <span className="text-[11px] text-muted-foreground">{item.lastOpened}</span>
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-[var(--foreground)] group-hover:text-indigo-400 transition-colors line-clamp-1">
-                  {item.title}
-                </h4>
-                <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{item.authors}</p>
-              </div>
-              <div className="space-y-1">
-                <div className="flex justify-between text-[11px] text-muted-foreground">
-                  <span>Reading progress</span>
-                  <span>{item.progress}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${item.progress}%` }} />
-                </div>
-              </div>
-            </div>
+        <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+          {[
+            { href: '/library', icon: Upload, label: 'Upload paper' },
+            { href: '/reels/create', icon: Film, label: 'Create reel' },
+            { href: '/projects/new', icon: Users, label: 'New project' },
+          ].map((a) => (
+            <Link key={a.href} href={a.href} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-white hover:bg-white/20">
+              <a.icon size={14} /> {a.label}
+            </Link>
           ))}
         </div>
       </div>
 
-      {/* Grid: Recommended Papers & Active Projects */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column: Recommended Research */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-[var(--foreground)] flex items-center gap-2">
-              <Sparkles size={18} className="text-indigo-500" />
-              <span>Recommended Research</span>
-            </h3>
-            <Link href="/discover" className="text-xs font-semibold text-indigo-400 hover:underline">
-              Discover More
-            </Link>
-          </div>
-
-          <div className="space-y-3">
-            {recommendedPapers.map((paper) => (
-              <div
-                key={paper.id}
-                className="p-4 rounded-xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] hover:border-indigo-500/30 transition-all space-y-2"
+      {/* Recent papers */}
+      <section className="space-y-4">
+        <SectionHeader icon={Clock} title="Your recent papers" href="/library" linkLabel="Library" />
+        {papers.error ? (
+          <ErrorState message={papers.error} />
+        ) : !papers.data ? (
+          <SkeletonRows rows={2} />
+        ) : recentPapers.length === 0 ? (
+          <EmptyState
+            icon={<FileText size={20} />}
+            title="Your library is empty"
+            description="Upload a PDF or DOCX and ResearchReel extracts the abstract and DOI so you can share it, ask AI about it, or turn it into a reel."
+            action={<Link href="/library" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Upload a paper</Link>}
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {recentPapers.map((doc) => (
+              <Link
+                key={doc.id}
+                href={`/library/documents/${doc.id}`}
+                className="group space-y-3 rounded-xl border border-[var(--border)] bg-[var(--foreground)]/[0.03] p-4 transition-all hover:border-indigo-500/40"
               >
-                <div className="flex items-center gap-2 text-[11px] text-indigo-400 font-medium">
-                  <Star size={12} className="fill-indigo-400" />
-                  <span>{paper.reason}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${STATUS_STYLE[doc.status] || STATUS_STYLE.ready}`}>
+                    {doc.status === 'ready' ? (doc.metadata?.pages ? `${doc.metadata.pages} pages` : 'Ready') : doc.status}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">{timeAgo(doc.updated_at || doc.created_at)}</span>
                 </div>
-                <h4 className="text-sm font-bold text-[var(--foreground)] hover:text-indigo-400 cursor-pointer transition-colors">
-                  {paper.title}
-                </h4>
-                <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
-                  <span>{paper.authors}</span>
-                  <div className="flex items-center gap-3">
-                    <span>{paper.year}</span>
-                    <span>•</span>
-                    <span>{paper.citations} citations</span>
-                  </div>
-                </div>
-              </div>
+                <h4 className="line-clamp-2 text-sm font-bold group-hover:text-indigo-400">{doc.title}</h4>
+                <p className="line-clamp-2 text-xs text-muted-foreground">{doc.abstract || doc.file_name}</p>
+              </Link>
             ))}
           </div>
+        )}
+      </section>
 
-          {/* Social Feed Overview */}
-          <div className="pt-4 space-y-4">
-            <h3 className="text-lg font-bold text-[var(--foreground)] flex items-center gap-2">
-              <BookOpen size={18} className="text-indigo-500" />
-              <span>Research Community Feed</span>
-            </h3>
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="space-y-8 lg:col-span-2">
+          {/* Recommendations */}
+          <section className="space-y-4">
+            <SectionHeader icon={Sparkles} title="Recommended papers" href="/discover" linkLabel="Discover" />
+            {recs.error ? (
+              <ErrorState message={recs.error} />
+            ) : !recs.data ? (
+              <SkeletonRows rows={2} />
+            ) : recs.data.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-[var(--border)] p-5 text-sm text-muted-foreground">
+                No papers have been shared yet. Add research interests to your profile and papers others share will show up here.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {recs.data.map((r) => (
+                  <Link key={r.post_id} href={`/post/${r.post_id}`} className="block space-y-1.5 rounded-xl border border-[var(--border)] p-4 transition-all hover:border-indigo-500/30">
+                    <p className="text-[11px] font-medium text-indigo-400">{r.reason}</p>
+                    <h4 className="text-sm font-bold">{r.title}</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Shared by {displayName(r)}{r.institution ? ` · ${r.institution}` : ''}
+                      {r.publication_year ? ` · ${r.publication_year}` : ''}{r.journal ? ` · ${r.journal}` : ''}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-4">
+            <h3 className="flex items-center gap-2 text-base font-bold"><BookOpen size={17} className="text-indigo-500" /> Community feed</h3>
             <Feed />
-          </div>
+          </section>
         </div>
 
-        {/* Right Column: Active Projects */}
-        <div className="space-y-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-[var(--foreground)] flex items-center gap-2">
-                <Users size={16} className="text-indigo-500" />
-                <span>Active Projects</span>
-              </h3>
-              <Link href="/projects" className="text-xs font-semibold text-indigo-400 hover:underline">
-                All Projects
-              </Link>
-            </div>
-
+        {/* Projects */}
+        <aside className="space-y-4">
+          <SectionHeader icon={FolderKanban} title="Your projects" href="/projects" linkLabel="All projects" />
+          {projects.error ? (
+            <ErrorState message={projects.error} />
+          ) : !projects.data ? (
+            <SkeletonRows rows={2} />
+          ) : activeProjects.length === 0 ? (
+            <EmptyState
+              title="No projects yet"
+              description="Plan a study with collaborators and track tasks on a board."
+              action={<Link href="/projects/new" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">New project</Link>}
+            />
+          ) : (
             <div className="space-y-3">
-              {activeProjects.map((proj) => (
-                <div
-                  key={proj.id}
-                  onClick={() => router.push(`/projects/${proj.id}`)}
-                  className="p-4 rounded-xl bg-[var(--foreground)]/[0.03] border border-[var(--border)] hover:border-indigo-500/40 cursor-pointer transition-all space-y-3"
-                >
-                  <h4 className="text-sm font-bold text-[var(--foreground)]">{proj.title}</h4>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{proj.members} members</span>
-                    <span>{proj.papers} papers</span>
-                    <span>{proj.tasks} tasks</span>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[10px] text-muted-foreground">
-                      <span>Progress</span>
-                      <span>{proj.progress}%</span>
+              {activeProjects.map((p) => {
+                const total = p.task_count || 0;
+                const pct = total ? Math.round(((p.done_count || 0) / total) * 100) : 0;
+                return (
+                  <Link key={p.id} href={`/projects/${p.id}`} className="block space-y-3 rounded-xl border border-[var(--border)] bg-[var(--foreground)]/[0.03] p-4 transition-all hover:border-indigo-500/40">
+                    <h4 className="text-sm font-bold">{p.name}</h4>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span>{p.member_count || 1} {p.member_count === 1 ? 'member' : 'members'}</span>
+                      <span>·</span>
+                      <span>{total} {total === 1 ? 'task' : 'tasks'}</span>
                     </div>
-                    <div className="w-full h-1 bg-[var(--border)] rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${proj.progress}%` }} />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                    {total > 0 && (
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] text-muted-foreground"><span>Done</span><span>{pct}%</span></div>
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-[var(--border)]">
+                          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </Link>
+                );
+              })}
             </div>
-          </div>
-        </div>
+          )}
+        </aside>
       </div>
     </div>
   );

@@ -6,7 +6,7 @@ const { AuthorizationError, NotFoundError } = require('../utils/errors');
  * at which point they become a row in "videos".
  */
 async function canAccessReel(userId, reelId) {
-  if (!reelId) return { allowed: false, isAuthor: false };
+  if (!reelId || !/^[0-9a-f-]{36}$/i.test(String(reelId))) return { allowed: false, isAuthor: false };
 
   const result = await pool.query(
     'SELECT id, author_id, status FROM reel_drafts WHERE id = $1',

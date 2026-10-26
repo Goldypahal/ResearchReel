@@ -1,15 +1,17 @@
-import { fetchApi } from './client';
+import { fetchApi, qs } from './client';
 
-export interface SearchResultItem {
+export type SearchType = 'all' | 'post' | 'user' | 'document' | 'video';
+
+export interface SearchResult {
   id: string;
-  type: 'document' | 'post' | 'video' | 'user' | 'project' | 'reel';
+  type: 'post' | 'user' | 'document' | 'video';
   title: string;
-  description?: string;
+  description?: string | null;
+  created_at?: string;
   score?: number;
-  metadata?: Record<string, any>;
 }
 
 export const searchApi = {
-  search: (query: string, type: string = 'all', cursor?: string): Promise<SearchResultItem[]> =>
-    fetchApi(`/search/documents?q=${encodeURIComponent(query)}&type=${encodeURIComponent(type)}${cursor ? `&cursor=${cursor}` : ''}`),
+  search: (q: string, type: SearchType = 'all', cursor?: string | null): Promise<SearchResult[]> =>
+    fetchApi(`/search/documents${qs({ q, type, cursor, limit: 20 })}`),
 };

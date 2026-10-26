@@ -1,3 +1,4 @@
+const fs = require('fs');
 const feedService = require('../services/feedService');
 const analyticsService = require('../services/analyticsService');
 const { moderateText } = require('../utils/moderator');
@@ -154,6 +155,13 @@ exports.createPost = async (req, res) => {
     }
 
     const { content_type, caption: text, media_urls, document_id, tags, publication_status, doi } = req.body;
+    // Media must be images this user uploaded via POST /posts/media — no arbitrary external URLs.
+    const ownPrefix = `/uploads/posts/${req.user.id}/`;
+    const badMedia = (media_urls || []).find((u) => {
+      try { const url = new URL(u); return !/^https?:$/.test(url.protocol) || !url.pathname.startsWith(ownPrefix); } catch { return true; }
+    });
+    if (badMedia) return sendError(res, 'Images must be uploaded to ResearchReel first.', 400, 'VALIDATION_ERROR', req);
+    if (content_type === 'image' && !(media_urls || []).length) return sendError(res, 'An image post needs at least one image.', 400, 'VALIDATION_ERROR', req);
     if (document_id) {
       const owned = await db.query(
         'SELECT 1 FROM documents WHERE id = $1 AND uploader_id = $2 AND deleted_at IS NULL',
@@ -225,3 +233,37 @@ exports.viewPost = async (req, res, next) => {
 };
 
 
+
+/**
+ * Image attachments for posts (field "images", up to 4). Returns public URLs to
+ * pass as media_urls when creating an image post.
+ */
+exports.uploadPostImages = async (req, res, next) => {
+  const path = require('path');
+  const crypto = require('crypto');
+  const { sniffImage, readHead } = require('../utils/imageType');
+  const { uploadsRoot } = require('../services/documentProcessor');
+  const files = req.files || [];
+  try {
+    if (!files.length) return sendError(res, 'Attach at least one image in the "images" field.', 400, 'VALIDATION_ERROR', req);
+    const dir = path.join(uploadsRoot, 'posts', req.user.id);
+    fs.mkdirSync(dir, { recursive: true });
+    const origin = (process.env.PUBLIC_API_ORIGIN || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    const urls = [];
+    for (const f of files) {
+      const ext = sniffImage(readHead(fs, f.path));
+      if (!ext) return sendError(res, `${f.originalname} is not a JPG, PNG, WebP or GIF image.`, 400, 'UNSUPPORTED_FILE', req);
+    }
+    for (const f of files) {
+      const ext = sniffImage(readHead(fs, f.path));
+      const name = `${crypto.randomUUID()}${ext}`;
+      fs.renameSync(f.path, path.join(dir, name));
+      urls.push(`${origin}/uploads/posts/${req.user.id}/${name}`);
+    }
+    return sendSuccess(res, { urls }, 'Images uploaded.', 201);
+  } catch (error) {
+    next(error);
+  } finally {
+    for (const f of files) if (f.path && fs.existsSync(f.path)) fs.unlink(f.path, () => {});
+  }
+};

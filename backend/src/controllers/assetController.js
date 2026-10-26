@@ -59,8 +59,11 @@ exports.uploadDocument = async (req, res, next) => {
   }
 };
 
+const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v));
+
 exports.getAsset = async (req, res, next) => {
   try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
     const { allowed, permission } = await canAccessDocument(req.user.id, req.params.id);
     if (!allowed) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
     const doc = await documentRepository.findById(req.params.id);
@@ -70,8 +73,35 @@ exports.getAsset = async (req, res, next) => {
   }
 };
 
+/** Owner edits: title, DOI and who can see the paper. */
+exports.updateAsset = async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
+    const { title, doi, visibility } = req.body || {};
+    if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 500)) {
+      return sendError(res, 'Title must be 1-500 characters.', 400, 'VALIDATION_ERROR', req);
+    }
+    if (doi !== undefined && doi !== null && doi !== '' && !/^10\.\d{4,9}\/\S+$/.test(String(doi).trim())) {
+      return sendError(res, 'That does not look like a DOI (it should start with 10.).', 400, 'VALIDATION_ERROR', req);
+    }
+    if (visibility !== undefined && !['private', 'public'].includes(visibility)) {
+      return sendError(res, 'visibility must be private or public.', 400, 'VALIDATION_ERROR', req);
+    }
+    const doc = await documentRepository.updateOwned(req.params.id, req.user.id, {
+      title: title === undefined ? undefined : title.trim(),
+      doi: doi === undefined ? undefined : (String(doi || '').trim() || null),
+      visibility,
+    });
+    if (!doc) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
+    return sendSuccess(res, doc, 'Document updated.');
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.softDeleteAsset = async (req, res, next) => {
   try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
     const success = await documentRepository.softDelete(req.params.id, req.user.id);
     if (!success) {
       return sendError(res, 'Document not found or unauthorized.', 404, 'NOT_FOUND', req);

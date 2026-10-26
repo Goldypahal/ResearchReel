@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import Sidebar from './Sidebar';
@@ -8,19 +8,22 @@ import MobileNav from './MobileNav';
 import CreationSheet from '../ui/CreationSheet';
 import UploadPaperModal from '../ui/UploadPaperModal';
 import { useAuth } from '@/context/AuthContext';
+import { useSocial } from '@/context/SocialContext';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import { Search, Bell, Library, Plus } from 'lucide-react';
-
-const PUBLIC_ROUTES = ['/landing'];
-const AUTH_ROUTES = ['/auth', '/login', '/register'];
+import Avatar from '@/components/common/Avatar';
+import { LoadingBlock } from '@/components/common/States';
+import { displayName } from '@/lib/utils';
+import { isStandaloneRoute, requiresAuth } from '@/lib/routes';
+import { Search, Bell, Library, Plus, LogIn, MessageCircle } from 'lucide-react';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [isCreationOpen, setIsCreationOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
+  const { unreadNotifications, unreadMessages } = useSocial();
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() || '/';
 
   // Register global keyboard shortcuts
   useKeyboardShortcuts({
@@ -45,14 +48,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Route classification check
-  const isStandalonePage =
-    pathname === '/' ||
-    PUBLIC_ROUTES.some((route) => pathname?.startsWith(route)) ||
-    AUTH_ROUTES.some((route) => pathname?.startsWith(route));
+  const isStandalonePage = isStandaloneRoute(pathname);
+  const needsAuth = requiresAuth(pathname);
+
+  useEffect(() => {
+    if (needsAuth && !isLoading && !user) {
+      const next = window.location.pathname + window.location.search;
+      router.replace(`/auth/login?next=${encodeURIComponent(next)}`);
+    }
+  }, [needsAuth, isLoading, user, router]);
 
   if (isStandalonePage) {
     return <>{children}</>;
+  }
+  if (needsAuth && !user) {
+    return <div className="min-h-screen bg-[var(--background)]"><LoadingBlock className="pt-40" /></div>;
   }
 
   const profileHref = user?.username ? `/profile/${user.username}` : '/settings';
@@ -88,30 +98,52 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Top Bar Actions */}
           <div className="flex items-center gap-3 ml-auto">
-            <button
+            {user && <button
               onClick={() => setIsCreationOpen(true)}
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full text-xs font-semibold shadow-md transition-colors"
             >
               <Plus size={14} />
               <span>Create</span>
-            </button>
+            </button>}
 
-            <Link
-              href="/notifications"
-              className="p-2 rounded-full hover:bg-[var(--foreground)]/5 text-muted-foreground hover:text-[var(--foreground)] transition-colors relative"
-              aria-label="Notifications"
-            >
-              <Bell size={20} />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full animate-ping" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full" />
-            </Link>
-
-            <Link
-              href={profileHref}
-              className="w-8 h-8 rounded-full border border-indigo-500/30 overflow-hidden bg-indigo-500/10 flex items-center justify-center font-bold text-xs text-indigo-400 hover:scale-105 transition-transform"
-            >
-              {user?.full_name?.slice(0, 1) || user?.username?.slice(0, 1) || 'U'}
-            </Link>
+            {user ? (
+              <>
+                <Link
+                  href="/messages"
+                  className="md:hidden p-2 rounded-full hover:bg-[var(--foreground)]/5 text-muted-foreground hover:text-[var(--foreground)] transition-colors relative"
+                  aria-label={unreadMessages ? `Messages (${unreadMessages} unread)` : 'Messages'}
+                >
+                  <MessageCircle size={20} />
+                  {unreadMessages > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center">
+                      {unreadMessages > 99 ? '99+' : unreadMessages}
+                    </span>
+                  )}
+                </Link>
+                <Link
+                  href="/notifications"
+                  className="p-2 rounded-full hover:bg-[var(--foreground)]/5 text-muted-foreground hover:text-[var(--foreground)] transition-colors relative"
+                  aria-label={unreadNotifications ? `Notifications (${unreadNotifications} unread)` : 'Notifications'}
+                >
+                  <Bell size={20} />
+                  {unreadNotifications > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center">
+                      {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                    </span>
+                  )}
+                </Link>
+                <Link href={profileHref} aria-label="Your profile" className="hover:opacity-90">
+                  <Avatar src={user.avatar_url} name={displayName(user)} size="sm" />
+                </Link>
+              </>
+            ) : (
+              <Link
+                href={`/auth/login?next=${encodeURIComponent(pathname)}`}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
+              >
+                <LogIn size={14} /> Sign in
+              </Link>
+            )}
           </div>
         </header>
 

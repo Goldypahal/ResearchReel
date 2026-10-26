@@ -306,3 +306,34 @@ exports.confirmStudentVerification = async (req, res, next) => {
     next(error);
   }
 };
+
+// Both endpoints answer the same way whether or not the email has an account.
+exports.resendVerification = async (req, res, next) => {
+  try {
+    await authService.resendVerification(req.body.email);
+    return sendSuccess(res, { email: req.body.email }, 'If that account still needs verifying, a new code is on its way.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.forgotPassword = async (req, res, next) => {
+  try {
+    await authService.requestPasswordReset(req.body.email);
+    return sendSuccess(res, { email: req.body.email }, 'If an account uses that email, a reset code is on its way.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.resetPassword = async (req, res, next) => {
+  try {
+    const { email, code, new_password: newPassword } = req.body;
+    await authService.resetPassword({ email, code, newPassword });
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+    return sendSuccess(res, null, 'Password updated. Sign in with your new password.');
+  } catch (error) {
+    next(error);
+  }
+};

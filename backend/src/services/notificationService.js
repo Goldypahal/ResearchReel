@@ -31,7 +31,9 @@ const list = async (userId, { cursor, limit = 30 } = {}) => {
   const result = await db.query(
     `SELECT n.id, n.type, n.entity_type, n.entity_id, n.message, n.is_read, n.created_at,
             u.id AS actor_id, u.username AS actor_username, u.full_name AS actor_full_name,
-            COALESCE(u.avatar_url, u.profile_picture_url) AS actor_avatar_url
+            COALESCE(u.avatar_url, u.profile_picture_url) AS actor_avatar_url,
+            u.verification_status AS actor_verification_status,
+            EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.following_id = u.id) AS actor_is_followed
      FROM notifications n
      LEFT JOIN users u ON u.id = n.actor_id
      WHERE ${where}
