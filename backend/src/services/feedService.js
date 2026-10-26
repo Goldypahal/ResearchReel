@@ -1,6 +1,5 @@
 const db = require('../config/db');
 const searchService = require('./searchService');
-const aiService = require('./aiService');
 
 /**
  * Shared post projection. $1 is always the viewer id (or NULL for anonymous),
@@ -224,50 +223,6 @@ const reactToPost = async ({ post_id, user_id, reaction_type }) => {
   return reaction_type;
 };
 
-const uploadDocument = async ({ uploader_id, file_name, file_type, file_url }) => {
-  let newDoc = await db.query(
-    `INSERT INTO documents (uploader_id, file_name, file_type, file_url) 
-     VALUES ($1, $2, $3, $4) RETURNING *`,
-    [uploader_id, file_name, file_type, file_url]
-  );
-  let doc = newDoc.rows[0];
-
-  try {
-    const aiSummary = await aiService.summarizeDocument(doc.id);
-    const updatedDoc = await db.query(
-      `UPDATE documents SET summary_text = $1, key_points = $2 WHERE id = $3 RETURNING *`,
-      [aiSummary.abstract, aiSummary.key_points, doc.id]
-    );
-    doc = updatedDoc.rows[0];
-  } catch (err) {
-    console.error('Failed to generate AI summary:', err.message);
-    doc.summary_text = `Fallback Summary: Unable to generate AI insights for ${file_name}.`;
-  }
-
-  try {
-    await searchService.indexEntity('documents', doc.id, {
-      id: doc.id,
-      file_name: doc.file_name,
-      summary_text: doc.summary_text,
-      uploader_id: doc.uploader_id
-    });
-  } catch (err) {
-    console.error('Failed to index document in search:', err.message);
-  }
-
-  // Trigger auto-generator hook for reels
-  try {
-    const reelGeneratorService = require('./reelGeneratorService');
-    reelGeneratorService.handleNewPaperUpload(doc.id, uploader_id).catch(err => {
-      console.error('[Feed Service] Error during reel auto-generation hook:', err.message);
-    });
-  } catch (err) {
-    console.error('[Feed Service] Failed to call reel auto-generation hook:', err.message);
-  }
-
-  return doc;
-};
-
 module.exports = {
   getFeed,
   getPostById,
@@ -280,7 +235,6 @@ module.exports = {
   deleteComment,
   createPost,
   reactToPost,
-  REACTION_TYPES,
-  uploadDocument
+  REACTION_TYPES
 };
 

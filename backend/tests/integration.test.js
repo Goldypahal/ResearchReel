@@ -52,6 +52,7 @@ jest.mock('../src/services/searchService', () => ({
 }));
 
 jest.mock('../src/services/ai/ragService', () => ({
+  isConfigured: jest.fn().mockReturnValue(true),
   query: jest.fn().mockResolvedValue({
     answer: 'This is a mock RAG answer',
     chunks: [{ content: 'Context chunk...', metadata: { page: 1, section: 'Abstract' } }],

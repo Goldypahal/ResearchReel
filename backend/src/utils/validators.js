@@ -33,24 +33,10 @@ const commentSchema = z.object({
   content: z.string().min(1, 'Comment cannot be empty')
 });
 
-const ALLOWED_EXTENSIONS = ['pdf', 'docx', 'pptx', 'xlsx', 'mp4', 'jpg', 'jpeg', 'png'];
-
-const documentSchema = z.object({
-  file_name: z.string().min(1).refine((val) => {
-    const ext = val.split('.').pop().toLowerCase();
-    return ALLOWED_EXTENSIONS.includes(ext);
-  }, { message: 'Invalid file extension. Only PDF, DOCX, PPTX, XLSX, MP4, JPG, PNG allowed.' }),
-  file_type: z.string().min(1).refine((val) => {
-    return ALLOWED_EXTENSIONS.includes(val.toLowerCase());
-  }, { message: 'Invalid file type.' }),
-  file_url: z.string().url('Invalid file URL')
-});
-
 module.exports = {
   registerSchema,
   loginSchema,
   otpSchema,
   postSchema,
-  commentSchema,
-  documentSchema
+  commentSchema
 };

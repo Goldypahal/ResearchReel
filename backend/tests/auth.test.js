@@ -35,7 +35,8 @@ jest.mock('../src/config/redisClient', () => {
 });
 
 jest.mock('../src/utils/emailService', () => ({
-  sendOTP: jest.fn().mockResolvedValue(true)
+  sendOTP: jest.fn().mockResolvedValue(true),
+  sendStudentCode: jest.fn().mockResolvedValue(true)
 }));
 
 jest.mock('../src/services/searchService', () => ({
@@ -240,10 +241,6 @@ describe('Backend Smoke Tests', () => {
     });
 
     it('should allow access to private routes if a valid token is provided', async () => {
-      // Mock db query inside studentVerification
-      db.query.mockResolvedValueOnce({ rows: [] });
-
-      // Generate a mock JWT token
       const token = jwt.sign(
         { id: 1, verification_status: 'verified' },
         process.env.JWT_SECRET || 'testsecret'
@@ -252,11 +249,30 @@ describe('Backend Smoke Tests', () => {
       const response = await request(app)
         .post('/api/v1/auth/verify/student')
         .set('Authorization', `Bearer ${token}`)
-        .send({ user_id: 1, university: 'MIT' });
+        .send({ email: 'ada@cs.stanford.edu' });
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(response.body.message).toContain('Student ID Submitted');
+      expect(require('../src/utils/emailService').sendStudentCode).toHaveBeenCalledWith('ada@cs.stanford.edu', expect.stringMatching(/^\d{6}$/));
+    });
+
+    it('rejects student verification with a non-academic email', async () => {
+      const token = jwt.sign({ id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
+      const response = await request(app)
+        .post('/api/v1/auth/verify/student')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ email: 'someone@gmail.com' });
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('NOT_ACADEMIC_EMAIL');
+    });
+
+    it('does not let a client choose its own ORCID iD', async () => {
+      const token = jwt.sign({ id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
+      const response = await request(app)
+        .post('/api/v1/auth/verify/orcid')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ orcid_id: '0000-0002-1825-0097' });
+      expect(response.status).toBe(404);
     });
   });
 });

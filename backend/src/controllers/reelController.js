@@ -4,6 +4,7 @@ const { canAccessReel } = require('../authorization/reelAuthorization');
 const queueManager = require('../queues/queueManager');
 const { sendSuccess, sendError } = require('../utils/response');
 const db = require('../config/db');
+const analyticsService = require('../services/analyticsService');
 
 /** Published reels, newest first. ?author=username narrows to one creator. */
 exports.getReelFeed = async (req, res, next) => {
@@ -47,8 +48,17 @@ exports.getReelFeed = async (req, res, next) => {
 exports.recordReelView = async (req, res, next) => {
   try {
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
-    await db.query('UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
-    return sendSuccess(res, {}, 'View recorded.');
+    const counted = await analyticsService.recordView({
+      viewerKey: req.user ? `u:${req.user.id}` : `ip:${req.ip}`,
+      user_id: req.user ? req.user.id : null,
+      event_type: 'view_reel',
+      entity_id: req.params.id,
+      entity_type: 'video',
+    });
+    if (counted) {
+      await db.query('UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
+    }
+    return sendSuccess(res, { counted }, 'View recorded.');
   } catch (error) {
     next(error);
   }

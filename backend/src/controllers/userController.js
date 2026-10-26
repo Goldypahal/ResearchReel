@@ -24,7 +24,7 @@ exports.getAnalytics = async (req, res, next) => {
       return sendError(res, 'Forbidden: Cannot access another user\'s private analytics', 403, 'AUTHORIZATION_ERROR', req);
     }
 
-    const analytics = await analyticsService.getProfileAnalytics(targetUserId);
+    const analytics = await analyticsService.getProfileAnalytics(targetUserId, req.query.days);
     return sendSuccess(res, analytics, 'Analytics data retrieved.');
   } catch (error) {
     next(error);

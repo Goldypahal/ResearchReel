@@ -32,7 +32,23 @@ class DocumentRepository {
     return result.rows[0];
   }
 
+  /** API-facing row: the (large) extracted text stays server-side; `indexed` says whether AI Q&A can use it. */
+  toPublic(row) {
+    if (!row) return row;
+    const { extracted_text, rag_indexed_at, ...rest } = row;
+    return { ...rest, has_text: Boolean(extracted_text), ai_indexed: Boolean(rag_indexed_at) };
+  }
+
   async findById(documentId) {
+    const result = await pool.query(
+      'SELECT * FROM documents WHERE id = $1 AND deleted_at IS NULL',
+      [documentId]
+    );
+    return this.toPublic(result.rows[0] || null);
+  }
+
+  /** Includes extracted_text — for server-side AI use only, never send to clients. */
+  async findWithText(documentId) {
     const result = await pool.query(
       'SELECT * FROM documents WHERE id = $1 AND deleted_at IS NULL',
       [documentId]
@@ -47,7 +63,7 @@ class DocumentRepository {
        ORDER BY created_at DESC`,
       [ownerId]
     );
-    return result.rows;
+    return result.rows.map((r) => this.toPublic(r));
   }
 
   async updateStatus(documentId, status) {

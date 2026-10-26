@@ -99,7 +99,8 @@ const waitFor = async (fn, label, tries = 30) => {
   const benName = `ben_${run}`;
 
   // --- Auth -------------------------------------------------------------
-  const { email: adaEmail } = await signUp(ada, adaName);
+  const { email: adaEmail, user: adaUser } = await signUp(ada, adaName);
+  const adaId = adaUser.id;
   await signUp(ben, benName);
 
   const bad = await new Client().req('POST', '/auth/login', { email: adaEmail, password: 'wrong-password' });
@@ -264,7 +265,90 @@ const waitFor = async (fn, label, tries = 30) => {
 
     const attach = await ben.req('POST', '/posts/create', { content_type: 'document', caption: 'mine now', document_id: up.data.id });
     assert(attach.status === 403, "cannot attach someone else's paper to a post", attach.json);
+
+    assert(!('extracted_text' in ready.data) && ready.data.has_text === true, 'full paper text stays server-side', Object.keys(ready.data));
+    const lib = await ada.req('GET', '/assets');
+    assert(lib.data.length >= 1 && lib.data.every((d) => !('extracted_text' in d)), 'library listing omits paper text');
+
+    const shared = await ada.req('POST', '/posts/create', {
+      content_type: 'document', caption: 'Our protein paper', document_id: up.data.id, tags: ['bioinformatics', 'proteins']
+    });
+    assert(shared.status === 201, 'share own paper as a post', shared.json);
+    const recs = await ben.req('GET', '/ai/recommendations');
+    assert(recs.status === 200 && recs.data.some((r) => r.document_id === up.data.id && r.post_id === shared.data.id && r.reason),
+      'recommendations come from real shared papers', recs.json);
+    const ownRecs = await ada.req('GET', '/ai/recommendations');
+    assert(ownRecs.data.every((r) => r.document_id !== up.data.id), 'own papers are not recommended back to you');
+
+    // No Gemini key / RAG in this environment: AI must fail honestly, not return placeholder text.
+    const sum = await ada.req('POST', '/ai/summarize', { document_id: up.data.id });
+    assert(sum.status === 503 && sum.json.error.code === 'AI_UNAVAILABLE', 'summary without AI configured is a clear 503', sum.json);
+    const after = await ada.req('GET', `/assets/${up.data.id}`);
+    assert(!after.data.summary_text, 'no placeholder summary was saved to the paper', after.data.summary_text);
+    const script = await ada.req('POST', '/ai/script', { documentId: up.data.id });
+    assert(script.status === 200 && script.data.source === 'extractive' && script.data.script.scenes.length >= 2,
+      'script falls back to sentences from the paper itself', script.json);
+    const abstractText = ready.data.abstract.replace(/\s+/g, ' ');
+    assert(script.data.script.scenes.slice(1).every((sc) => abstractText.includes(sc.dialogue.slice(0, 40))),
+      'extractive script lines are quoted from the paper', script.data.script.scenes);
+    const titleWord = ready.data.title.split(/\s+/).find((w) => w.length > 5) || ready.data.title;
+    const ownSearch = await ada.req('GET', `/search/documents?q=${encodeURIComponent(titleWord)}&type=document`);
+    assert(ownSearch.data.some((r) => r.id === up.data.id), 'search finds your own private paper', ownSearch.json);
+    const otherSearch = await ben.req('GET', `/search/documents?q=${encodeURIComponent(titleWord)}&type=document`);
+    assert(otherSearch.data.every((r) => r.id !== up.data.id), "search never shows other people's private papers", otherSearch.json);
+    const postSearch = await ben.req('GET', `/search/documents?q=${encodeURIComponent('protein paper')}&type=post`);
+    assert(postSearch.data.some((r) => r.id === shared.data.id), 'search finds public posts', postSearch.json);
+    const voice = await ada.req('POST', '/ai/voice', { text: 'hi' });
+    assert(voice.status === 404, 'fake voice endpoint removed');
+    const legacy = await ada.req('POST', '/posts/document/upload', { file_name: 'x.pdf', file_type: 'pdf', file_url: 'http://evil.example/x.pdf' });
+    assert(legacy.status === 404, 'legacy URL-registration upload removed');
   }
+
+  // --- Views & analytics --------------------------------------------------
+  const v1 = await ben.req('POST', '/posts/view', { post_id: postId });
+  const v2 = await ben.req('POST', '/posts/view', { post_id: postId });
+  assert(v1.data.counted === true && v2.data.counted === false, 'repeat views from the same viewer are not double-counted', [v1.json, v2.json]);
+  const badView = await ben.req('POST', '/posts/view', { post_id: 'not-a-uuid' });
+  assert(badView.status === 400, 'view with invalid id rejected');
+  await new Promise((r) => setTimeout(r, 5600)); // analytics events are batch-written every 5s
+  const stats = await ada.req('GET', '/users/me/analytics?days=7');
+  assert(stats.status === 200 && stats.data.period_days === 7 && stats.data.views_series.length === 7, 'analytics period + zero-filled daily series', stats.json);
+  assert(stats.data.metrics.post_views.value >= 1 && stats.data.metrics.reactions.value >= 1 && stats.data.metrics.new_followers.value >= 1,
+    'analytics counts real views, reactions and follows', stats.data.metrics);
+  assert(!('total_citations' in stats.data) && !('collaboration_impact' in stats.data), 'no invented citation / impact metrics');
+  assert(stats.data.top_posts.some((p) => p.id === postId), 'top posts lists your actual posts');
+  const peekStats = await ben.req('GET', `/users/analytics/${adaId}`);
+  assert(peekStats.status === 403, "cannot read someone else's analytics");
+
+  const tel = await new Client().req('POST', '/analytics/track', { eventName: 'page_view', payload: { path: '/explore' } });
+  assert(tel.status === 202, 'anonymous telemetry accepted', tel.json);
+  const forged = await new Client().req('POST', '/analytics/track', { eventName: 'view_post', entityId: postId });
+  assert(forged.status === 400, 'clients cannot forge server-side view events');
+  const junk = await new Client().req('POST', '/analytics/track', { eventName: 'DROP TABLE;' });
+  assert(junk.status === 400, 'malformed event names rejected');
+
+  // --- Student verification ----------------------------------------------
+  const notEdu = await ben.req('POST', '/auth/verify/student', { email: 'ben@gmail.com' });
+  assert(notEdu.status === 400 && notEdu.json.error.code === 'NOT_ACADEMIC_EMAIL', 'student verification needs an academic email');
+  const edu = await ben.req('POST', '/auth/verify/student', { email: `ben${run}@cs.example.edu` });
+  assert(edu.status === 200, 'student code sent to university email', edu.json);
+  const wrong = await ben.req('POST', '/auth/verify/student/confirm', { code: '000000' });
+  assert(wrong.status === 400, 'wrong student code rejected');
+  const benMe = await ben.req('GET', '/users/me');
+  const code = JSON.parse(await redis.get(`student_code:${benMe.data.id}`)).code;
+  const ok = await ben.req('POST', '/auth/verify/student/confirm', { code });
+  assert(ok.status === 200 && ok.data.verification_status === 'student', 'student badge granted after code', ok.json);
+  const orcidSelf = await ben.req('POST', '/auth/verify/orcid', { orcid_id: '0000-0002-1825-0097' });
+  assert(orcidSelf.status === 404, 'self-declared ORCID endpoint removed');
+  const orcidStart = await ben.req('POST', '/auth/orcid/start');
+  assert(orcidStart.status === 503, 'ORCID sign-in reports not configured instead of faking it', orcidStart.json);
+
+  // --- Billing ------------------------------------------------------------
+  const forgedHook = await new Client().req('POST', '/billing/webhook', {
+    type: 'checkout.session.completed', data: { object: { client_reference_id: benMe.data.id, metadata: { plan: 'pro' } } }
+  });
+  const benAfter = await ben.req('GET', '/users/me');
+  assert(forgedHook.status >= 400 && benAfter.data.subscription_tier !== 'pro', 'unsigned billing webhooks cannot upgrade accounts', forgedHook.json);
 
   // --- Projects & tasks -------------------------------------------------
   const proj = await ada.req('POST', '/projects', { name: 'Contact maps v2', description: 'Follow-up study' });
@@ -275,6 +359,11 @@ const waitFor = async (fn, label, tries = 30) => {
   assert(moved.data.status === 'in_progress', 'move task', moved.json);
   const peekProj = await ben.req('GET', `/projects/${proj.data.id}/tasks`);
   assert(peekProj.status === 403, 'non-members cannot read project tasks', peekProj.json);
+  await ada.req('POST', `/projects/${proj.data.id}/tasks`, { title: 'Write discussion' });
+  const projList = await ada.req('GET', '/projects');
+  const listed = projList.data.filter((p) => p.id === proj.data.id);
+  assert(listed.length === 1 && listed[0].task_count === 2 && listed[0].member_count >= 1 && listed[0].user_role === 'owner',
+    'project list: one row per project with real counts and your role', projList.json);
 
   const ws = await ada.req('POST', '/workspaces', { name: 'Lab workspace' });
   assert(ws.status === 201, 'create workspace', ws.json);

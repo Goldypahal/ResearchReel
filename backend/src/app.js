@@ -28,7 +28,8 @@ app.use(morgan(morganFormat, {
   stream: { write: (message) => logger.http(message.trim()) }
 }));
 
-app.use(express.json());
+// Keep the raw bytes for signature checks (Stripe webhooks) alongside the parsed body.
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
 // Apply rate limiting to all API routes

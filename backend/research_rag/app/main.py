@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+import hmac
+import os
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from .api import routes_ingest, routes_query, routes_eval, routes_feedback
@@ -21,6 +24,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Research RAG Pipeline", lifespan=lifespan)
+
+RAG_API_KEY = os.getenv("RAG_API_KEY", "")
+PUBLIC_PATHS = ("/api/ai/health",)
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Internal service: when RAG_API_KEY is set, every API call must carry it in x-api-key."""
+    path = request.url.path
+    if RAG_API_KEY and path.startswith("/api/") and path not in PUBLIC_PATHS:
+        supplied = request.headers.get("x-api-key", "")
+        if not hmac.compare_digest(supplied, RAG_API_KEY):
+            return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+    return await call_next(request)
 
 app.include_router(routes_ingest.router, prefix="/api/v1")
 app.include_router(routes_query.router, prefix="/api/v1")

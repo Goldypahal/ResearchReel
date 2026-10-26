@@ -1,6 +1,5 @@
 const feedService = require('../services/feedService');
 const analyticsService = require('../services/analyticsService');
-const PlagiarismService = require('../services/plagiarismService');
 const { moderateText } = require('../utils/moderator');
 
 const { sendSuccess, sendError } = require('../utils/response');
@@ -207,58 +206,22 @@ exports.reactToPost = async (req, res, next) => {
   }
 };
 
-// Document Upload & Analysis (Section 4.1 / 4.2)
-exports.uploadDocument = async (req, res) => {
+// Track view on post (deduplicated per viewer, so refreshes don't inflate counts)
+exports.viewPost = async (req, res, next) => {
   try {
-    // 1. Check for Plagiarism before accepting document
-    // We simulate extracting text and running it through the scanner
-    const mockExtractedText = req.body.summary_text || req.body.title || "Sample research text...";
-    const scanResult = await PlagiarismService.scanDocument(mockExtractedText);
-    
-    if (!scanResult.isOriginal) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Document rejected due to plagiarism checks failing.',
-        similarityScore: scanResult.similarityScore,
-        flaggedSections: scanResult.flaggedSections
-      });
-    }
-
-    const docData = {
-      ...req.body,
-      uploader_id: req.user.id,
-      is_verified: scanResult.isOriginal
-    };
-    
-    const newDoc = await feedService.uploadDocument(docData);
-    res.status(201).json({ success: true, data: newDoc, scanResult });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: 'Document upload failed' });
-  }
-};
-
-// Track view on post
-exports.viewPost = async (req, res) => {
-  const { post_id } = req.body;
-  const user_id = req.user ? req.user.id : null;
-
-  try {
-    if (!post_id) {
-      return res.status(400).json({ success: false, message: 'post_id is required' });
-    }
-
-    await analyticsService.trackEvent({
-      user_id,
+    const { post_id } = req.body || {};
+    if (!isUuid(post_id)) return sendError(res, 'post_id is required.', 400, 'VALIDATION_ERROR', req);
+    const counted = await analyticsService.recordView({
+      viewerKey: req.user ? `u:${req.user.id}` : `ip:${req.ip}`,
+      user_id: req.user ? req.user.id : null,
       event_type: 'view_post',
       entity_id: post_id,
-      entity_type: 'post'
+      entity_type: 'post',
     });
-
-    res.status(200).json({ success: true, message: 'Post view recorded' });
+    return sendSuccess(res, { counted }, 'View recorded.');
   } catch (error) {
-    console.error('Failed to record post view:', error);
-    res.status(500).json({ success: false, message: 'Failed to record view' });
+    next(error);
   }
 };
+
 

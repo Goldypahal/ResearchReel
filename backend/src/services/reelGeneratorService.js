@@ -1,6 +1,18 @@
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
+
+/** Runs ffmpeg with an argument array — no shell, so scene text can never be interpreted as a command. */
+const ffmpegRun = (args) => new Promise((resolve, reject) => {
+  execFile('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { maxBuffer: 10 * 1024 * 1024 }, (err, _stdout, stderr) => {
+    if (err) {
+      err.message = `${err.message}\n${String(stderr || '').slice(0, 2000)}`;
+      reject(err);
+    } else {
+      resolve();
+    }
+  });
+});
 const axios = require('axios');
 const db = require('../config/db');
 const { generateReelScript } = require('./ai/geminiClient');
@@ -33,7 +45,8 @@ const checkFFmpegAvailable = () => {
  * Split text into wrapped lines for FFmpeg drawtext
  */
 const wrapTextForFFmpeg = (text, maxChars = 32) => {
-  const words = text.split(' ');
+  // Hard-split tokens longer than a line (URLs, paths) so nothing runs off-frame.
+  const words = text.split(/\s+/).filter(Boolean).flatMap((w) => w.match(new RegExp(`.{1,${maxChars}}`, 'g')) || []);
   const lines = [];
   let currentLine = '';
 
@@ -49,17 +62,6 @@ const wrapTextForFFmpeg = (text, maxChars = 32) => {
   return lines;
 };
 
-/**
- * Escape text for FFmpeg drawtext filter
- */
-const escapeFFmpegText = (text) => {
-  if (!text) return '';
-  return text
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "'\\''")
-    .replace(/:/g, '\\:')
-    .replace(/%/g, '\\%');
-};
 
 /**
  * Get a platform-appropriate font path for FFmpeg drawtext.
@@ -105,7 +107,7 @@ const generateDraftFromPaper = async (documentId, userId, options = {}) => {
 
   // 1. Fetch document from db (with uploader check)
   const docResult = await db.query(
-    'SELECT * FROM documents WHERE id = $1 AND uploader_id = $2',
+    'SELECT * FROM documents WHERE id = $1 AND uploader_id = $2 AND deleted_at IS NULL',
     [documentId, userId]
   );
   const doc = docResult && docResult.rows ? docResult.rows[0] : null;
@@ -114,9 +116,17 @@ const generateDraftFromPaper = async (documentId, userId, options = {}) => {
   }
 
 
-  const paperTitle = doc.file_name || 'Untitled Research Paper';
-  const summaryText = doc.summary_text || 'No abstract summary available.';
-  const keyPoints = doc.key_points || [];
+  if (doc.status === 'processing') {
+    throw new Error('This paper is still being processed. Try again in a moment.');
+  }
+  const paperTitle = doc.title || (doc.file_name || 'Untitled paper').replace(/\.[^/.]+$/, '');
+  // Prefer the paper's own words: AI summary, then extracted abstract, then the start of the full text.
+  const sourceText = [doc.summary_text, doc.abstract, doc.extracted_text ? String(doc.extracted_text).slice(0, 14000) : null]
+    .filter(Boolean).join('\n\n');
+  if (!sourceText.trim()) {
+    throw new Error('No text could be extracted from this paper, so a script cannot be generated.');
+  }
+  const keyPoints = Array.isArray(doc.key_points) ? doc.key_points : [];
 
   // Get user's custom API key if any
   let userApiKey = null;
@@ -139,12 +149,12 @@ const generateDraftFromPaper = async (documentId, userId, options = {}) => {
   if (split_mode === 'multi') {
     const { generateReelSeries } = require('./ai/geminiClient');
     console.log(`[Reel Service] Generating AI multi-part series for paper: ${paperTitle}`);
-    const series = await generateReelSeries(paperTitle, summaryText, keyPoints, userApiKey, { parts_mode, parts_count });
+    const { series } = await generateReelSeries(paperTitle, sourceText, keyPoints, userApiKey, { parts_mode, parts_count });
 
     const createdDrafts = [];
     for (const part of series) {
-      const title = part.title || `Insight Part ${part.part_number}: ${paperTitle.replace(/\.[^/.]+$/, "")}`;
-      const description = part.description || `Key insights and breakdown of the paper: ${paperTitle} (Part ${part.part_number} of ${part.total_parts})`;
+      const title = part.title || `${paperTitle} — part ${part.part_number}`;
+      const description = part.description || `${paperTitle} (part ${part.part_number} of ${part.total_parts})`;
       
       const newDraft = await db.query(
         `INSERT INTO reel_drafts (author_id, linked_paper_id, title, description, scenes, status, part_number, total_parts)
@@ -159,11 +169,11 @@ const generateDraftFromPaper = async (documentId, userId, options = {}) => {
   } else {
     // 2. Call Gemini Client to generate scenes
     console.log(`[Reel Service] Generating AI script for paper: ${paperTitle}`);
-    const scenes = await generateReelScript(paperTitle, summaryText, keyPoints, userApiKey);
+    const { scenes } = await generateReelScript(paperTitle, sourceText, keyPoints, userApiKey);
 
     // 3. Create Draft in database
-    const title = `Insight: ${paperTitle.replace(/\.[^/.]+$/, "")}`;
-    const description = `Key insights and breakdown of the paper: ${paperTitle}`;
+    const title = paperTitle.slice(0, 200);
+    const description = (doc.abstract || '').slice(0, 280) || `A short explainer of "${paperTitle}"`;
     
     const newDraft = await db.query(
       `INSERT INTO reel_drafts (author_id, linked_paper_id, title, description, scenes, status, part_number, total_parts)
@@ -237,7 +247,7 @@ const compileVideo = async (draftId) => {
 
       for (let i = 0; i < scenes.length; i++) {
         const scene = scenes[i];
-        const sceneDur = parseInt(scene.duration) || 8;
+        const sceneDur = Math.min(20, Math.max(2, parseInt(scene.duration, 10) || 8));
         const style = scene.backgroundStyle || 'indigo-dark';
         
         // Determine BG Color Hex based on style
@@ -284,44 +294,37 @@ const compileVideo = async (draftId) => {
         // If TTS failed, generate background silence
         if (!ttsSuccess) {
           console.log(`[Reel Service] Generating audio silence for scene ${i}`);
-          await new Promise((resolve, reject) => {
-            exec(`ffmpeg -y -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -t ${sceneDur} "${tempAudioPath}"`, (err) => {
-              if (err) reject(err);
-              else resolve();
-            });
-          });
+          await ffmpegRun(['-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100', '-t', String(sceneDur), tempAudioPath]);
         }
 
-        // 2. Prepare DrawText Filter
-        const escapedTitle = escapeFFmpegText(scene.title || '');
-        const dialogueLines = wrapTextForFFmpeg(scene.dialogue || '', 35);
+        // 2. Scene text goes to files read by drawtext (textfile=), so user text needs no escaping
+        //    and never reaches a shell or the filter parser.
+        const titleLines = wrapTextForFFmpeg(String(scene.title || '').slice(0, 80), 24).slice(0, 3);
+        const dialogueLines = wrapTextForFFmpeg(String(scene.dialogue || '').slice(0, 300), 35).slice(0, 8);
         const fontPath = getFontPath();
-        const fontArg = fontPath ? `:fontfile='${fontPath}'` : '';
+        const fontArg = fontPath && /^[\w\/.:\\-]+$/.test(fontPath) ? `:fontfile=${fontPath.replace(/\\/g, '/').replace(/:/g, '\\:')}` : '';
+        // expansion=none: '%' in user text is printed, not treated as a drawtext expression.
+        const draw = (file, size, color, y) =>
+          `drawtext=textfile=${file}:expansion=none:fontcolor=${color}:fontsize=${size}:x=(w-text_w)/2:y=${y}${fontArg}`;
 
-        let filters = `color=c=0x${hexColor}:s=720x1280:d=${sceneDur}:r=30 [bg]; `;
-        filters += `[bg] drawtext=text='${escapedTitle}':fontcolor=white:fontsize=42:x=(w-text_w)/2:y=(h-text_h)/2.2${fontArg}`;
-
-        // Add dialogue lines at the bottom
-        let startY = 950;
-        dialogueLines.forEach((line, lineIdx) => {
-          const escapedLine = escapeFFmpegText(line);
-          filters += `, drawtext=text='${escapedLine}':fontcolor=0xE0E7FF:fontsize=22:x=(w-text_w)/2:y=${startY + (lineIdx * 35)}${fontArg}`;
+        const parts = [];
+        const titleTop = 560 - (titleLines.length * 56) / 2;
+        titleLines.forEach((line, n) => {
+          const f = path.join(outputSubDir, `scene_${i}_title_${n}.txt`);
+          fs.writeFileSync(f, line);
+          parts.push(draw(f, 44, 'white', titleTop + n * 56));
         });
+        dialogueLines.forEach((line, n) => {
+          const f = path.join(outputSubDir, `scene_${i}_line_${n}.txt`);
+          fs.writeFileSync(f, line);
+          parts.push(draw(f, 24, '0xE0E7FF', 950 + n * 36));
+        });
+        const filters = `color=c=0x${hexColor}:s=720x1280:d=${sceneDur}:r=30[bg];[bg]${parts.length ? parts.join(',') : 'null'}`;
 
         // 3. Render video clip with overlay and merge audio
         console.log(`[Reel Service] Rendering video clip for scene ${i}...`);
-        const renderCmd = `ffmpeg -y -f lavfi -i "${filters}" -i "${tempAudioPath}" -map 0:v -map 1:a -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "${tempMergedPath}"`;
-        
-        await new Promise((resolve, reject) => {
-          exec(renderCmd, (err) => {
-            if (err) {
-              console.error(`[Reel Service] FFmpeg scene render failed command:`, renderCmd);
-              reject(err);
-            } else {
-              resolve();
-            }
-          });
-        });
+        await ffmpegRun(['-f', 'lavfi', '-i', filters, '-i', tempAudioPath, '-map', '0:v', '-map', '1:a',
+          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', tempMergedPath]);
 
         tempClips.push(tempMergedPath);
       }
@@ -332,33 +335,16 @@ const compileVideo = async (draftId) => {
       const listContent = tempClips.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n');
       fs.writeFileSync(listPath, listContent);
 
-      const concatCmd = `ffmpeg -y -f concat -safe 0 -i "${listPath}" -c copy "${localVideoPath}"`;
-      await new Promise((resolve, reject) => {
-        exec(concatCmd, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+      await ffmpegRun(['-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', localVideoPath]);
 
       // 5. Generate HLS playlist
       console.log(`[Reel Service] Creating HLS manifest for final video...`);
-      const hlsCmd = `ffmpeg -y -i "${localVideoPath}" -profile:v baseline -level 3.0 -start_number 0 -hls_time 10 -hls_list_size 0 -f hls "${localHlsPath}"`;
-      await new Promise((resolve, reject) => {
-        exec(hlsCmd, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+      await ffmpegRun(['-i', localVideoPath, '-profile:v', 'baseline', '-level', '3.0', '-start_number', '0',
+        '-hls_time', '10', '-hls_list_size', '0', '-f', 'hls', localHlsPath]);
 
       // 6. Generate Thumbnail from first second
       console.log(`[Reel Service] Creating video thumbnail...`);
-      const thumbCmd = `ffmpeg -y -i "${localVideoPath}" -ss 00:00:01 -vframes 1 -s 360x640 "${localThumbPath}"`;
-      await new Promise((resolve, reject) => {
-        exec(thumbCmd, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+      await ffmpegRun(['-i', localVideoPath, '-ss', '00:00:01', '-vframes', '1', '-s', '360x640', localThumbPath]);
 
       // Cleanup temporary clips
       try {
@@ -371,31 +357,15 @@ const compileVideo = async (draftId) => {
           if (fs.existsSync(pathV)) fs.unlinkSync(pathV);
           if (fs.existsSync(pathM)) fs.unlinkSync(pathM);
         }
+        for (const f of fs.readdirSync(outputSubDir)) {
+          if (/^scene_\d+_(title|line)_\d+\.txt$/.test(f)) fs.unlinkSync(path.join(outputSubDir, f));
+        }
       } catch (cleanErr) {
         console.warn('[Reel Service] Failed cleaning temp clips:', cleanErr.message);
       }
 
     } else {
-      // Graceful fallback simulation
-      console.log('[Reel Service] FFmpeg is missing. Generating beautiful simulation reel...');
-      
-      // Write minimal playable video (base64 of valid 1s silent MP4)
-      const miniMp4Base64 = 'AAAAIGZ0eXBpc29tAAAAAGlzb21tcDgxQXZjMQAAAABmcmVlAAAAG21kYXTeBAAAbGliZmZtcGVnNTkuMTguMTAwAKACAAAAIG1vb3YAAABsbXZoZAAAAADSpJc30qSXNwAAAAACAAAAAgAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACNXRyYWsAAABcdGtoZAAAAAPSpJc30qSXNwAAAAEAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAG1kaWEAAABkZWRoZAAAAADSpJc30qSXNwAAAAACAAAAAgAAAAAQAAABhoZGxyAAAAAAAAAAB2aWRlAAAAAAAAAAAAAAAAVmlkZW9IYW5kbGVyAAAAAYxtZGluZgAAABRkaW5mAAAAEGRyZWYAAAAAAAAAAQAAAAxtdXJhAAAAAAAAAFNzdGJsAAAAaHNkdecAAAAAc3RzZAAAAAAAAAABAAAAGWF2YzEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAIAAgAEgAAABIAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY//8AAAAcYXZjQwFUgD3/4QAKZyAF0AHaEAAAf4AAAA8AAQBtcHJvAAAAG2N0dHMAAAAAAAAAAQAAAAEAAAAKAAAAKHN0c3oAAAAAAAAADQAAAEsAAAAHAAAABwAAAAcAAAAHAAAABwAAAAcAAAAHAAAABwAAAAcAAAAHAAAABwAAAFBzdGNvAAAAAAAAAAEAAAAsAAAAYnVkdGEAAABadWR0YQAAAFJtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZHRhAAAAAAAAAAAAAAAAAAAAACRrbWV5cwAAAAAAAAABAAAAE21kYXRhOmtleXdvcmQAAAAAbWlydAAAAAAAAAAVaWxzdAAAAA0AAAAAAAAAAQA=';
-      fs.writeFileSync(localVideoPath, Buffer.from(miniMp4Base64, 'base64'));
-
-      // HLS Manifest
-      const mockM3u8Content = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:${totalDuration}
-#EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:${totalDuration}.0,
-/uploads/processed/${reelId}/${finalVideoName}
-#EXT-X-ENDLIST`;
-      fs.writeFileSync(localHlsPath, mockM3u8Content);
-
-      // Create a simple 1x1 black pixel JPEG as placeholder thumbnail
-      const placeholderJpgBase64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
-      fs.writeFileSync(localThumbPath, Buffer.from(placeholderJpgBase64, 'base64'));
+      throw new Error('Video rendering requires FFmpeg, which is not installed on this server.');
     }
 
     // 7. Write captions json
@@ -415,13 +385,15 @@ const compileVideo = async (draftId) => {
 
     // 8. Create Video in Database
     const dbDuration = Math.max(30, Math.min(60, totalDuration));
-    const videoUrl = `/uploads/processed/${reelId}/${hlsManifestName}`;
+    // MP4 plays in every browser's <video>; the HLS playlist is kept for adaptive players.
+    const videoUrl = `/uploads/processed/${reelId}/${finalVideoName}`;
+    const hlsUrl = `/uploads/processed/${reelId}/${hlsManifestName}`;
     const thumbnailUrl = `/uploads/processed/${reelId}/${thumbnailName}`;
 
     console.log(`[Reel Service] Saving video to db...`);
     const newVideo = await db.query(
-      `INSERT INTO videos (author_id, title, description, video_url, thumbnail_url, duration_seconds, linked_paper_id, tags, timestamps)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      `INSERT INTO videos (author_id, title, description, video_url, hls_playlist_url, thumbnail_url, duration_seconds, linked_paper_id, tags, timestamps)
+       VALUES ($1, $2, $3, $4, $10, $5, $6, $7, $8, $9) RETURNING *`,
       [
         draft.author_id,
         draft.title,
@@ -431,7 +403,8 @@ const compileVideo = async (draftId) => {
         dbDuration,
         draft.linked_paper_id || null,
         ['aireel', 'academic-reels'],
-        JSON.stringify(captions)
+        JSON.stringify(captions),
+        hlsUrl
       ]
     );
     const videoRecord = newVideo.rows[0];
@@ -460,7 +433,7 @@ const compileVideo = async (draftId) => {
 
     // 10. Automatically post to feed
     console.log(`[Reel Service] Posting reel to the feed...`);
-    const captionText = `🚨 New Research Reel published: **${draft.title}**\n\n${draft.description}`;
+    const captionText = [draft.title, draft.description].filter(Boolean).join('\n\n');
     const newPost = await db.query(
       `INSERT INTO posts (author_id, content_type, caption, media_urls, document_id, tags, publication_status) 
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
@@ -616,11 +589,8 @@ const handleNewPaperUpload = async (documentId, userId) => {
 };
 
 const getUserDocuments = async (userId) => {
-  const result = await db.query(
-    'SELECT * FROM documents WHERE uploader_id = $1 ORDER BY created_at DESC',
-    [userId]
-  );
-  return result.rows;
+  const documentRepository = require('../repositories/documentRepository');
+  return documentRepository.findByOwner(userId);
 };
 
 module.exports = {

@@ -130,36 +130,27 @@ router.post('/refresh', authController.refreshToken);
 
 /**
  * @swagger
- * /api/v1/auth/verify/orcid:
+ * /api/v1/auth/orcid/start:
  *   post:
- *     summary: Complete ORCID oauth verification
+ *     summary: Start ORCID sign-in; returns the ORCID authorize URL to redirect the browser to
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - orcid_id
- *             properties:
- *               orcid_id:
- *                 type: string
  *     responses:
  *       200:
- *         description: ORCID linked successfully
- *       401:
- *         description: Unauthorized
+ *         description: Authorize URL
+ *       503:
+ *         description: ORCID is not configured on this server
  */
-router.post('/verify/orcid', authMiddleware, authController.orcidCallback);
+router.post('/orcid/start', authMiddleware, authController.orcidStart);
+router.get('/orcid/callback', authController.orcidCallback);
+router.delete('/orcid', authMiddleware, authController.orcidDisconnect);
 
 /**
  * @swagger
  * /api/v1/auth/verify/student:
  *   post:
- *     summary: Complete student academic verification
+ *     summary: Send a verification code to a university email address
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
@@ -170,9 +161,9 @@ router.post('/verify/orcid', authMiddleware, authController.orcidCallback);
  *           schema:
  *             type: object
  *             required:
- *               - university
+ *               - email
  *             properties:
- *               university:
+ *               email:
  *                 type: string
  *     responses:
  *       200:
@@ -180,6 +171,7 @@ router.post('/verify/orcid', authMiddleware, authController.orcidCallback);
  *       401:
  *         description: Unauthorized
  */
-router.post('/verify/student', authMiddleware, authController.studentVerification);
+router.post('/verify/student', authMiddleware, otpLimiter, authController.studentVerification);
+router.post('/verify/student/confirm', authMiddleware, otpLimiter, authController.confirmStudentVerification);
 
 module.exports = router;

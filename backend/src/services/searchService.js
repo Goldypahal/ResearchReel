@@ -19,7 +19,7 @@ try {
  * Perform a search across documents, posts, videos, and users.
  * Supports Elasticsearch with full SQL query fallback.
  */
-const searchDocuments = async (query, type = 'all', cursor = null, limit = 10) => {
+const searchDocuments = async (query, type = 'all', cursor = null, limit = 10, viewerId = null) => {
   const searchTerm = query ? query.trim() : '';
 
   if (esClient) {
@@ -71,8 +71,10 @@ const searchDocuments = async (query, type = 'all', cursor = null, limit = 10) =
         nextCursor = hits[hits.length - 1].sort.join(',');
       }
 
+      const visibleHits = hits.filter((hit) => !hit._index.includes('documents')
+        || hit._source.uploader_id === viewerId || hit._source.visibility === 'public');
       return {
-        results: hits.map(hit => ({
+        results: visibleHits.map(hit => ({
           id: hit._source.id,
           type: hit._index.replace('researchreel_', '').replace(/s$/, ''), // convert researchreel_posts -> post
           title: hit._source.title || hit._source.caption || hit._source.username || hit._source.file_name || '',
@@ -88,13 +90,13 @@ const searchDocuments = async (query, type = 'all', cursor = null, limit = 10) =
   }
 
   // Fallback database query using ILIKE
-  return searchDatabaseFallback(searchTerm, type, cursor, limit);
+  return searchDatabaseFallback(searchTerm, type, cursor, limit, viewerId);
 };
 
 /**
  * Fallback search queries for PostgreSQL database
  */
-const searchDatabaseFallback = async (searchTerm, type, cursor, limit) => {
+const searchDatabaseFallback = async (searchTerm, type, cursor, limit, viewerId = null) => {
   const offset = cursor ? parseInt(cursor) : 0;
   const ilikePattern = `%${searchTerm}%`;
   const results = [];
@@ -106,11 +108,14 @@ const searchDatabaseFallback = async (searchTerm, type, cursor, limit) => {
     if (type === 'all' || type === 'document') {
       queries.push(
         db.query(`
-          SELECT id, 'document' AS type, file_name AS title, summary_text AS description, created_at
+          SELECT id, 'document' AS type, COALESCE(title, file_name) AS title,
+                 COALESCE(abstract, summary_text) AS description, created_at
           FROM documents
-          WHERE file_name ILIKE $1 OR summary_text ILIKE $1
+          WHERE deleted_at IS NULL
+            AND (uploader_id = $4::uuid OR visibility = 'public')
+            AND (file_name ILIKE $1 OR title ILIKE $1 OR summary_text ILIKE $1 OR abstract ILIKE $1)
           LIMIT $2 OFFSET $3
-        `, [ilikePattern, limit, offset]).then(res => res.rows)
+        `, [ilikePattern, limit, offset, viewerId]).then(res => res.rows)
       );
     }
 
@@ -120,7 +125,8 @@ const searchDatabaseFallback = async (searchTerm, type, cursor, limit) => {
         db.query(`
           SELECT id, 'user' AS type, username AS title, full_name AS description, created_at
           FROM users
-          WHERE username ILIKE $1 OR full_name ILIKE $1
+          WHERE (is_deleted IS NULL OR is_deleted = FALSE) AND verification_status <> 'unverified'
+            AND (username ILIKE $1 OR full_name ILIKE $1)
           LIMIT $2 OFFSET $3
         `, [ilikePattern, limit, offset]).then(res => res.rows)
       );
@@ -132,7 +138,7 @@ const searchDatabaseFallback = async (searchTerm, type, cursor, limit) => {
         db.query(`
           SELECT id, 'post' AS type, caption AS title, array_to_string(tags, ' ') AS description, created_at
           FROM posts
-          WHERE caption ILIKE $1 OR $2 = ANY(tags)
+          WHERE deleted_at IS NULL AND (caption ILIKE $1 OR lower($2) = ANY(tags))
           LIMIT $3 OFFSET $4
         `, [ilikePattern, searchTerm, limit, offset]).then(res => res.rows)
       );
@@ -144,7 +150,7 @@ const searchDatabaseFallback = async (searchTerm, type, cursor, limit) => {
         db.query(`
           SELECT id, 'video' AS type, title, description, created_at
           FROM videos
-          WHERE title ILIKE $1 OR description ILIKE $1
+          WHERE deleted_at IS NULL AND (title ILIKE $1 OR description ILIKE $1)
           LIMIT $2 OFFSET $3
         `, [ilikePattern, limit, offset]).then(res => res.rows.map(r => ({ ...r, title: r.title, description: r.description })))
       );

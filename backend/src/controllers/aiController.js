@@ -4,6 +4,8 @@ const redisClient = require('../config/redisClient');
 const crypto = require('crypto');
 const { canAccessDocument } = require('../authorization/documentAuthorization');
 const { sendSuccess, sendError } = require('../utils/response');
+const documentRepository = require('../repositories/documentRepository');
+const gemini = require('../services/ai/geminiClient');
 
 const DAILY_AI_CAP = 50;
 
@@ -55,9 +57,10 @@ exports.summarizeDocument = async (req, res, next) => {
       return sendSuccess(res, JSON.parse(cachedSummary), 'Summary retrieved from cache.');
     }
 
+    // Throws 4xx/503 on failure, so only real summaries are stored and cached.
     const aiResponse = await aiService.summarizeDocument(document_id);
     await db.query(
-      'UPDATE documents SET summary_text = $1, key_points = $2 WHERE id = $3',
+      'UPDATE documents SET summary_text = $1, key_points = $2, updated_at = NOW() WHERE id = $3',
       [aiResponse.abstract, JSON.stringify(aiResponse.key_points || []), document_id]
     );
 
@@ -97,7 +100,7 @@ exports.askGemini = async (req, res, next) => {
       return sendSuccess(res, JSON.parse(cachedAnswer), 'Answer retrieved from cache.');
     }
 
-    const response = await aiService.askGemini(req.body);
+    const response = await aiService.askGemini({ document_id, question: String(question).slice(0, 2000) });
     await redisClient.set(cacheKey, JSON.stringify(response), { EX: 86400 });
 
     return sendSuccess(res, response, 'AI answer generated.');
@@ -109,61 +112,37 @@ exports.askGemini = async (req, res, next) => {
 // Related Paper Recommendations (Section 62)
 exports.getRecommendations = async (req, res, next) => {
   try {
-    const recommendations = await aiService.getRecommendations(req.query);
+    const recommendations = await aiService.getRecommendations({ user_id: req.user.id, limit: req.query.limit });
     return sendSuccess(res, recommendations, 'Research recommendations retrieved.');
   } catch (error) {
     next(error);
   }
 };
 
-// Script Generation
+// Script Generation: a reel script for one of the viewer's papers.
 exports.generateScript = async (req, res, next) => {
   try {
-    const { documentId, query } = req.body;
-
-    if (documentId) {
-      const { allowed } = await canAccessDocument(req.user.id, documentId);
-      if (!allowed) {
-        return sendError(res, 'Forbidden: You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
-      }
+    const { documentId } = req.body || {};
+    if (!documentId) {
+      return sendError(res, 'documentId is required.', 400, 'VALIDATION_ERROR', req);
+    }
+    const { allowed } = await canAccessDocument(req.user.id, documentId);
+    if (!allowed) {
+      return sendError(res, 'Forbidden: You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
+    }
+    const withinLimit = await checkDailyAiCap(req.user.id);
+    if (!withinLimit) {
+      return sendError(res, `Daily limit of ${DAILY_AI_CAP} AI queries reached.`, 429, 'RATE_LIMIT_EXCEEDED', req);
     }
 
-    const mockScript = {
-      title: "Generated Research Script",
-      scenes: [
-        {
-          scene_number: 1,
-          narration: "Recent advancements in quantum entanglement have paved the way for robust cryptographic protocols.",
-          caption: "Quantum Cryptography 101",
-          visual_prompt: "Abstract visualization of glowing connected quantum nodes."
-        },
-        {
-          scene_number: 2,
-          narration: "By utilizing the Bell state, scientists proved that information transfer exceeds classical bounds.",
-          caption: "Breaking Classical Bounds",
-          visual_prompt: "Data stream accelerating beyond light speed graphics."
-        }
-      ]
-    };
-
-    return sendSuccess(res, { script: mockScript }, 'AI video script generated.');
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Voice Audio Synthesis
-exports.generateVoice = async (req, res, next) => {
-  try {
-    const { text } = req.body;
-    if (!text) {
-      return sendError(res, 'text content is required for voice generation.', 400, 'VALIDATION_ERROR', req);
+    const doc = await documentRepository.findWithText(documentId);
+    const sourceText = [doc.summary_text, doc.abstract, doc.extracted_text ? doc.extracted_text.slice(0, 14000) : null]
+      .filter(Boolean).join('\n\n');
+    if (!sourceText.trim()) {
+      return sendError(res, 'No text could be extracted from this paper yet.', 422, 'NO_TEXT', req);
     }
-
-    return sendSuccess(res, {
-      audioUrl: 'https://mock-s3.local/temp/voice_output_abc123.mp3',
-      durationSeconds: 4.5
-    }, 'Voice synthesis completed.');
+    const { scenes, source } = await gemini.generateReelScript(doc.title, sourceText, doc.key_points || []);
+    return sendSuccess(res, { script: { title: doc.title, scenes }, source }, 'AI video script generated.');
   } catch (error) {
     next(error);
   }
