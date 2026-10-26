@@ -3,6 +3,56 @@ const { canAccessDocument } = require('../authorization/documentAuthorization');
 const { canAccessReel } = require('../authorization/reelAuthorization');
 const queueManager = require('../queues/queueManager');
 const { sendSuccess, sendError } = require('../utils/response');
+const db = require('../config/db');
+
+/** Published reels, newest first. ?author=username narrows to one creator. */
+exports.getReelFeed = async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 30);
+    const params = [limit];
+    const where = ['v.deleted_at IS NULL'];
+    if (req.query.cursor) {
+      params.push(req.query.cursor);
+      where.push(`v.created_at < $${params.length}`);
+    }
+    if (req.query.author) {
+      params.push(req.query.author);
+      where.push(`lower(u.username) = lower($${params.length})`);
+    }
+    const result = await db.query(
+      `SELECT v.id, v.title, v.description, v.video_url, v.hls_playlist_url, v.thumbnail_url,
+              v.duration_seconds, v.tags, v.view_count, v.created_at, v.linked_paper_id,
+              d.title AS paper_title, d.doi AS paper_doi,
+              u.id AS author_id, u.username, u.full_name, u.verification_status,
+              COALESCE(u.avatar_url, u.profile_picture_url) AS avatar_url
+       FROM videos v
+       JOIN users u ON u.id = v.author_id
+       LEFT JOIN documents d ON d.id = v.linked_paper_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY v.created_at DESC
+       LIMIT $1`,
+      params
+    );
+    const rows = result.rows;
+    res.status(200).json({
+      success: true,
+      data: rows,
+      nextCursor: rows.length === limit ? rows[rows.length - 1].created_at.toISOString() : null
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.recordReelView = async (req, res, next) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
+    await db.query('UPDATE videos SET view_count = COALESCE(view_count, 0) + 1 WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
+    return sendSuccess(res, {}, 'View recorded.');
+  } catch (error) {
+    next(error);
+  }
+};
 
 exports.getDrafts = async (req, res, next) => {
   try {

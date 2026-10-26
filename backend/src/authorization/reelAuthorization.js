@@ -2,33 +2,22 @@ const pool = require('../config/db');
 const { AuthorizationError, NotFoundError } = require('../utils/errors');
 
 /**
- * Validates reel ownership or public access
+ * Reel drafts (reel_drafts) are private to their author until published,
+ * at which point they become a row in "videos".
  */
 async function canAccessReel(userId, reelId) {
   if (!reelId) return { allowed: false, isAuthor: false };
 
-  const query = `
-    SELECT id, author_id, visibility, status 
-    FROM reels 
-    WHERE id = $1 AND (deleted_at IS NULL);
-  `;
-  const result = await pool.query(query, [reelId]);
+  const result = await pool.query(
+    'SELECT id, author_id, status FROM reel_drafts WHERE id = $1',
+    [reelId]
+  );
   if (result.rows.length === 0) {
     return { allowed: false, isAuthor: false };
   }
 
-  const reel = result.rows[0];
-  const isAuthor = Boolean(userId && reel.author_id === userId);
-
-  if (isAuthor) {
-    return { allowed: true, isAuthor: true };
-  }
-
-  if (reel.visibility === 'public' && reel.status === 'published') {
-    return { allowed: true, isAuthor: false };
-  }
-
-  return { allowed: false, isAuthor: false };
+  const isAuthor = Boolean(userId && result.rows[0].author_id === userId);
+  return { allowed: isAuthor, isAuthor };
 }
 
 const authorizeReelOwner = () => {

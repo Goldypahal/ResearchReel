@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
-const { authMiddleware } = require('../middleware/authMiddleware');
+const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const rateLimiter = require('../middleware/rateLimiter');
 const validate = require('../middleware/validationMiddleware');
 const { registerSchema, loginSchema, otpSchema } = require('../utils/validators');
@@ -111,7 +111,7 @@ router.post('/login', loginLimiter, validate(loginSchema), authController.login)
  *       200:
  *         description: Logout successful
  */
-router.post('/logout', authController.logout);
+router.post('/logout', optionalAuth, authController.logout);
 
 /**
  * @swagger

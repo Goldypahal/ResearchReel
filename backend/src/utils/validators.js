@@ -18,10 +18,15 @@ const otpSchema = z.object({
 });
 
 const postSchema = z.object({
-  content_type: z.enum(['video', 'document', 'text']),
-  caption: z.string().optional(),
-  media_url: z.string().url().optional().or(z.literal('')),
-  doi: z.string().optional()
+  content_type: z.enum(['video', 'document', 'text', 'image']),
+  caption: z.string().trim().max(5000).optional(),
+  media_urls: z.array(z.string().max(2048)).max(10).optional(),
+  document_id: z.string().uuid().optional().nullable(),
+  tags: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+  publication_status: z.enum(['preprint', 'published', 'wip']).optional().nullable(),
+  doi: z.string().trim().max(255).optional().nullable()
+}).refine((p) => (p.caption && p.caption.length > 0) || p.document_id || (p.media_urls && p.media_urls.length), {
+  message: 'A post needs text, a paper or media.'
 });
 
 const commentSchema = z.object({

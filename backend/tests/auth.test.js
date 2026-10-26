@@ -80,7 +80,7 @@ describe('Backend Smoke Tests', () => {
   describe('POST /api/auth/register', () => {
     it('should fail registration if fields are missing or invalid', async () => {
       const response = await request(app)
-        .post('/api/auth/register')
+        .post('/api/v1/auth/register')
         .send({ email: 'invalid-email', password: '123' });
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
@@ -95,7 +95,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const response = await request(app)
-        .post('/api/auth/register')
+        .post('/api/v1/auth/register')
         .send({
           email: 'test@example.com',
           username: 'testuser',
@@ -115,7 +115,7 @@ describe('Backend Smoke Tests', () => {
   describe('POST /api/auth/login', () => {
     it('should fail login with invalid fields', async () => {
       const response = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'invalid-email' });
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
@@ -125,7 +125,7 @@ describe('Backend Smoke Tests', () => {
       db.query.mockResolvedValueOnce({ rows: [] });
 
       const response = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'test@example.com', password: 'correct_password' });
 
       expect(response.status).toBe(401);
@@ -144,7 +144,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const response = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'test@example.com', password: 'correct_password' });
 
       expect(response.status).toBe(200);
@@ -168,7 +168,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const registerRes = await request(app)
-        .post('/api/auth/register')
+        .post('/api/v1/auth/register')
         .send({
           email: 'flow@example.com',
           username: 'flowuser',
@@ -187,7 +187,7 @@ describe('Backend Smoke Tests', () => {
       }); // Select user after verification
       
       const verifyRes = await request(app)
-        .post('/api/auth/verify-otp')
+        .post('/api/v1/auth/verify-otp')
         .send({
           email: 'flow@example.com',
           otp: '123456'
@@ -208,7 +208,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const loginRes = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'flow@example.com', password: 'correct_password' });
 
       expect(loginRes.status).toBe(200);
@@ -220,7 +220,7 @@ describe('Backend Smoke Tests', () => {
   describe('Authentication Middleware', () => {
     it('should deny access to private routes if no token is provided', async () => {
       const response = await request(app)
-        .post('/api/auth/verify/student')
+        .post('/api/v1/auth/verify/student')
         .send({ user_id: 1, university: 'MIT' });
 
       expect(response.status).toBe(401);
@@ -230,7 +230,7 @@ describe('Backend Smoke Tests', () => {
 
     it('should deny access to private routes if an invalid token is provided', async () => {
       const response = await request(app)
-        .post('/api/auth/verify/student')
+        .post('/api/v1/auth/verify/student')
         .set('Authorization', 'Bearer invalidtoken')
         .send({ user_id: 1, university: 'MIT' });
 
@@ -250,7 +250,7 @@ describe('Backend Smoke Tests', () => {
       );
 
       const response = await request(app)
-        .post('/api/auth/verify/student')
+        .post('/api/v1/auth/verify/student')
         .set('Authorization', `Bearer ${token}`)
         .send({ user_id: 1, university: 'MIT' });
 

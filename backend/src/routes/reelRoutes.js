@@ -3,6 +3,8 @@ const router = express.Router();
 const reelController = require('../controllers/reelController');
 const { authMiddleware } = require('../middleware/authMiddleware');
 
+router.get('/feed', reelController.getReelFeed);
+router.post('/:id/view', reelController.recordReelView);
 router.get('/drafts', authMiddleware, reelController.getDrafts);
 router.get('/draft/:id', authMiddleware, reelController.getDraft);
 router.post('/generate-draft', authMiddleware, reelController.generateDraft);

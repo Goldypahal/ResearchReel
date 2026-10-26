@@ -100,7 +100,7 @@ describe('Integration Flow: Document Upload -> AI Summary -> Feed', () => {
     });
 
     const uploadRes = await request(app)
-      .post('/api/posts/document/upload')
+      .post('/api/v1/posts/document/upload')
       .set('Authorization', `Bearer ${token}`)
       .send({
         file_name: 'test.pdf',
@@ -125,7 +125,7 @@ describe('Integration Flow: Document Upload -> AI Summary -> Feed', () => {
     });
 
     const feedRes = await request(app)
-      .get('/api/posts/feed')
+      .get('/api/v1/posts/feed')
       .set('Authorization', `Bearer ${token}`);
 
     expect(feedRes.status).toBe(200);

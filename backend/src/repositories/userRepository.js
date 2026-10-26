@@ -28,7 +28,8 @@ class UserRepository {
    */
   async findById(userId) {
     const query = `
-      SELECT id, full_name, username, email, role, avatar_url, bio, institution, research_interests, created_at
+      SELECT id, full_name, username, email, role, COALESCE(avatar_url, profile_picture_url) AS avatar_url,
+             bio, institution, research_interests, verification_status, subscription_tier, orcid_id, created_at
       FROM users
       WHERE id = $1 AND (is_deleted IS FALSE OR is_deleted IS NULL);
     `;

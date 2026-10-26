@@ -35,7 +35,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api', rateLimiter(150, 60));
 
 const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
+// Uploaded papers/media are embedded by the web app, which runs on another origin.
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, '../public/uploads'), { dotfiles: 'deny', index: false }));
 
 // Swagger Documentation setup
 const swaggerUi = require('swagger-ui-express');
@@ -89,6 +93,8 @@ const workspaceRoutes = require('./routes/workspaceRoutes');
 const assetRoutes = require('./routes/assetRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const citationRoutes = require('./routes/citationRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const storyRoutes = require('./routes/storyRoutes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/posts', postRoutes);
@@ -107,21 +113,10 @@ app.use('/api/v1/workspaces', workspaceRoutes);
 app.use('/api/v1/assets', assetRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/citations', citationRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/stories', storyRoutes);
 app.use('/api/v1', healthRoutes);
 
-// Legacy routes fallback
-app.use('/api/auth', authRoutes);
-app.use('/api/posts', postRoutes);
-app.use('/api/reels', reelRoutes);
-app.use('/api/ai', aiRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/search', searchRoutes);
-app.use('/api/media', mediaRoutes);
-app.use('/api/doi', doiRoutes);
-app.use('/api/moderation', moderationRoutes);
-app.use('/api', healthRoutes);
 
 // Not found handler
 app.use((req, res, next) => {
@@ -133,9 +128,11 @@ app.use((err, req, res, next) => {
   if (err.stack) {
     logger.error(err.stack);
   }
-  const statusCode = err.statusCode || 500;
-  const code = err.code || 'INTERNAL_SERVER_ERROR';
-  const message = err.message || 'An unexpected server error occurred.';
+  const statusCode = Number.isInteger(err.statusCode) ? err.statusCode : 500;
+  // Never leak SQL/driver details (pg error codes, column names) for server errors in production.
+  const hideDetails = statusCode >= 500 && process.env.NODE_ENV === 'production';
+  const code = hideDetails || /^[0-9A-Z]{5}$/.test(String(err.code || '')) ? 'INTERNAL_SERVER_ERROR' : (err.code || 'INTERNAL_SERVER_ERROR');
+  const message = hideDetails ? 'An unexpected server error occurred.' : (err.message || 'An unexpected server error occurred.');
 
   return sendError(res, message, statusCode, code, req);
 });

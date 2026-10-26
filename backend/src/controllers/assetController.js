@@ -1,101 +1,94 @@
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const documentRepository = require('../repositories/documentRepository');
-const queueManager = require('../queues/queueManager');
+const { processDocument, uploadsRoot } = require('../services/documentProcessor');
+const { canAccessDocument } = require('../authorization/documentAuthorization');
 const { sendSuccess, sendError } = require('../utils/response');
 
-/**
- * Generates presigned S3 upload URL with server-generated key format users/{userId}/{uuid}.pdf
- */
-exports.generateUploadUrl = async (req, res, next) => {
-  try {
-    const { fileName, mimeType } = req.body;
-    const userId = req.user.id;
+const ALLOWED = {
+  '.pdf': 'application/pdf',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+};
 
-    if (!fileName || !mimeType) {
-      return sendError(res, 'fileName and mimeType are required.', 400, 'VALIDATION_ERROR', req);
-    }
-
-    const fileExt = fileName.includes('.') ? fileName.split('.').pop() : 'pdf';
-    const storageKey = `users/${userId}/${crypto.randomUUID()}.${fileExt}`;
-    
-    // Signed upload URL simulation / S3 URL
-    const uploadUrl = process.env.S3_UPLOAD_ENDPOINT 
-      ? `${process.env.S3_UPLOAD_ENDPOINT}/${storageKey}`
-      : `https://mock-s3.local/upload?key=${encodeURIComponent(storageKey)}`;
-
-    return sendSuccess(res, {
-      uploadUrl,
-      storageKey,
-      bucket: process.env.S3_BUCKET || 'researchreel-documents'
-    }, 'Signed upload URL generated.');
-  } catch (error) {
-    next(error);
-  }
+/** Absolute URL for a file under /uploads, so the web app (other origin) can load it. */
+const publicUrl = (req, relativePath) => {
+  const origin = process.env.PUBLIC_API_ORIGIN || `${req.protocol}://${req.get('host')}`;
+  return `${origin.replace(/\/$/, '')}/uploads/${relativePath}`;
 };
 
 /**
- * Registers the uploaded asset into the PostgreSQL documents table
+ * Direct multipart upload (field "file"). The file is stored under
+ * public/uploads/documents/<userId>/, registered as a document, and text
+ * extraction runs after the response so the client is not kept waiting.
  */
-exports.registerAsset = async (req, res, next) => {
+exports.uploadDocument = async (req, res, next) => {
   try {
-    const { fileName, mimeType, sizeBytes, storageKey, fileUrl, metadata } = req.body;
-    const userId = req.user.id;
-
-    if (!fileName || !storageKey) {
-      return sendError(res, 'fileName and storageKey are required.', 400, 'VALIDATION_ERROR', req);
+    if (!req.file) {
+      return sendError(res, 'Attach a PDF or DOCX file in the "file" field.', 400, 'VALIDATION_ERROR', req);
     }
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const userDir = path.join(uploadsRoot, 'documents', req.user.id);
+    fs.mkdirSync(userDir, { recursive: true });
+    const storedName = `${crypto.randomUUID()}${ext}`;
+    const finalPath = path.join(userDir, storedName);
+    fs.renameSync(req.file.path, finalPath);
 
+    const relative = `documents/${req.user.id}/${storedName}`;
+    const providedTitle = (req.body.title || '').trim();
     const document = await documentRepository.createDocument({
-      ownerId: userId,
-      title: fileName,
-      storageKey,
-      fileUrl: fileUrl || `https://storage.local/${storageKey}`,
-      mimeType: mimeType || 'application/pdf',
-      fileSize: sizeBytes || 0,
-      metadata: metadata || {}
+      ownerId: req.user.id,
+      title: providedTitle || req.file.originalname.replace(/\.[^.]+$/, ''),
+      fileName: req.file.originalname,
+      fileUrl: publicUrl(req, relative),
+      storageKey: relative,
+      mimeType: ALLOWED[ext],
+      fileSize: req.file.size,
+      doi: (req.body.doi || '').trim() || null,
+      status: 'processing'
     });
 
-    // Enqueue background processing job (PDF parsing, text extraction, chunking)
-    await queueManager.addJob('document-processing', {
-      documentId: document.id,
-      storageKey: document.storage_key,
-      ownerId: userId
+    setImmediate(() => {
+      processDocument(document.id, finalPath, ALLOWED[ext], { useExtractedTitle: !providedTitle });
     });
 
-    return sendSuccess(res, document, 'Document registered and queued for processing.', 201);
+    return sendSuccess(res, document, 'Document uploaded. Extracting text…', 201);
+  } catch (error) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlink(req.file.path, () => {});
+    next(error);
+  }
+};
+
+exports.getAsset = async (req, res, next) => {
+  try {
+    const { allowed, permission } = await canAccessDocument(req.user.id, req.params.id);
+    if (!allowed) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
+    const doc = await documentRepository.findById(req.params.id);
+    return sendSuccess(res, { ...doc, permission }, 'Document fetched.');
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * Soft deletes an asset/document
- */
 exports.softDeleteAsset = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const userId = req.user.id;
-
-    const success = await documentRepository.softDelete(id, userId);
+    const success = await documentRepository.softDelete(req.params.id, req.user.id);
     if (!success) {
       return sendError(res, 'Document not found or unauthorized.', 404, 'NOT_FOUND', req);
     }
-
-    return sendSuccess(res, { id }, 'Document soft-deleted successfully.');
+    return sendSuccess(res, { id: req.params.id }, 'Document deleted.');
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * Retrieves library of non-deleted assets for the authenticated user
- */
 exports.getUserAssets = async (req, res, next) => {
   try {
-    const userId = req.user.id;
-    const assets = await documentRepository.findByOwner(userId);
+    const assets = await documentRepository.findByOwner(req.user.id);
     return sendSuccess(res, assets, 'User document library retrieved.');
   } catch (error) {
     next(error);
   }
 };
+
+exports.ALLOWED = ALLOWED;

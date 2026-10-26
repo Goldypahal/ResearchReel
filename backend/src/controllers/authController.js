@@ -87,7 +87,10 @@ exports.login = async (req, res, next) => {
     }
 
     const reqInfo = extractReqInfo(req);
-    const { user, accessToken, refreshToken } = await authService.login({ email, password, reqInfo });
+    const { user, accessToken, refreshToken, requiresVerification } = await authService.login({ email, password, reqInfo });
+    if (requiresVerification) {
+      return sendSuccess(res, { email, requiresVerification: true }, 'Please verify your email. A new code has been sent.');
+    }
 
     res.cookie('accessToken', accessToken, {
       httpOnly: true,

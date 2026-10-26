@@ -6,12 +6,12 @@ const { AuthorizationError, NotFoundError } = require('../utils/errors');
  * Checks: 1. Owner, 2. Project Member via project_documents junction, 3. Public visibility
  */
 async function canAccessDocument(userId, documentId) {
-  if (!documentId) return { allowed: false, permission: null };
+  if (!documentId || !/^[0-9a-f-]{36}$/i.test(String(documentId))) return { allowed: false, permission: null };
 
   const query = `
     SELECT 
       d.id, 
-      d.owner_id, 
+      d.uploader_id AS owner_id, 
       d.visibility,
       pd.project_id,
       pm.role as project_role

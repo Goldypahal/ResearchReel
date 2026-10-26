@@ -5,6 +5,7 @@ const { authMiddleware } = require('../middleware/authMiddleware');
 
 // Conversations (Section 3.4.1)
 router.get('/conversations', authMiddleware, messageController.getConversations);
+router.post('/conversations', authMiddleware, messageController.startConversation);
 
 // Messages (Section 3.4.2)
 router.get('/:conversation_id/messages', authMiddleware, messageController.getMessages);

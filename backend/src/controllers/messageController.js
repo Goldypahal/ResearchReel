@@ -11,6 +11,20 @@ exports.getConversations = async (req, res, next) => {
   }
 };
 
+// Start (or reopen) a direct conversation: { username }
+exports.startConversation = async (req, res, next) => {
+  try {
+    const { username } = req.body || {};
+    if (!username) return sendError(res, 'username is required.', 400, 'VALIDATION_ERROR', req);
+    const { id, created } = await chatService.startDirectConversation(req.user.id, username);
+    const all = await chatService.getConversations(req.user.id);
+    const conversation = all.find((c) => c.id === id) || { id };
+    return sendSuccess(res, conversation, created ? 'Conversation started.' : 'Conversation found.', created ? 201 : 200);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Get Single Conversation Messages (Section 26 / 29)
 exports.getMessages = async (req, res, next) => {
   try {

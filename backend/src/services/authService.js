@@ -34,11 +34,11 @@ const createTokenPair = async (userData, reqInfo = {}) => {
     role: userData.role || 'user'
   };
 
-  const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+  const accessToken = jwt.sign({ ...payload, typ: 'access' }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN || '15m'
   });
 
-  const refreshToken = jwt.sign(payload, process.env.JWT_SECRET, {
+  const refreshToken = jwt.sign({ ...payload, typ: 'refresh' }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d'
   });
 
@@ -58,6 +58,18 @@ const createTokenPair = async (userData, reqInfo = {}) => {
 
   return { accessToken, refreshToken, sid };
 };
+
+// Never send password hashes or billing identifiers to the client.
+const toPublicUser = (row) => ({
+  id: row.id,
+  email: row.email,
+  username: row.username,
+  full_name: row.full_name,
+  avatar_url: row.avatar_url || row.profile_picture_url || null,
+  verification_status: row.verification_status,
+  subscription_tier: row.subscription_tier || 'free',
+  role: row.role || 'user'
+});
 
 const register = async ({ email, username, password, full_name }) => {
   const userExists = await db.query('SELECT * FROM users WHERE email = $1 OR username = $2', [email, username]);
@@ -100,8 +112,8 @@ const verifyOTP = async ({ email, otp, reqInfo }) => {
   await db.query('UPDATE users SET verification_status = $1 WHERE email = $2', ['verified', email]);
   await redisClient.del(`otp:${email}`);
 
-  const userRes = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE email = $1', [email]);
-  const user = userRes.rows[0];
+  const userRes = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+  const user = toPublicUser(userRes.rows[0]);
   const { accessToken, refreshToken } = await createTokenPair(user, reqInfo);
 
   return { user, accessToken, refreshToken };
@@ -113,12 +125,24 @@ const login = async ({ email, password, reqInfo }) => {
     throw new AuthError('Invalid credentials', 401);
   }
 
-  const user = userRes.rows[0];
-  const isValidPassword = await argon2.verify(user.password_hash, password);
+  const row = userRes.rows[0];
+  if (row.is_deleted) {
+    throw new AuthError('Invalid credentials', 401);
+  }
+  const isValidPassword = await argon2.verify(row.password_hash, password);
   if (!isValidPassword) {
     throw new AuthError('Invalid credentials', 401);
   }
 
+  // Accounts that never confirmed their email get a fresh code instead of a session.
+  if (row.verification_status === 'unverified') {
+    const otp = crypto.randomInt(100000, 999999).toString();
+    await redisClient.set(`otp:${email}`, JSON.stringify({ otp }), { EX: OTP_TTL_SECONDS });
+    await sendOTP(email, otp);
+    return { requiresVerification: true, user: null };
+  }
+
+  const user = toPublicUser(row);
   const { accessToken, refreshToken } = await createTokenPair(user, reqInfo);
   return { user, accessToken, refreshToken };
 };
@@ -132,6 +156,9 @@ const refreshTokens = async (token, reqInfo) => {
   try {
     decoded = jwt.verify(token, process.env.JWT_SECRET);
   } catch (err) {
+    throw new AuthError('Invalid or expired refresh token', 401);
+  }
+  if (decoded.typ === 'access') {
     throw new AuthError('Invalid or expired refresh token', 401);
   }
 

@@ -59,7 +59,7 @@ describe('Health Check API Endpoint', () => {
 
     // Mock native fetch for RAG and Elasticsearch
     global.fetch = jest.fn().mockImplementation((url) => {
-      if (url.includes('rag-service') || url.includes('/api/ai/health')) {
+      if (url.includes('rag-service') || url.includes('/api/v1/ai/health')) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -75,7 +75,7 @@ describe('Health Check API Endpoint', () => {
       return Promise.reject(new Error('Unknown url'));
     });
 
-    const response = await request(app).get('/api/health');
+    const response = await request(app).get('/api/v1/health');
 
     expect(response.status).toBe(200);
     expect(response.body.status).toBe('UP');
@@ -98,7 +98,7 @@ describe('Health Check API Endpoint', () => {
       });
     });
 
-    const response = await request(app).get('/api/health');
+    const response = await request(app).get('/api/v1/health');
 
     expect(response.status).toBe(503);
     expect(response.body.status).toBe('DEGRADED');
