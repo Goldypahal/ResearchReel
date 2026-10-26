@@ -4,7 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { useRouter } from 'next/navigation';
 import { initAnalytics, trackEvent, identifyUser, resetAnalytics } from '@/lib/analytics';
 import { initSentry } from '@/lib/sentry';
-import { authApi, usersApi, SESSION_EXPIRED_EVENT, type CurrentUser } from '@/lib/api';
+import { authApi, notificationsApi, usersApi, SESSION_EXPIRED_EVENT, type CurrentUser } from '@/lib/api';
 import { disconnectSocket } from '@/lib/socket';
 import { requiresAuth } from '@/lib/routes';
 
@@ -23,6 +23,14 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/** Keeps the account's time zone (used in reminder emails) in step with the browser. */
+const syncTimezone = (me: User) => {
+  let zone: string | undefined;
+  try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return; }
+  if (!zone || me.timezone) return; // only fill it in; never override a zone the user chose
+  notificationsApi.updateEmailPreferences({ timezone: zone }).catch(() => undefined);
+};
 const CACHE_KEY = 'user';
 
 const readCachedUser = (): User | null => {
@@ -60,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const me = await usersApi.getMe();
       persist(me);
+      syncTimezone(me);
       identifyUser(me.id, me.email, { username: me.username, role: me.role });
       return me;
     } catch {

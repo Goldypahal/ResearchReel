@@ -12,7 +12,7 @@ import FollowButton from '@/components/common/FollowButton';
 
 const ICON: Record<string, React.ElementType> = {
   follow: UserPlus, reaction: Heart, comment: MessageSquare, project_invite: FolderKanban,
-  lecture_registration: BookOpen, lecture_question: BookOpen, lecture_cancelled: BookOpen,
+  lecture_registration: BookOpen, lecture_question: BookOpen, lecture_cancelled: BookOpen, lecture_reminder: BookOpen,
 };
 
 function describe(n: Notification): { text: React.ReactNode; href: string } {
@@ -34,6 +34,8 @@ function describe(n: Notification): { text: React.ReactNode; href: string } {
       return { text: <>registered for your lecture <span className="font-medium">{n.message}</span>.</>, href: lectureHref };
     case 'lecture_question':
       return { text: <>asked in your lecture: <span className="opacity-80">“{n.message}”</span></>, href: lectureHref };
+    case 'lecture_reminder':
+      return { text: <>{n.message === '1h' ? 'Your lecture starts in about an hour.' : 'Reminder: your lecture is coming up.'}</>, href: lectureHref };
     case 'lecture_cancelled':
       return { text: <>cancelled the lecture <span className="font-medium">{n.message}</span>.</>, href: lectureHref };
     default:

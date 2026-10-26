@@ -3,6 +3,8 @@ export type ReactionType = 'interesting' | 'novel' | 'needs_discussion';
 
 export interface CurrentUser {
   id: string;
+  /** IANA zone used for reminder emails; synced from the browser. */
+  timezone?: string | null;
   email: string;
   username: string;
   full_name?: string | null;
