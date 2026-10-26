@@ -29,6 +29,6 @@ test('comment email arrives with a working unsubscribe link', async ({ browser }
   await expect(unsub.getByRole('heading', { name: "You're unsubscribed" })).toBeVisible();
 
   await authorPage.goto('/settings?tab=notifications');
-  await expect(authorPage.getByRole('switch', { name: 'Comments on your posts' })).toHaveAttribute('aria-checked', 'false');
+  await expect(authorPage.getByRole('switch', { name: 'Comments, replies and mentions' })).toHaveAttribute('aria-checked', 'false');
   await expect(authorPage.getByRole('switch', { name: 'New followers' })).toHaveAttribute('aria-checked', 'true');
 });

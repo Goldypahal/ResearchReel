@@ -4,6 +4,7 @@ const postController = require('../controllers/postController');
 const virusScan = require('../middleware/virusScan');
 const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validationMiddleware');
+const rateLimiter = require('../middleware/rateLimiter');
 const { postSchema } = require('../utils/validators');
 
 // Reading is public; signed-in viewers get personalised flags (reacted, saved)
@@ -32,9 +33,13 @@ router.post('/view', optionalAuth, postController.viewPost);
 // Single post + interactions (after static paths)
 router.get('/:id', optionalAuth, postController.getPost);
 router.delete('/:id', authMiddleware, postController.deletePost);
-router.get('/:id/comments', postController.getComments);
-router.post('/:id/comments', authMiddleware, postController.addComment);
+router.get('/:id/comments', optionalAuth, postController.getComments);
+router.post('/:id/comments', authMiddleware, rateLimiter(30, 60), postController.addComment);
+router.get('/:id/comments/:commentId/replies', optionalAuth, postController.getReplies);
+router.patch('/:id/comments/:commentId', authMiddleware, postController.updateComment);
 router.delete('/:id/comments/:commentId', authMiddleware, postController.deleteComment);
+router.post('/:id/comments/:commentId/like', authMiddleware, postController.likeComment);
+router.delete('/:id/comments/:commentId/like', authMiddleware, postController.likeComment);
 router.post('/:id/bookmark', authMiddleware, postController.bookmark);
 router.delete('/:id/bookmark', authMiddleware, postController.unbookmark);
 

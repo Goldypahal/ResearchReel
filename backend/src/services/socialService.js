@@ -114,9 +114,13 @@ const searchUsers = async (query, viewerId = null, limit = 20) => {
      WHERE ${ACTIVE_USER} AND u.verification_status <> 'unverified'
        AND (u.username ILIKE $2 OR u.full_name ILIKE $2 OR u.institution ILIKE $2
             OR EXISTS (SELECT 1 FROM unnest(u.research_interests) ri WHERE ri ILIKE $2))
-     ORDER BY (lower(u.username) = lower($3)) DESC, u.full_name ASC NULLS LAST
+     ORDER BY (lower(u.username) = lower($3)) DESC,
+              (u.username ILIKE $5) DESC,
+              is_following DESC,
+              (u.full_name ILIKE $5) DESC,
+              u.full_name ASC NULLS LAST
      LIMIT $4`,
-    [viewerId, `%${q.replace(/[%_]/g, '\\$&')}%`, q, Math.min(Number(limit) || 20, 50)]
+    [viewerId, `%${q.replace(/[%_]/g, '\\$&')}%`, q, Math.min(Number(limit) || 20, 50), `${q.replace(/[%_]/g, '\\$&')}%`]
   );
   return result.rows;
 };

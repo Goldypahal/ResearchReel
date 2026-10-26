@@ -130,53 +130,6 @@ const setBookmark = async (viewerId, postId, saved) => {
   return { post_id: postId, is_bookmarked: Boolean(saved) };
 };
 
-const getComments = async (postId, { cursor, limit = 50 } = {}) => {
-  const params = [postId];
-  let cursorSql = '';
-  if (cursor) {
-    params.push(cursor);
-    cursorSql = `AND c.created_at > $${params.length}`;
-  }
-  params.push(clampLimit(limit, 50));
-  const result = await db.query(
-    `SELECT c.id, c.post_id, c.parent_id, c.content, c.created_at,
-            u.id AS author_id, u.username, u.full_name, u.verification_status,
-            COALESCE(u.avatar_url, u.profile_picture_url) AS avatar_url
-     FROM comments c JOIN users u ON u.id = c.author_id
-     WHERE c.post_id = $1 AND c.deleted_at IS NULL ${cursorSql}
-     ORDER BY c.created_at ASC
-     LIMIT $${params.length}`,
-    params
-  );
-  return result.rows;
-};
-
-const addComment = async ({ postId, authorId, content, parentId = null }) => {
-  const result = await db.query(
-    `INSERT INTO comments (post_id, author_id, content, parent_id)
-     VALUES ($1, $2, $3, $4) RETURNING id, post_id, parent_id, content, created_at`,
-    [postId, authorId, content, parentId]
-  );
-  const author = await db.query(
-    `SELECT id AS author_id, username, full_name, verification_status,
-            COALESCE(avatar_url, profile_picture_url) AS avatar_url
-     FROM users WHERE id = $1`,
-    [authorId]
-  );
-  return { ...result.rows[0], ...author.rows[0] };
-};
-
-const deleteComment = async (commentId, userId) => {
-  const result = await db.query(
-    `UPDATE comments SET deleted_at = NOW()
-     WHERE id = $1 AND deleted_at IS NULL
-       AND (author_id = $2 OR post_id IN (SELECT id FROM posts WHERE author_id = $2))
-     RETURNING id`,
-    [commentId, userId]
-  );
-  return result.rowCount > 0;
-};
-
 const createPost = async ({ author_id, content_type, caption, media_urls, document_id, tags, publication_status, doi }) => {
   const newPost = await db.query(
     `INSERT INTO posts (author_id, content_type, caption, media_urls, document_id, tags, publication_status, doi) 
@@ -230,9 +183,6 @@ module.exports = {
   getTrendingTags,
   getBookmarked,
   setBookmark,
-  getComments,
-  addComment,
-  deleteComment,
   createPost,
   reactToPost,
   REACTION_TYPES
