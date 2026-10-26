@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "test": "jest --runInBand --detectOpenHandles --forceExit",
     "migrate": "node-pg-migrate",
-    "seed": "node src/scripts/seed.js"
+    "seed": "node src/scripts/seed.js",
+    "test:db": "jest --config jest.db.config.js --runInBand --forceExit"
   },
   "keywords": [],
   "author": "",
@@ -55,6 +56,10 @@
   "jest": {
     "setupFiles": [
       "<rootDir>/tests/setup.js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/db/"
     ]
   }
 }

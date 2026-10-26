@@ -28,7 +28,7 @@ const authenticateSocket = async (socket, next) => {
     if (!token) return next(new Error('unauthorized'));
     const claims = jwt.verify(token, process.env.JWT_SECRET);
     if (claims.typ === 'refresh') return next(new Error('unauthorized'));
-    if (claims.sid && process.env.NODE_ENV !== 'test') {
+    if (claims.sid) {
       const active = await redisClient.get(`session:${claims.id}:${claims.sid}`);
       if (active === null) return next(new Error('unauthorized'));
     }
