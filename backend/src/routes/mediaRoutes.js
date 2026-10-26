@@ -5,6 +5,7 @@ const fs = require('fs');
 const router = express.Router();
 const mediaController = require('../controllers/mediaController');
 const { authMiddleware } = require('../middleware/authMiddleware');
+const rateLimiter = require('../middleware/rateLimiter');
 const virusScanMiddleware = require('../middleware/virusScan');
 
 // Ensure staging directory exists
@@ -38,7 +39,7 @@ const upload = multer({
 });
 
 // Route for video upload
-router.post('/upload', authMiddleware, upload.single('video'), virusScanMiddleware, mediaController.uploadVideo);
+router.post('/upload', authMiddleware, rateLimiter.action('upload-video', { ip: 20, user: 10, window: 3600 }), upload.single('video'), virusScanMiddleware, mediaController.uploadVideo);
 router.get('/jobs/:id', authMiddleware, mediaController.getJob);
 router.get('/health', mediaController.healthCheck);
 

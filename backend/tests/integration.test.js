@@ -79,7 +79,7 @@ describe('Integration Tests: Core Features', () => {
 
   beforeAll(() => {
     token = jwt.sign(
-      { id: 1, verification_status: 'verified' },
+      { sid: 'test-session', id: 1, verification_status: 'verified' },
       process.env.JWT_SECRET || 'testsecret'
     );
   });

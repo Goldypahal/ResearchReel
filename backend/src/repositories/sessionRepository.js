@@ -129,6 +129,17 @@ SessionRepository.prototype.revokeOwned = async function revokeOwned(userId, ses
   return rows[0] ? rows[0].sid : undefined;
 };
 
+/** Revokes the session with this sid (one device). Returns the sid, or null if none was active. */
+SessionRepository.prototype.revokeBySid = async function revokeBySid(userId, sid) {
+  const { rows } = await db.query(
+    `UPDATE user_sessions SET revoked_at = NOW()
+     WHERE user_id = $1 AND sid = $2::uuid AND revoked_at IS NULL
+     RETURNING sid`,
+    [userId, sid]
+  );
+  return rows[0] ? rows[0].sid : null;
+};
+
 /** Revokes every session except the one with keepSid; returns the revoked sids. */
 SessionRepository.prototype.revokeOthers = async function revokeOthers(userId, keepSid) {
   const { rows } = await db.query(

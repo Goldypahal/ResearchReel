@@ -1,5 +1,7 @@
 // Environment for real-infrastructure tests. Loaded before any app module.
 process.env.NODE_ENV = 'test';
+// Off by default; rateLimits.db.test.js switches them on around its own requests.
+process.env.DISABLE_RATE_LIMITS = 'true';
 process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/researchreel_test';
 process.env.REDIS_URL = process.env.TEST_REDIS_URL || 'redis://localhost:6379/15';
 process.env.JWT_SECRET = 'integration-test-jwt-secret-0123456789abcdef';

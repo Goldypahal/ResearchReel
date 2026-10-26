@@ -112,16 +112,23 @@ const consumeCode = async (key, submitted) => {
 };
 
 const register = async ({ email, username, password, full_name }) => {
-  const userExists = await db.query('SELECT * FROM users WHERE email = $1 OR username = $2', [email, username]);
+  const userExists = await db.query('SELECT id FROM users WHERE lower(email) = lower($1) OR lower(username) = lower($2)', [email, username]);
   if (userExists.rows.length > 0) {
     throw new AuthError('User already exists', 409);
   }
 
   const passwordHash = await argon2.hash(password);
-  const newUser = await db.query(
-    'INSERT INTO users (email, username, full_name, password_hash, verification_status) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, username, verification_status',
-    [email, username, full_name, passwordHash, 'unverified']
-  );
+  let newUser;
+  try {
+    newUser = await db.query(
+      'INSERT INTO users (email, username, full_name, password_hash, verification_status) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, username, verification_status',
+      [email, username, full_name, passwordHash, 'unverified']
+    );
+  } catch (err) {
+    // Two sign-ups racing for the same email/username: the unique index decides.
+    if (err.code === '23505') throw new AuthError('User already exists', 409);
+    throw err;
+  }
 
   const user = newUser.rows[0];
   try {
@@ -146,27 +153,28 @@ const verifyOTP = async ({ email, otp, reqInfo }) => {
   }
 
   // Only promote accounts that are still unverified; never downgrade a student/researcher badge.
-  await db.query("UPDATE users SET verification_status = 'verified' WHERE email = $1 AND verification_status = 'unverified'", [email]);
+  await db.query("UPDATE users SET verification_status = 'verified' WHERE lower(email) = lower($1) AND verification_status = 'unverified'", [email]);
 
-  const userRes = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+  const userRes = await db.query('SELECT * FROM users WHERE lower(email) = lower($1)', [email]);
   const user = toPublicUser(userRes.rows[0]);
   const { accessToken, refreshToken } = await createTokenPair(user, reqInfo);
 
   return { user, accessToken, refreshToken };
 };
 
-const login = async ({ email, password, reqInfo }) => {
-  const userRes = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-  if (userRes.rows.length === 0) {
-    throw new AuthError('Invalid credentials', 401);
-  }
+let cachedDummyHash = null;
+const dummyHash = async () => {
+  if (!cachedDummyHash) cachedDummyHash = await argon2.hash(crypto.randomBytes(16).toString('hex'));
+  return cachedDummyHash;
+};
 
+const login = async ({ email, password, reqInfo }) => {
+  const userRes = await db.query('SELECT * FROM users WHERE lower(email) = lower($1)', [email]);
   const row = userRes.rows[0];
-  if (row.is_deleted) {
-    throw new AuthError('Invalid credentials', 401);
-  }
-  const isValidPassword = await argon2.verify(row.password_hash, password);
-  if (!isValidPassword) {
+  // Always run one password check so response time doesn't reveal whether an account exists.
+  const hash = row && !row.is_deleted && row.password_hash ? row.password_hash : await dummyHash();
+  const isValidPassword = await argon2.verify(hash, password).catch(() => false);
+  if (!row || row.is_deleted || !isValidPassword) {
     throw new AuthError('Invalid credentials', 401);
   }
 
@@ -188,7 +196,7 @@ const refreshTokens = async (token, reqInfo) => {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET);
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch (err) {
     throw new AuthError('Invalid or expired refresh token', 401);
   }
@@ -211,9 +219,13 @@ const refreshTokens = async (token, reqInfo) => {
     throw new AuthError('Active session not found or revoked', 401);
   }
 
-  const userRes = await db.query('SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE id = $1', [userId]);
+  const userRes = await db.query(
+    'SELECT id, email, username, verification_status, subscription_tier, role FROM users WHERE id = $1 AND (is_deleted IS NOT TRUE)',
+    [userId]
+  );
   if (userRes.rows.length === 0) {
-    throw new AuthError('User not found', 404);
+    await sessionRepository.revokeSession(dbSession.id);
+    throw new AuthError('Session revoked or expired', 401);
   }
 
   const user = userRes.rows[0];
@@ -222,18 +234,27 @@ const refreshTokens = async (token, reqInfo) => {
   return { user, accessToken, refreshToken: newRefreshToken };
 };
 
+/**
+ * Signs out one device: the session named by the access token's sid and/or
+ * the one holding this refresh token. Never touches the user's other devices.
+ */
 const revokeSession = async (userId, sid, refreshToken) => {
+  const sids = new Set();
   if (userId && sid) {
-    await redisClient.del(`session:${userId}:${sid}`);
+    sids.add(sid);
+    const owned = await sessionRepository.revokeBySid(userId, sid);
+    if (owned) sids.add(owned);
   }
   if (refreshToken) {
     const dbSession = await sessionRepository.findActiveSession(refreshToken);
     if (dbSession) {
       await sessionRepository.revokeSession(dbSession.id);
+      if (dbSession.sid) sids.add(dbSession.sid);
+      await dropRedisSessions(dbSession.user_id, [...sids]);
+      return;
     }
-  } else if (userId) {
-    await sessionRepository.revokeAllUserSessions(userId);
   }
+  if (userId) await dropRedisSessions(userId, [...sids]);
 };
 
 const dropRedisSessions = async (userId, sids) => {
@@ -302,7 +323,7 @@ const deleteAccount = async (userId, password) => {
 
 /** Re-sends the sign-up code. Silent for unknown or already-verified emails so it can't enumerate accounts. */
 const resendVerification = async (email) => {
-  const res = await db.query('SELECT verification_status, is_deleted FROM users WHERE email = $1', [email]);
+  const res = await db.query('SELECT verification_status, is_deleted FROM users WHERE lower(email) = lower($1)', [email]);
   const row = res.rows[0];
   if (!row || row.is_deleted || row.verification_status !== 'unverified') return;
   await sendOTP(email, await issueCode(`otp:${email}`));
@@ -312,7 +333,7 @@ const RESET_TTL_SECONDS = 15 * 60;
 
 /** Emails a password-reset code. Always succeeds from the caller's view (no account enumeration). */
 const requestPasswordReset = async (email) => {
-  const res = await db.query('SELECT id, is_deleted FROM users WHERE email = $1', [email]);
+  const res = await db.query('SELECT id, is_deleted FROM users WHERE lower(email) = lower($1)', [email]);
   const row = res.rows[0];
   if (!row || row.is_deleted) return;
   await sendPasswordReset(email, await issueCode(`pwreset:${email}`, RESET_TTL_SECONDS));
@@ -326,7 +347,7 @@ const resetPassword = async ({ email, code, newPassword }) => {
   if (!(await consumeCode(`pwreset:${email}`, code))) {
     throw new AuthError('That reset code is incorrect or has expired. Request a new one.', 400);
   }
-  const res = await db.query('SELECT id FROM users WHERE email = $1 AND (is_deleted IS NOT TRUE)', [email]);
+  const res = await db.query('SELECT id FROM users WHERE lower(email) = lower($1) AND (is_deleted IS NOT TRUE)', [email]);
   const row = res.rows[0];
   if (!row) throw new AuthError('That reset code is incorrect or has expired. Request a new one.', 400);
   // A reset proves control of the inbox, so it also confirms the email.

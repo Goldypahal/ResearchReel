@@ -37,7 +37,8 @@ app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody =
 app.use(express.urlencoded({ extended: true }));
 
 // Apply rate limiting to all API routes
-app.use('/api', rateLimiter(150, 60));
+// Backstop across the whole API; individual actions have tighter named limits.
+app.use('/api', rateLimiter.global(600, 60));
 
 const path = require('path');
 const { requireSignedLink } = require('./utils/fileAccess');
