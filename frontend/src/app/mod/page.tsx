@@ -73,6 +73,7 @@ export default function ModPage() {
 
   useEffect(() => {
     if (isStaff) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
       fetchData();
     }
   }, [isStaff, fetchData]);

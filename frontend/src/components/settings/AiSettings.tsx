@@ -38,6 +38,7 @@ export default function AiSettings() {
     setError(null);
     reelsApi.getAutomation().then(setSettings).catch((err) => setError(errorMessage(err)));
   };
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(load, []);
 
   const update = async (patch: Parameters<typeof reelsApi.updateAutomation>[0], label: string) => {

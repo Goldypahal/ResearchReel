@@ -35,10 +35,13 @@ function SearchInner() {
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { setDraft(q); }, [q]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { setRecent(readRecent()); }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
     if (!q.trim()) { setResults(null); setPeople(null); return; }
     let cancelled = false;
     setResults(null);

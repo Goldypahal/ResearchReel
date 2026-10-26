@@ -37,3 +37,6 @@ Thumbs.db
 dump.rdb
 backend/public/uploads/*
 !backend/public/uploads/.gitkeep
+
+# Redis snapshots
+*.rdb

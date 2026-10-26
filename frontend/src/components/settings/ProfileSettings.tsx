@@ -25,6 +25,7 @@ export default function ProfileSettings() {
 
   useEffect(() => {
     if (!user) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
     setFullName(user.full_name || '');
     setInstitution(user.institution || '');
     setBio(user.bio || '');

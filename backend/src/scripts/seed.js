@@ -1,7 +1,15 @@
 const db = require('../config/db');
 const argon2 = require('argon2');
 
+/**
+ * Development seed data: demo accounts (shared password Science123!) and
+ * sample content. Never run this against a real deployment.
+ */
 async function seed() {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
+    console.error('Refusing to seed demo accounts with NODE_ENV=production.');
+    process.exit(1);
+  }
   console.log('Starting ResearchReel database seeding...');
   
   try {

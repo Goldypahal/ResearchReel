@@ -61,6 +61,7 @@ export function SocialProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!user) {
        
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
       setStories([]);
       setUnreadNotifications(0);
       setUnreadMessages(0);

@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const redisClient = require('../config/redisClient');
-const os = require('os');
 
 router.get('/health', async (req, res) => {
   const healthDetails = {};
@@ -17,7 +16,7 @@ router.get('/health', async (req, res) => {
       latency_ms: Date.now() - start
     };
   } catch (err) {
-    overallStatus = 'DEGRADED';
+    overallStatus = 'DOWN';
     healthDetails.database = {
       status: 'DOWN',
       error: err.message
@@ -33,37 +32,29 @@ router.get('/health', async (req, res) => {
       latency_ms: Date.now() - start
     };
   } catch (err) {
-    overallStatus = 'DEGRADED';
+    overallStatus = 'DOWN';
     healthDetails.redis = {
       status: 'DOWN',
       error: err.message
     };
   }
 
-  // 3. RAG Service Check
-  const ragUrl = process.env.RAG_SERVICE_URL || 'http://rag-service:8000';
-  try {
-    const start = Date.now();
-    // Using native global fetch with a 3-second timeout signal
-    const response = await fetch(`${ragUrl}/api/ai/health`, {
-      signal: AbortSignal.timeout(3000)
-    });
-    if (response.ok) {
-      const body = await response.json();
-      healthDetails.rag_service = {
-        status: 'UP',
-        latency_ms: Date.now() - start,
-        details: body
-      };
-    } else {
-      throw new Error(`RAG Service responded with HTTP ${response.status}`);
+  // 3. RAG Service Check (optional: only degrades)
+  // RAG_SERVICE_URL points at the service's /api/v1 prefix; its health route lives at the root.
+  if (process.env.RAG_SERVICE_URL) {
+    try {
+      const start = Date.now();
+      const response = await fetch(`${new URL(process.env.RAG_SERVICE_URL).origin}/api/ai/health`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (!response.ok) throw new Error(`RAG service responded with HTTP ${response.status}`);
+      healthDetails.rag_service = { status: 'UP', latency_ms: Date.now() - start };
+    } catch (err) {
+      if (overallStatus === 'UP') overallStatus = 'DEGRADED';
+      healthDetails.rag_service = { status: 'DOWN', error: err.message };
     }
-  } catch (err) {
-    overallStatus = 'DEGRADED';
-    healthDetails.rag_service = {
-      status: 'DOWN',
-      error: err.message
-    };
+  } else {
+    healthDetails.rag_service = { status: 'NOT_CONFIGURED' };
   }
 
   // 4. Elasticsearch Check
@@ -82,7 +73,7 @@ router.get('/health', async (req, res) => {
         throw new Error(`Elasticsearch responded with HTTP ${response.status}`);
       }
     } catch (err) {
-      overallStatus = 'DEGRADED';
+      if (overallStatus === 'UP') overallStatus = 'DEGRADED';
       healthDetails.elasticsearch = {
         status: 'DOWN',
         error: err.message
@@ -94,25 +85,10 @@ router.get('/health', async (req, res) => {
     };
   }
 
-  // 5. System/Process Metrics
-  healthDetails.system = {
-    uptime_seconds: process.uptime(),
-    memory_usage_mb: {
-      rss: Math.round(process.memoryUsage().rss / 1024 / 1024),
-      heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
-      heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-      external: Math.round(process.memoryUsage().external / 1024 / 1024)
-    },
-    os: {
-      platform: process.platform,
-      arch: process.arch,
-      load_avg: os.loadavg(),
-      free_memory_gb: Math.round(os.freemem() / 1024 / 1024 / 1024 * 100) / 100,
-      total_memory_gb: Math.round(os.totalmem() / 1024 / 1024 / 1024 * 100) / 100
-    }
-  };
+  healthDetails.uptime_seconds = Math.round(process.uptime());
 
-  const statusCode = overallStatus === 'UP' ? 200 : 503;
+  // Only a missing database or Redis makes the API unusable; optional services just degrade it.
+  const statusCode = overallStatus === 'DOWN' ? 503 : 200;
   res.status(statusCode).json({
     status: overallStatus,
     timestamp: new Date().toISOString(),

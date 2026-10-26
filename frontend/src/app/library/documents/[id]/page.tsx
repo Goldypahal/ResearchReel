@@ -76,6 +76,7 @@ export default function DocumentReaderPage() {
       else setError(errorMessage(err));
     }
   }, [id]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { load(); }, [load]);
 
   // While text extraction runs, refresh every couple of seconds.

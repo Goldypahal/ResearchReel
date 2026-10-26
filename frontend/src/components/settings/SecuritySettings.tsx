@@ -31,6 +31,7 @@ export default function SecuritySettings() {
     setSessionsError(null);
     try { setSessions(await authApi.sessions()); } catch (err) { setSessionsError(errorMessage(err)); }
   }, []);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
   const changePassword = async (e: React.FormEvent) => {

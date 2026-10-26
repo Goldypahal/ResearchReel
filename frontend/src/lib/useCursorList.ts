@@ -46,6 +46,7 @@ export function useCursorList<T extends { id: string }>(
   useEffect(() => {
     if (!enabled) return;
      
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
     setInitialLoading(true);
     setItems([]);
     setCursor(null);

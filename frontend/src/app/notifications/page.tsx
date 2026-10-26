@@ -58,6 +58,7 @@ export default function NotificationsPage() {
       setError(errorMessage(err));
     }
   }, []);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { load(); }, [load]);
 
   // Seeing the page marks everything read (the list keeps its "new" styling until you leave).

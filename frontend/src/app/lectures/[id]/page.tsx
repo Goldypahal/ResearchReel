@@ -50,6 +50,7 @@ function Questions({ lecture }: { lecture: Lecture }) {
 
   useEffect(() => {
      
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
     load();
     // Keep the thread fresh while the lecture is running.
     if (lecture.status !== 'live') return;
@@ -214,6 +215,7 @@ export default function LecturePage() {
     }
   }, [id]);
    
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now()), 30000);

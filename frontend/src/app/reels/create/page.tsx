@@ -167,6 +167,7 @@ function SceneEditor({ draft, onChange }: { draft: ReelDraft; onChange: (d: Reel
   const lengthOk = total >= MIN_S && total <= MAX_S;
   const locked = draft.status === 'generating';
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { setTitle(draft.title); setScenes(draft.scenes || []); setSelected(0); }, [draft.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const patch = (i: number, p: Partial<ReelScene>) => setScenes((s) => s.map((x, n) => (n === i ? { ...x, ...p } : x)));

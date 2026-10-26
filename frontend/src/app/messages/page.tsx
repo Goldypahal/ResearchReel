@@ -77,6 +77,7 @@ function Thread({ conversation, onActivity }: { conversation: Conversation; onAc
     }
   }, [conversation.id]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
   useEffect(() => { setMessages(null); load(); }, [load]);
 
   // Live updates for this conversation.

@@ -1,168 +1,191 @@
-version: '3.8'
+# ResearchReel — full stack behind one public entry point (nginx on ${PUBLIC_PORT:-8080}).
+# Copy .env.example to .env and fill in the required values first.
+#   docker compose up --build -d
+# Only the gateway is published; databases and internal services stay on the private network.
+# CI publishes images to GHCR; a server can run them with
+#   IMAGE_PREFIX=ghcr.io/goldypahal/researchreel IMAGE_TAG=<commit sha> docker compose pull && docker compose up -d --no-build
+
+x-db-url: &db_url postgresql://${POSTGRES_USER:-researchreel}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-researchreel}
+x-redis-url: &redis_url redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379
 
 services:
-  # Database Service (Section 9.0)
   postgres:
-    image: postgres:15-alpine
-    container_name: researchreel-db
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}
+      POSTGRES_USER: ${POSTGRES_USER:-researchreel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-researchreel}
-    ports:
-      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ${PWD}/docs/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    networks:
-      - researchreel-network
+    networks: [internal]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-researchreel}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  # Redis Cache & OTP Broker (Section 9.1)
   redis:
     image: redis:7-alpine
-    container_name: researchreel-cache
+    restart: unless-stopped
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}
-    command: redis-server --requirepass ${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}
-    ports:
-      - "6379:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     volumes:
       - redis_data:/data
-    networks:
-      - researchreel-network
+    networks: [internal]
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a $${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_} ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  # Python RAG Microservice (Section 4.0)
+  # Malware scanning for uploads. It takes a few minutes to load signatures on first start;
+  # uploads are refused (503) until it is ready rather than accepted unscanned.
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    volumes:
+      - clamav_db:/var/lib/clamav
+    networks: [internal]
+
+  # Applies database migrations, then exits. The API waits for it.
+  migrate:
+    image: ${IMAGE_PREFIX:-researchreel}/api:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend
+    command: ["npx", "node-pg-migrate", "up", "-m", "migrations"]
+    environment:
+      DATABASE_URL: *db_url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+    restart: "no"
+
   rag-service:
+    image: ${IMAGE_PREFIX:-researchreel}/rag:${IMAGE_TAG:-latest}
     build:
       context: ./backend/research_rag
-      dockerfile: Dockerfile
-    container_name: researchreel-rag
+    restart: unless-stopped
     environment:
-      - PORT=8000
-      - RAG_API_KEY=${RAG_API_KEY:?Set RAG_API_KEY in .env}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - QDRANT_URL=${QDRANT_URL}
-      - QDRANT_API_KEY=${QDRANT_API_KEY}
-    ports:
-      - "8000:8000"
+      PORT: 8000
+      RAG_API_KEY: ${RAG_API_KEY:?Set RAG_API_KEY in .env}
+      DATABASE_URL: *db_url
+      REDIS_URL: *redis_url
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - researchreel-network
+    networks: [internal]
 
-  # Node.js API Gateway & Main Backend (Section 2.0)
-  api-gateway:
+  api:
+    image: ${IMAGE_PREFIX:-researchreel}/api:${IMAGE_TAG:-latest}
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    container_name: researchreel-gateway
-    environment:
-      - PORT=5000
-      - NODE_ENV=production
-      - JWT_SECRET=${JWT_SECRET}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - RAG_SERVICE_URL=http://rag-service:8000/api/v1
-      - RAG_API_KEY=${RAG_API_KEY:?Set RAG_API_KEY in .env}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
-      - START_WORKER=false
-    ports:
-      - "5000:5000"
+    restart: unless-stopped
+    environment: &api_env
+      NODE_ENV: production
+      PORT: 5000
+      START_WORKER: "false"
+      DATABASE_URL: *db_url
+      REDIS_URL: *redis_url
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
+      FRONTEND_URL: ${PUBLIC_URL:-http://localhost:8080}
+      PUBLIC_API_ORIGIN: ${PUBLIC_URL:-http://localhost:8080}
+      ORCID_REDIRECT_URI: ${PUBLIC_URL:-http://localhost:8080}/api/v1/auth/orcid/callback
+      ORCID_CLIENT_ID: ${ORCID_CLIENT_ID:-}
+      ORCID_CLIENT_SECRET: ${ORCID_CLIENT_SECRET:-}
+      ORCID_BASE_URL: ${ORCID_BASE_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      RAG_SERVICE_URL: http://rag-service:8000/api/v1
+      RAG_API_KEY: ${RAG_API_KEY:?Set RAG_API_KEY in .env}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_SCHOLAR_PRICE_ID: ${STRIPE_SCHOLAR_PRICE_ID:-}
+      STRIPE_PRO_PRICE_ID: ${STRIPE_PRO_PRICE_ID:-}
+      STRIPE_ENTERPRISE_PRICE_ID: ${STRIPE_ENTERPRISE_PRICE_ID:-}
+      ACADEMIC_EMAIL_DOMAINS: ${ACADEMIC_EMAIL_DOMAINS:-}
     volumes:
       - media_uploads:/app/public/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+      clamav:
+        condition: service_started
       rag-service:
         condition: service_started
-    networks:
-      - researchreel-network
+    networks: [internal]
 
-  # Dedicated Background Task Worker (BullMQ + FFmpeg)
-  video-worker:
+  # BullMQ worker: video rendering (FFmpeg) and scheduled reel uploads.
+  worker:
+    image: ${IMAGE_PREFIX:-researchreel}/api:${IMAGE_TAG:-latest}
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    container_name: researchreel-worker
+    command: ["node", "src/worker.js"]
+    restart: unless-stopped
     environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - START_WORKER=true
+      <<: *api_env
+      START_WORKER: "true"
     volumes:
       - media_uploads:/app/public/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-    networks:
-      - researchreel-network
+    networks: [internal]
 
-  # Next.js Frontend Web Application (Section 2.0)
-  frontend:
+  web:
+    image: ${IMAGE_PREFIX:-researchreel}/web:${IMAGE_TAG:-latest}
     build:
       context: ./frontend
-      dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000/api/v1}
-        NEXT_PUBLIC_WSS_URL: ${NEXT_PUBLIC_WSS_URL:-http://localhost:5000}
-    container_name: researchreel-web
-    environment:
-      - NEXT_PUBLIC_CROSSREF_MAILTO=${NEXT_PUBLIC_CROSSREF_MAILTO}
-      - NEXT_PUBLIC_ORCID_CLIENT_ID=${NEXT_PUBLIC_ORCID_CLIENT_ID}
-      - NEXT_PUBLIC_ENABLE_AI_CHAT=${NEXT_PUBLIC_ENABLE_AI_CHAT:-true}
-      - NEXT_PUBLIC_ENABLE_REALTIME_NOTIFS=${NEXT_PUBLIC_ENABLE_REALTIME_NOTIFS:-true}
-    ports:
-      - "3000:3000"
+        NEXT_PUBLIC_API_URL: ${PUBLIC_URL:-http://localhost:8080}/api/v1
+        NEXT_PUBLIC_WSS_URL: ${PUBLIC_URL:-http://localhost:8080}
+        NEXT_PUBLIC_SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+        NEXT_PUBLIC_SENTRY_DSN: ${SENTRY_DSN:-}
+        NEXT_PUBLIC_POSTHOG_KEY: ${POSTHOG_KEY:-}
+        NEXT_PUBLIC_POSTHOG_HOST: ${POSTHOG_HOST:-}
+    restart: unless-stopped
     depends_on:
-      - api-gateway
-    networks:
-      - researchreel-network
+      - api
+    networks: [internal]
 
-  # Single public entry point: routes /api and /socket.io to the API, everything else to the web app
+  # Single public entry point: /api, /socket.io and /uploads go to the API, everything else to the web app.
   gateway:
     image: nginx:1.27-alpine
-    container_name: researchreel-gateway-proxy
+    restart: unless-stopped
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "8080:80"
+      - "${PUBLIC_PORT:-8080}:80"
     depends_on:
-      - api-gateway
-      - frontend
-    networks:
-      - researchreel-network
+      - api
+      - web
+    networks: [internal]
 
 networks:
-  researchreel-network:
+  internal:
     driver: bridge
 
 volumes:
   postgres_data:
-    driver: local
   redis_data:
-    driver: local
+  clamav_db:
   media_uploads:
-    driver: local

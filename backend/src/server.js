@@ -33,13 +33,10 @@ server.listen(PORT, () => {
     console.log('HTTPS enabled');
   }
 
-  // Load background task queue worker
+  // In development one process does everything. In production run `node src/worker.js`
+  // separately and set START_WORKER=false here, so background jobs run exactly once.
   if (process.env.START_WORKER !== 'false') {
-    require('./workers/videoWorker');
+    require('./worker');
   }
-
-  // Start Reel Auto-Upload Scheduler
-  const reelScheduler = require('./services/reelScheduler');
-  reelScheduler.start();
 });
 

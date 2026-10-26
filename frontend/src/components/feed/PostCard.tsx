@@ -130,6 +130,7 @@ export default function PostCard({ post, onDeleted, onUnsaved, defaultCommentsOp
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
     if (defaultCommentsOpen) loadComments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

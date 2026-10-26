@@ -13,6 +13,10 @@ dotenv.config();
 
 const app = express();
 
+// Behind nginx/a load balancer, use X-Forwarded-For so rate limits and session
+// records see the real client IP. Defaults to trusting private-network proxies only.
+app.set('trust proxy', process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal');
+
 // Request Pipeline Order (Section 2 & 53)
 app.use(requestIdMiddleware);
 app.use(helmet());
