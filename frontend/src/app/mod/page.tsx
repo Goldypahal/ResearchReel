@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { errorMessage, fetchApi } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 
 interface Report {
@@ -28,10 +29,10 @@ interface UserRecord {
   created_at: string;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
 export default function ModPage() {
-  const { user, token, isLoading: authLoading } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
+  const isStaff = user?.role === 'admin' || user?.role === 'moderator';
   const router = useRouter();
 
   const [reports, setReports] = useState<Report[]>([]);
@@ -53,85 +54,53 @@ export default function ModPage() {
 
   // 2. Fetch Data
   const fetchData = useCallback(async () => {
-    if (!token) return;
+    if (!isStaff) return;
     setLoading(true);
     setErrorMsg('');
     try {
-      // Fetch Reports
-      const reportsRes = await fetch(`${API_BASE}/moderation/reports`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const reportsData = await reportsRes.json();
-      if (!reportsRes.ok) throw new Error(reportsData.message || 'Failed to fetch reports');
-      setReports(reportsData.data || []);
-
-      // Fetch Users
-      const usersRes = await fetch(`${API_BASE}/moderation/users`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const usersData = await usersRes.json();
-      if (!usersRes.ok) throw new Error(usersData.message || 'Failed to fetch users');
-      setUsers(usersData.data || []);
-
+      const [r, u] = await Promise.all([
+        fetchApi<Report[]>('/moderation/reports'),
+        fetchApi<UserRecord[]>('/moderation/users'),
+      ]);
+      setReports(r || []);
+      setUsers(u || []);
     } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'An error occurred while loading data.');
+      setErrorMsg(errorMessage(err, 'An error occurred while loading data.'));
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [isStaff]);
 
   useEffect(() => {
-    if (token && user && (user.role === 'admin' || user.role === 'moderator')) {
+    if (isStaff) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
       fetchData();
     }
-  }, [token, user, fetchData]);
+  }, [isStaff, fetchData]);
 
   // 3. Resolve Report
   const handleResolveReport = async (reportId: string, action: 'delete_post' | 'dismiss') => {
-    if (!token) return;
     try {
-      const res = await fetch(`${API_BASE}/moderation/reports/${reportId}/resolve`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ action })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to resolve report');
+      await fetchApi(`/moderation/reports/${reportId}/resolve`, { method: 'POST', body: JSON.stringify({ action }) });
 
       setNotification(`Report successfully resolved with: ${action}`);
       setTimeout(() => setNotification(''), 3000);
       fetchData();
     } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Failed to resolve report');
+      setErrorMsg(errorMessage(err, 'Failed to resolve report'));
     }
   };
 
   // 4. Verify/Moderate User
   const handleVerifyUser = async (userId: string, status: string, role?: string) => {
-    if (!token) return;
     try {
-      const res = await fetch(`${API_BASE}/moderation/users/${userId}/verify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ status, role })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to update user status');
+      await fetchApi(`/moderation/users/${userId}/verify`, { method: 'POST', body: JSON.stringify({ status, role }) });
 
       setNotification(`User status updated to: ${status}`);
       setTimeout(() => setNotification(''), 3000);
       fetchData();
     } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Failed to update user status');
+      setErrorMsg(errorMessage(err, 'Failed to update user status'));
     }
   };
 

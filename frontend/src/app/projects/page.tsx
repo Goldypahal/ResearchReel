@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Users, Plus, FileText, CheckSquare, Folder, Loader2 } from 'lucide-react';
+import { Users, Plus, CheckSquare, Folder, Loader2 } from 'lucide-react';
 import { projectsApi, Project } from '@/lib/api/projects';
 
 export default function ProjectsPage() {
@@ -16,9 +16,8 @@ export default function ProjectsPage() {
       try {
         const data = await projectsApi.getProjects();
         setProjects(data);
-      } catch (err: any) {
-        console.error('Projects Error:', err);
-        setError(err.message || 'Failed to load projects');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load projects');
       } finally {
         setIsLoading(false);
       }
@@ -94,10 +93,17 @@ export default function ProjectsPage() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2">
-                <span className="flex items-center gap-1"><Folder size={14} /> {proj.research_field || 'General'}</span>
+              <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground pt-2">
+                {proj.research_field && <span className="flex items-center gap-1"><Folder size={14} /> {proj.research_field}</span>}
+                <span className="flex items-center gap-1"><Users size={14} /> {proj.member_count || 1}</span>
+                <span className="flex items-center gap-1"><CheckSquare size={14} /> {proj.done_count || 0}/{proj.task_count || 0} done</span>
                 <span className="flex items-center gap-1 uppercase text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded text-indigo-400 font-semibold">{proj.visibility}</span>
               </div>
+              {!!proj.task_count && (
+                <div className="h-1 overflow-hidden rounded-full bg-[var(--border)]">
+                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.round(((proj.done_count || 0) / proj.task_count) * 100)}%` }} />
+                </div>
+              )}
             </div>
           ))}
         </div>

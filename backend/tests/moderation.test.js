@@ -81,7 +81,7 @@ describe('Integration Tests: Content Moderation & Reporting', () => {
     db.query.mockResolvedValueOnce({ rows: [{ id: 'report-id-123', reason: 'inappropriate', status: 'pending' }] });
 
     const res = await request(app)
-      .post('/api/moderation/report')
+      .post('/api/v1/moderation/report')
       .set('Authorization', `Bearer ${userToken}`)
       .send({ post_id: 'post-id-123', reason: 'inappropriate', details: 'Contains offensive text' });
 
@@ -93,7 +93,7 @@ describe('Integration Tests: Content Moderation & Reporting', () => {
 
   it('should prevent guest user from submitting a report', async () => {
     const res = await request(app)
-      .post('/api/moderation/report')
+      .post('/api/v1/moderation/report')
       .send({ post_id: 'post-id-123', reason: 'inappropriate' });
 
     expect(res.statusCode).toBe(401);
@@ -102,7 +102,7 @@ describe('Integration Tests: Content Moderation & Reporting', () => {
 
   it('should prevent non-admin from listing reports', async () => {
     const res = await request(app)
-      .get('/api/moderation/reports')
+      .get('/api/v1/moderation/reports')
       .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(403);
@@ -117,7 +117,7 @@ describe('Integration Tests: Content Moderation & Reporting', () => {
     });
 
     const res = await request(app)
-      .get('/api/moderation/reports')
+      .get('/api/v1/moderation/reports')
       .set('Authorization', `Bearer ${adminToken}`);
 
     expect(res.statusCode).toBe(200);
@@ -135,7 +135,7 @@ describe('Integration Tests: Content Moderation & Reporting', () => {
     db.query.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
-      .post('/api/moderation/reports/report-id-123/resolve')
+      .post('/api/v1/moderation/reports/report-id-123/resolve')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ action: 'delete_post' });
 
@@ -153,7 +153,7 @@ describe('Integration Tests: Content Moderation & Reporting', () => {
     });
 
     const res = await request(app)
-      .post('/api/moderation/users/user-id-456/verify')
+      .post('/api/v1/moderation/users/user-id-456/verify')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: 'verified', role: 'moderator' });
 

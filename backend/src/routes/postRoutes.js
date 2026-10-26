@@ -1,25 +1,41 @@
 const express = require('express');
 const router = express.Router();
 const postController = require('../controllers/postController');
-const { authMiddleware } = require('../middleware/authMiddleware');
+const virusScan = require('../middleware/virusScan');
+const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validationMiddleware');
-const { postSchema, documentSchema } = require('../utils/validators');
+const { postSchema } = require('../utils/validators');
 
-// Public Feed (Authentication is optional for view)
-router.get('/feed', postController.getFeed);
+// Reading is public; signed-in viewers get personalised flags (reacted, saved)
+router.get('/feed', optionalAuth, postController.getFeed);
+router.get('/trending', optionalAuth, postController.getTrending);
+router.get('/tags/trending', postController.getTrendingTags);
+router.get('/saved', authMiddleware, postController.getSaved);
 
-// Private Routes (Require Token)
+// Writing
 router.post('/create', authMiddleware, validate(postSchema), postController.createPost);
+
+const os = require('os');
+const path = require('path');
+const multer = require('multer');
+const imageUpload = multer({ dest: path.join(os.tmpdir(), 'researchreel-uploads'), limits: { fileSize: 10 * 1024 * 1024, files: 4 } });
+router.post('/media', authMiddleware, (req, res, next) => imageUpload.array('images', 4)(req, res, (err) => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') { err.statusCode = 413; err.message = 'Images are limited to 10 MB each.'; }
+  if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') { err.statusCode = 400; err.message = 'Attach up to 4 images.'; }
+  err.statusCode = err.statusCode || 400;
+  next(err);
+}), virusScan, postController.uploadPostImages);
 router.post('/react', authMiddleware, postController.reactToPost);
-router.post('/document/upload', authMiddleware, validate(documentSchema), postController.uploadDocument);
-router.post('/view', (req, res, next) => {
-  // Make auth optional for tracking views
-  if (req.headers.authorization) {
-    return authMiddleware(req, res, next);
-  }
-  next();
-}, postController.viewPost);
+router.post('/view', optionalAuth, postController.viewPost);
+
+// Single post + interactions (after static paths)
+router.get('/:id', optionalAuth, postController.getPost);
+router.delete('/:id', authMiddleware, postController.deletePost);
+router.get('/:id/comments', postController.getComments);
+router.post('/:id/comments', authMiddleware, postController.addComment);
+router.delete('/:id/comments/:commentId', authMiddleware, postController.deleteComment);
+router.post('/:id/bookmark', authMiddleware, postController.bookmark);
+router.delete('/:id/bookmark', authMiddleware, postController.unbookmark);
 
 module.exports = router;
-
-

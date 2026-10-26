@@ -53,13 +53,18 @@ describe('Health Check API Endpoint', () => {
     jest.clearAllMocks();
   });
 
+  afterEach(() => {
+    delete process.env.RAG_SERVICE_URL;
+  });
+
   it('should return 200 and UP status when all downstream services are healthy', async () => {
+    process.env.RAG_SERVICE_URL = 'http://rag-service:8000/api/v1';
     db.query.mockResolvedValueOnce({ rows: [{ 1: 1 }] });
     redisClient.client.ping.mockResolvedValueOnce('PONG');
 
     // Mock native fetch for RAG and Elasticsearch
     global.fetch = jest.fn().mockImplementation((url) => {
-      if (url.includes('rag-service') || url.includes('/api/ai/health')) {
+      if (url === 'http://rag-service:8000/api/ai/health') {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -75,7 +80,7 @@ describe('Health Check API Endpoint', () => {
       return Promise.reject(new Error('Unknown url'));
     });
 
-    const response = await request(app).get('/api/health');
+    const response = await request(app).get('/api/v1/health');
 
     expect(response.status).toBe(200);
     expect(response.body.status).toBe('UP');
@@ -83,10 +88,24 @@ describe('Health Check API Endpoint', () => {
     expect(response.body.services.redis.status).toBe('UP');
     expect(response.body.services.rag_service.status).toBe('UP');
     expect(response.body.services.elasticsearch.status).toBe('UP');
-    expect(response.body.services.system).toBeDefined();
+    expect(response.body.services.uptime_seconds).toBeDefined();
+    expect(response.body.services.system).toBeUndefined();
   });
 
-  it('should return 503 and DEGRADED status when a service is DOWN', async () => {
+  it('should return 200 and DEGRADED when only an optional service is down', async () => {
+    process.env.RAG_SERVICE_URL = 'http://rag-service:8000/api/v1';
+    db.query.mockResolvedValueOnce({ rows: [{ 1: 1 }] });
+    redisClient.client.ping.mockResolvedValueOnce('PONG');
+    global.fetch = jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+    const response = await request(app).get('/api/v1/health');
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('DEGRADED');
+    expect(response.body.services.rag_service.status).toBe('DOWN');
+  });
+
+  it('should return 503 and DOWN status when the database is down', async () => {
     db.query.mockRejectedValueOnce(new Error('PostgreSql Connection Timeout'));
     redisClient.client.ping.mockResolvedValueOnce('PONG');
 
@@ -98,10 +117,10 @@ describe('Health Check API Endpoint', () => {
       });
     });
 
-    const response = await request(app).get('/api/health');
+    const response = await request(app).get('/api/v1/health');
 
     expect(response.status).toBe(503);
-    expect(response.body.status).toBe('DEGRADED');
+    expect(response.body.status).toBe('DOWN');
     expect(response.body.services.database.status).toBe('DOWN');
     expect(response.body.services.database.error).toBe('PostgreSql Connection Timeout');
     expect(response.body.services.redis.status).toBe('UP');

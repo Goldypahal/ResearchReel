@@ -1,7 +1,5 @@
-export default function ModHealthPage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold">System Health</h1>
-    </div>
-  );
+import { redirect } from 'next/navigation';
+
+export default function ModHealthRedirect() {
+  redirect('/mod');
 }

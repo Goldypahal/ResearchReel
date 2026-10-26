@@ -1,218 +1,88 @@
 "use client";
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Search, Filter, Bookmark, Bot, ExternalLink, Star, Sparkles, BookOpen, Users, PlaySquare } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { FileText, Search, Sparkles, Users } from 'lucide-react';
+import { aiApi, errorMessage, usersApi, type Recommendation, type UserCard } from '@/lib/api';
+import UserRow from '@/components/common/UserRow';
+import { EmptyState, ErrorState, SkeletonRows } from '@/components/common/States';
+import { cn, displayName } from '@/lib/utils';
 
 export default function DiscoverPage() {
-  const [activeTab, setActiveTab] = useState<'papers' | 'researchers' | 'reels' | 'projects'>('papers');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isOpenAccessOnly, setIsOpenAccessOnly] = useState(false);
-  const router = useRouter();
+  const [tab, setTab] = useState<'people' | 'papers'>('people');
+  const [q, setQ] = useState('');
+  const [suggested, setSuggested] = useState<UserCard[] | null>(null);
+  const [results, setResults] = useState<UserCard[] | null>(null);
+  const [papers, setPapers] = useState<Recommendation[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const papers = [
-    {
-      id: 'disc_1',
-      title: 'Attention Is All You Need',
-      authors: 'Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit',
-      institution: 'Google Brain / Google Research',
-      year: '2017',
-      citations: 112400,
-      abstract: 'The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. We propose the Transformer, a novel architecture based solely on attention mechanisms...',
-      openAccess: true
-    },
-    {
-      id: 'disc_2',
-      title: 'Language Models are Few-Shot Learners (GPT-3)',
-      authors: 'Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah',
-      institution: 'OpenAI',
-      year: '2020',
-      citations: 34200,
-      abstract: 'We demonstrate that scaling up language models greatly improves task-agnostic, few-shot performance, sometimes even reaching competitiveness with prior state-of-the-art fine-tuning approaches...',
-      openAccess: true
-    },
-    {
-      id: 'disc_3',
-      title: 'Deep Residual Learning for Image Recognition (ResNet)',
-      authors: 'Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun',
-      institution: 'Microsoft Research',
-      year: '2016',
-      citations: 184500,
-      abstract: 'Deeper neural networks are more difficult to train. We present a residual learning framework to ease the training of networks that are substantially deeper than those used previously...',
-      openAccess: true
-    }
-  ];
+  useEffect(() => {
+    usersApi.getSuggestions(20).then(setSuggested).catch((err) => setError(errorMessage(err)));
+    aiApi.getRecommendations(20).then(setPapers).catch(() => setPapers([]));
+  }, []);
+
+  useEffect(() => {
+    const term = q.trim();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
+    if (term.length < 2) { setResults(null); return; }
+    const t = window.setTimeout(() => usersApi.search(term, 20).then(setResults).catch(() => setResults([])), 250);
+    return () => window.clearTimeout(t);
+  }, [q]);
+
+  const people = results ?? suggested;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-12">
-      {/* Header & Search */}
-      <div className="space-y-4">
-        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-[var(--foreground)]">
-          Discover Research
-        </h1>
-        <p className="text-xs md:text-sm text-muted-foreground">
-          Explore cutting-edge academic papers, leading researchers, reels, and collaborative projects.
-        </p>
-
-        <div className="relative max-w-2xl">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search papers by keyword, DOI, author, or institution..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-11 pr-4 py-3 bg-[var(--foreground)]/5 border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:border-indigo-500/50 text-[var(--foreground)]"
-          />
-        </div>
+    <div className="mx-auto max-w-3xl space-y-6 pb-12">
+      <div>
+        <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">Discover</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Find researchers to follow and papers people are sharing.</p>
       </div>
 
-      {/* Filter Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl bg-[var(--foreground)]/[0.02] border border-[var(--border)]">
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <div className="flex items-center gap-1.5 font-semibold text-muted-foreground mr-2">
-            <Filter size={14} />
-            <span>Filters:</span>
+      <div role="tablist" className="flex gap-1 rounded-xl border border-[var(--border)] p-1">
+        {([['people', 'Researchers', Users], ['papers', 'Shared papers', FileText]] as const).map(([key, label, Icon]) => (
+          <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold', tab === key ? 'bg-indigo-600 text-white' : 'text-muted-foreground')}>
+            <Icon size={15} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'people' ? (
+        <section className="space-y-3">
+          <div className="relative">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, username or institution" aria-label="Search researchers" className="w-full rounded-xl border border-[var(--border)] bg-[var(--foreground)]/5 py-2.5 pl-10 pr-4 text-sm focus:border-indigo-500/50 focus:outline-none" />
           </div>
-
-          <select className="px-3 py-1.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[var(--foreground)] focus:outline-none">
-            <option value="all">All Topics</option>
-            <option value="ai">AI / Machine Learning</option>
-            <option value="nlp">Natural Language Processing</option>
-            <option value="cv">Computer Vision</option>
-            <option value="bio">Bioinformatics</option>
-          </select>
-
-          <select className="px-3 py-1.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-[var(--foreground)] focus:outline-none">
-            <option value="any">Any Year</option>
-            <option value="2026">2026</option>
-            <option value="2025">2025</option>
-            <option value="2024">2024</option>
-            <option value="2020-2023">2020 - 2023</option>
-          </select>
-
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={isOpenAccessOnly}
-              onChange={(e) => setIsOpenAccessOnly(e.target.checked)}
-              className="rounded accent-indigo-600"
+          <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{results ? 'Results' : 'Suggested for you'}</h2>
+          {error && !people ? <ErrorState message={error} /> : !people ? <SkeletonRows rows={6} /> : people.length === 0 ? (
+            <EmptyState
+              icon={<Users size={20} />}
+              title={results ? 'No researchers found' : 'No suggestions yet'}
+              description={results ? 'Try a different name or institution.' : 'Add research interests to your profile and we\'ll suggest people who share them.'}
+              action={!results ? <Link href="/settings" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Edit interests</Link> : undefined}
             />
-            <span>Open Access Only</span>
-          </label>
-        </div>
-      </div>
-
-      {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-[var(--border)]">
-        <button
-          onClick={() => setActiveTab('papers')}
-          className={`px-4 py-3 text-xs font-semibold border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === 'papers'
-              ? 'border-indigo-500 text-indigo-400'
-              : 'border-transparent text-muted-foreground hover:text-[var(--foreground)]'
-          }`}
-        >
-          <BookOpen size={16} />
-          <span>Papers</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('researchers')}
-          className={`px-4 py-3 text-xs font-semibold border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === 'researchers'
-              ? 'border-indigo-500 text-indigo-400'
-              : 'border-transparent text-muted-foreground hover:text-[var(--foreground)]'
-          }`}
-        >
-          <Users size={16} />
-          <span>Researchers</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('reels')}
-          className={`px-4 py-3 text-xs font-semibold border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === 'reels'
-              ? 'border-indigo-500 text-indigo-400'
-              : 'border-transparent text-muted-foreground hover:text-[var(--foreground)]'
-          }`}
-        >
-          <PlaySquare size={16} />
-          <span>Reels</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('projects')}
-          className={`px-4 py-3 text-xs font-semibold border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === 'projects'
-              ? 'border-indigo-500 text-indigo-400'
-              : 'border-transparent text-muted-foreground hover:text-[var(--foreground)]'
-          }`}
-        >
-          <Sparkles size={16} />
-          <span>Projects</span>
-        </button>
-      </div>
-
-      {/* Tab Contents: Papers */}
-      {activeTab === 'papers' && (
-        <div className="space-y-4">
-          {papers.map((paper) => (
-            <div
-              key={paper.id}
-              className="p-5 rounded-2xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] hover:border-indigo-500/30 transition-all space-y-3"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <h3 className="text-base font-bold text-[var(--foreground)] hover:text-indigo-400 cursor-pointer transition-colors" onClick={() => router.push(`/library/documents/${paper.id}`)}>
-                    {paper.title}
-                  </h3>
-                  <p className="text-xs text-muted-foreground">{paper.authors} • {paper.institution}</p>
-                </div>
-                {paper.openAccess && (
-                  <span className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full shrink-0">
-                    Open Access
-                  </span>
-                )}
-              </div>
-
-              <p className="text-xs text-muted-foreground/90 line-clamp-2 leading-relaxed">
-                {paper.abstract}
-              </p>
-
-              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]/50 text-xs">
-                <div className="flex items-center gap-4 text-muted-foreground">
-                  <span>Year: {paper.year}</span>
-                  <span>Citations: {paper.citations.toLocaleString()}</span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => router.push('/library')} 
-                    className="px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--foreground)]/5 text-muted-foreground hover:text-[var(--foreground)] flex items-center gap-1.5 transition-colors"
-                  >
-                    <Bookmark size={14} /> Save
-                  </button>
-                  <button 
-                    onClick={() => router.push(`/ai/ask?doc=${paper.id}`)} 
-                    className="px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 flex items-center gap-1.5 transition-colors"
-                  >
-                    <Bot size={14} /> Ask AI
-                  </button>
-                  <button 
-                    onClick={() => router.push(`/library/documents/${paper.id}`)} 
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium flex items-center gap-1.5 transition-colors"
-                  >
-                    <ExternalLink size={14} /> Open
-                  </button>
-                </div>
-              </div>
+          ) : (
+            <div className="divide-y divide-[var(--border)] rounded-2xl border border-[var(--border)] px-4">
+              {people.map((u) => <UserRow key={u.id} user={u} />)}
             </div>
-          ))}
-        </div>
-      )}
-
-      {activeTab !== 'papers' && (
-        <div className="py-12 text-center text-muted-foreground text-xs space-y-2">
-          <p className="font-semibold text-sm">Discovering {activeTab}...</p>
-          <p>Explore thousands of community curated {activeTab} across research domains.</p>
-        </div>
+          )}
+        </section>
+      ) : (
+        <section className="space-y-3">
+          {!papers ? <SkeletonRows rows={4} /> : papers.length === 0 ? (
+            <EmptyState icon={<Sparkles size={20} />} title="No shared papers yet" description="When researchers share papers in posts, the ones closest to your interests show up here." />
+          ) : (
+            papers.map((p) => (
+              <Link key={p.post_id} href={`/post/${p.post_id}`} className="block space-y-2 rounded-2xl border border-[var(--border)] p-5 transition-colors hover:border-indigo-500/40">
+                <p className="text-[11px] font-medium text-indigo-400">{p.reason}</p>
+                <h3 className="font-bold leading-snug">{p.title}</h3>
+                {p.abstract && <p className="line-clamp-3 text-sm text-muted-foreground">{p.abstract}</p>}
+                <p className="text-xs text-muted-foreground">
+                  Shared by {displayName(p)}{p.institution ? ` · ${p.institution}` : ''}{p.publication_year ? ` · ${p.publication_year}` : ''}{p.doi ? ` · doi:${p.doi}` : ''}
+                </p>
+              </Link>
+            ))
+          )}
+        </section>
       )}
     </div>
   );

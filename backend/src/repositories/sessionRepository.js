@@ -12,12 +12,12 @@ class SessionRepository {
   /**
    * Creates a new user session record
    */
-  async createSession({ userId, refreshToken, deviceName, ipAddress, userAgent, expiresAt }) {
+  async createSession({ userId, refreshToken, deviceName, ipAddress, userAgent, expiresAt, sid }) {
     try {
       const refreshTokenHash = this.hashToken(refreshToken);
       const query = `
-        INSERT INTO user_sessions (user_id, refresh_token_hash, device_name, ip_address, user_agent, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO user_sessions (user_id, refresh_token_hash, device_name, ip_address, user_agent, expires_at, sid)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id, user_id, device_name, expires_at, created_at;
       `;
       const result = await db.query(query, [
@@ -26,7 +26,8 @@ class SessionRepository {
         deviceName || 'Web Browser',
         ipAddress || null,
         userAgent || null,
-        expiresAt
+        expiresAt,
+        sid || null
       ]);
       return result && result.rows ? result.rows[0] : null;
     } catch (err) {
@@ -42,7 +43,7 @@ class SessionRepository {
     try {
       const refreshTokenHash = this.hashToken(refreshToken);
       const query = `
-        SELECT id, user_id, refresh_token_hash, device_name, expires_at, revoked_at
+        SELECT id, user_id, sid, refresh_token_hash, device_name, expires_at, revoked_at
         FROM user_sessions
         WHERE refresh_token_hash = $1 AND revoked_at IS NULL AND expires_at > NOW();
       `;
@@ -56,16 +57,17 @@ class SessionRepository {
   /**
    * Rotates a session refresh token and updates last_used_at timestamp
    */
-  async rotateSession(sessionId, newRefreshToken, newExpiresAt) {
+  async rotateSession(sessionId, newRefreshToken, newExpiresAt, newSid = null, { ipAddress, userAgent } = {}) {
     try {
       const newHash = this.hashToken(newRefreshToken);
       const query = `
         UPDATE user_sessions
-        SET refresh_token_hash = $1, expires_at = $2, last_used_at = NOW()
+        SET refresh_token_hash = $1, expires_at = $2, last_used_at = NOW(),
+            sid = COALESCE($4, sid), ip_address = COALESCE($5, ip_address), user_agent = COALESCE($6, user_agent)
         WHERE id = $3 AND revoked_at IS NULL
         RETURNING id, user_id, expires_at;
       `;
-      const result = await db.query(query, [newHash, newExpiresAt, sessionId]);
+      const result = await db.query(query, [newHash, newExpiresAt, sessionId, newSid, ipAddress || null, userAgent || null]);
       return result && result.rows ? result.rows[0] : null;
     } catch (err) {
       return null;
@@ -104,5 +106,38 @@ class SessionRepository {
     }
   }
 }
+
+SessionRepository.prototype.listActive = async function listActive(userId) {
+  const { rows } = await db.query(
+    `SELECT id, sid, device_name, ip_address, user_agent, created_at, last_used_at, expires_at
+     FROM user_sessions
+     WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW()
+     ORDER BY last_used_at DESC NULLS LAST`,
+    [userId]
+  );
+  return rows;
+};
+
+/** Revokes one session that belongs to userId; returns its sid (for Redis) or null. */
+SessionRepository.prototype.revokeOwned = async function revokeOwned(userId, sessionId) {
+  const { rows } = await db.query(
+    `UPDATE user_sessions SET revoked_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+     RETURNING sid`,
+    [sessionId, userId]
+  );
+  return rows[0] ? rows[0].sid : undefined;
+};
+
+/** Revokes every session except the one with keepSid; returns the revoked sids. */
+SessionRepository.prototype.revokeOthers = async function revokeOthers(userId, keepSid) {
+  const { rows } = await db.query(
+    `UPDATE user_sessions SET revoked_at = NOW()
+     WHERE user_id = $1 AND revoked_at IS NULL AND (sid IS NULL OR sid <> $2::uuid)
+     RETURNING sid`,
+    [userId, keepSid || '00000000-0000-0000-0000-000000000000']
+  );
+  return rows.map((r) => r.sid).filter(Boolean);
+};
 
 module.exports = new SessionRepository();

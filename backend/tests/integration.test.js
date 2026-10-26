@@ -52,6 +52,7 @@ jest.mock('../src/services/searchService', () => ({
 }));
 
 jest.mock('../src/services/ai/ragService', () => ({
+  isConfigured: jest.fn().mockReturnValue(true),
   query: jest.fn().mockResolvedValue({
     answer: 'This is a mock RAG answer',
     chunks: [{ content: 'Context chunk...', metadata: { page: 1, section: 'Abstract' } }],
@@ -85,6 +86,8 @@ describe('Integration Tests: Core Features', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Drop queued mockResolvedValueOnce results so one test cannot leak into the next
+    db.query.mockReset();
   });
 
   it('should pass health check when downstream services are healthy', async () => {
@@ -96,35 +99,35 @@ describe('Integration Tests: Core Features', () => {
       json: () => Promise.resolve({ status: 'UP' })
     });
 
-    const res = await request(app).get('/api/health');
+    const res = await request(app).get('/api/v1/health');
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe('UP');
   });
 
   it('should block unauthenticated access to post creation', async () => {
     const res = await request(app)
-      .post('/api/posts/create')
+      .post('/api/v1/posts/create')
       .send({ content_type: 'text', caption: 'Test' });
     expect(res.statusCode).toBe(401);
   });
 
   it('should block unauthenticated access to reel upload', async () => {
     const res = await request(app)
-      .post('/api/reels/generate-draft')
+      .post('/api/v1/reels/generate-draft')
       .send({ title: 'Test Reel' });
     expect(res.statusCode).toBe(401);
   });
 
   it('should block unauthenticated access to ask gemini', async () => {
     const res = await request(app)
-      .post('/api/ai/ask-gemini')
+      .post('/api/v1/ai/ask-gemini')
       .send({ question: 'What is quantum?' });
     expect(res.statusCode).toBe(401);
   });
 
   it('should successfully answer RAG queries', async () => {
     const res = await request(app)
-      .post('/api/ai/ask-gemini')
+      .post('/api/v1/ai/ask-gemini')
       .set('Authorization', `Bearer ${token}`)
       .send({ question: 'What is quantum?' });
     expect(res.statusCode).toBe(200);
@@ -133,21 +136,38 @@ describe('Integration Tests: Core Features', () => {
   });
 
   it('should successfully react to a post', async () => {
-    db.query.mockResolvedValueOnce({ rows: [] }); // Update reaction query
+    const postId = '11111111-1111-4111-8111-111111111111';
+    const postRow = { id: postId, author_id: '22222222-2222-4222-8222-222222222222', reaction_count: 1 };
+    db.query
+      .mockResolvedValueOnce({ rows: [postRow] }) // load post
+      .mockResolvedValueOnce({ rows: [] })        // upsert reaction
+      .mockResolvedValueOnce({ rows: [{ id: 'n1' }] }) // notification
+      .mockResolvedValueOnce({ rows: [] })        // analytics event
+      .mockResolvedValueOnce({ rows: [postRow] }); // reload counts
 
     const res = await request(app)
-      .post('/api/posts/react')
+      .post('/api/v1/posts/react')
       .set('Authorization', `Bearer ${token}`)
-      .send({ post_id: 123, reaction_type: 'like' });
+      .send({ post_id: postId, reaction_type: 'novel' });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.message).toBe('Reaction updated');
+    expect(res.body.data.viewer_reaction).toBe('novel');
+  });
+
+  it('should reject reactions on unknown posts', async () => {
+    const res = await request(app)
+      .post('/api/v1/posts/react')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ post_id: 123, reaction_type: 'novel' });
+
+    expect(res.statusCode).toBe(404);
   });
 
   it('should search for documents/posts', async () => {
     const res = await request(app)
-      .get('/api/search/documents')
+      .get('/api/v1/search/documents')
       .set('Authorization', `Bearer ${token}`)
       .query({ q: 'quantum', type: 'posts' });
 
@@ -158,13 +178,15 @@ describe('Integration Tests: Core Features', () => {
   });
 
   it('should send and retrieve messages', async () => {
-    // 1. Mock sending a message
-    db.query.mockResolvedValueOnce({
-      rows: [{ id: 1, sender_id: 1, receiver_id: 2, content: 'Hello researcher' }]
-    });
+    // 1. Mock sending a message: participant check, insert, sender lookup, read receipt
+    db.query
+      .mockResolvedValueOnce({ rows: [{ '?column?': 1 }] })
+      .mockResolvedValueOnce({ rows: [{ id: 1, sender_id: 1, content: 'Hello researcher', conversation_id: 'conv_123' }] })
+      .mockResolvedValueOnce({ rows: [{ username: 'researcher' }] })
+      .mockResolvedValueOnce({ rows: [] });
 
     const sendRes = await request(app)
-      .post('/api/messages/send')
+      .post('/api/v1/messages/send')
       .set('Authorization', `Bearer ${token}`)
       .send({ receiver_id: 2, content: 'Hello researcher', conversation_id: 'conv_123', sender_id: 1 });
 
@@ -178,7 +200,7 @@ describe('Integration Tests: Core Features', () => {
     });
 
     const convRes = await request(app)
-      .get('/api/messages/conversations')
+      .get('/api/v1/messages/conversations')
       .set('Authorization', `Bearer ${token}`)
       .query({ user_id: 1 });
 
@@ -187,9 +209,20 @@ describe('Integration Tests: Core Features', () => {
     expect(convRes.body.data).toBeDefined();
   });
 
+  it('should refuse to send into a conversation the caller is not part of', async () => {
+    db.query.mockResolvedValueOnce({ rows: [] }); // participant check finds nothing
+
+    const res = await request(app)
+      .post('/api/v1/messages/send')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ content: 'Hello', conversation_id: 'conv_999' });
+
+    expect(res.statusCode).toBe(403);
+  });
+
   it('should block posts containing banned keywords (content moderation)', async () => {
     const res = await request(app)
-      .post('/api/posts/create')
+      .post('/api/v1/posts/create')
       .set('Authorization', `Bearer ${token}`)
       .send({ content_type: 'text', caption: 'Buy bitcoin now!' });
     expect(res.statusCode).toBe(400);

@@ -1,166 +1,40 @@
 "use client";
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import OTPVerification from '@/components/auth/OTPVerification';
-import { useAuth } from '@/context/AuthContext';
-import LandingPortrait from './LandingPortrait';
 import Link from 'next/link';
+import OTPVerification from '@/components/auth/OTPVerification';
+import { useAuthFlow } from '@/lib/useAuthFlow';
+import LandingPortrait from './LandingPortrait';
+
+const USERNAME_RE = /^[A-Za-z0-9_.]{3,30}$/;
+const suggestUsername = (email: string) => email.split('@')[0].replace(/[^A-Za-z0-9_.]/g, '_').slice(0, 30);
 
 export default function LandingPage() {
+  const flow = useAuthFlow();
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
-  const [formError, setFormError] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [doi, setDoi] = useState('');
-  const { login } = useAuth();
-  const router = useRouter();
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+  const [localError, setLocalError] = useState('');
 
-  const validatePassword = (pass: string) => {
-    if (pass.length < 8) return 'Password must be at least 8 characters.';
-    if (!/[a-z]/.test(pass)) return 'Password must contain a lowercase letter.';
-    if (!/[A-Z]/.test(pass)) return 'Password must contain an uppercase letter.';
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(pass)) return 'Password must contain a special character.';
-    return '';
-  };
-
-  const readApiError = async (response: Response, fallback: string) => {
-    try {
-      const result = await response.json();
-      return result.message || fallback;
-    } catch {
-      return fallback;
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError('');
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch(`${apiUrl}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, password })
-      });
-
-      if (!response.ok) {
-        throw new Error(await readApiError(response, 'Unable to sign in with those credentials.'));
-      }
-
-      const result = await response.json();
-      if (!result.success || !result.user || !result.token) {
-        throw new Error(result.message || 'The server did not return a complete login session.');
-      }
-
-      login(result.user, result.token);
-      router.push('/home');
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Network error. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const submitRegistration = async () => {
-    const response = await fetch(`${apiUrl}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        email,
-        username: email.split('@')[0],
-        password,
-        full_name: fullName.trim(),
-        doi: doi.trim() || undefined
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(await readApiError(response, 'Unable to create that account.'));
-    }
-
-    const result = await response.json();
-    if (!result.success) {
-      throw new Error(result.message || 'Registration failed.');
-    }
-  };
-
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError('');
-
-    const passwordValidation = validatePassword(password);
-    if (passwordValidation) {
-      setFormError(passwordValidation);
+    setLocalError('');
+    if (!isRegistering) {
+      flow.signIn(email.trim(), password);
       return;
     }
-
-    if (!fullName.trim()) {
-      setFormError('Full name is required to create a researcher profile.');
-      return;
+    if (!fullName.trim()) return setLocalError('Enter your full name.');
+    if (password.length < 8) return setLocalError('Use a password of at least 8 characters.');
+    const username = suggestUsername(email.trim());
+    if (!USERNAME_RE.test(username)) {
+      return setLocalError('Create your account from the full sign-up page to choose a username.');
     }
-
-    setIsSubmitting(true);
-    try {
-      await submitRegistration();
-      setIsVerifying(true);
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Network error. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    flow.signUp({ email: email.trim(), username, password, full_name: fullName.trim() });
   };
 
-  const handleOTPVerify = async (otp: string) => {
-    setFormError('');
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch(`${apiUrl}/auth/verify-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, otp })
-      });
-
-      if (!response.ok) {
-        throw new Error(await readApiError(response, 'Verification failed. Please request a new code.'));
-      }
-
-      const result = await response.json();
-      if (!result.success || !result.user || !result.token) {
-        throw new Error(result.message || 'The server did not return a complete verified session.');
-      }
-
-      login(result.user, result.token);
-      router.push('/home');
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Network error. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleResend = async () => {
-    setFormError('');
-    setIsSubmitting(true);
-    try {
-      await submitRegistration();
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Unable to resend the verification code.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const canSubmit = Boolean(email && password.length >= 6 && !isSubmitting);
+  const formError = localError || flow.error;
+  const canSubmit = Boolean(email && password && !flow.busy && (!isRegistering || fullName));
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans flex flex-col overflow-hidden">
@@ -179,35 +53,30 @@ export default function LandingPage() {
             </div>
 
             <div className="w-full space-y-10">
-              {isVerifying ? (
+              {flow.step === 'verify' ? (
                 <div>
                   <OTPVerification
-                    email={email}
-                    onVerify={handleOTPVerify}
-                    onResend={handleResend}
-                    isLoading={isSubmitting}
+                    email={flow.email}
+                    onVerify={flow.verify}
+                    onResend={flow.resend}
+                    isLoading={flow.busy}
+                    error={flow.error}
+                    notice={flow.notice}
+                    onBack={flow.back}
                   />
-                  {formError && (
-                    <p className="mt-6 text-red-400/80 text-[11px] font-medium px-2 text-center">
-                      {formError}
-                    </p>
-                  )}
                 </div>
               ) : (
                 <>
                   <div className="space-y-3">
-                    <div className="inline-block px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 mb-4">
-                      <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Scholar Portal v2.0</span>
-                    </div>
                     <h2 className="text-4xl font-bold tracking-tight text-white">
-                      {isRegistering ? 'Join ResearchReel' : 'Resume Research'}
+                      {isRegistering ? 'Join ResearchReel' : 'Welcome back'}
                     </h2>
                     <p className="text-zinc-500 text-base leading-relaxed">
-                      {isRegistering ? 'Create a verified account with email confirmation.' : 'Sign in with your ResearchReel account.'}
+                      {isRegistering ? 'Share research as short reels, read papers with AI, and collaborate.' : 'Sign in to your research feed, library and projects.'}
                     </p>
                   </div>
 
-                  <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-6">
+                  <form onSubmit={handleSubmit} className="space-y-6">
                     {isRegistering && (
                       <>
                         <div className="group">
@@ -229,25 +98,6 @@ export default function LandingPage() {
                             </label>
                           </div>
                         </div>
-
-                        <div className="group">
-                          <div className="relative">
-                            <input
-                              type="text"
-                              className="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-5 pt-6 pb-2 text-sm focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all peer placeholder-transparent backdrop-blur-md"
-                              placeholder="Academic DOI"
-                              value={doi}
-                              onChange={(e) => setDoi(e.target.value)}
-                              id="doi"
-                            />
-                            <label
-                              htmlFor="doi"
-                              className="absolute left-5 top-2 text-[10px] font-bold text-zinc-500 uppercase tracking-wider transition-all peer-placeholder-shown:text-sm peer-placeholder-shown:top-4 peer-placeholder-shown:font-normal peer-focus:top-2 peer-focus:text-[10px] peer-focus:text-indigo-400"
-                            >
-                              Academic DOI (Optional)
-                            </label>
-                          </div>
-                        </div>
                       </>
                     )}
 
@@ -260,6 +110,7 @@ export default function LandingPage() {
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
                           id="email"
+                          autoComplete="email"
                           required
                         />
                         <label
@@ -280,8 +131,9 @@ export default function LandingPage() {
                           value={password}
                           onChange={(e) => {
                             setPassword(e.target.value);
-                            setFormError('');
+                            setLocalError('');
                           }}
+                          autoComplete={isRegistering ? 'new-password' : 'current-password'}
                           id="password"
                           required
                         />
@@ -295,7 +147,7 @@ export default function LandingPage() {
                     </div>
 
                     {formError && (
-                      <p className="text-red-400/80 text-[11px] font-medium px-2">{formError}</p>
+                      <p role="alert" className="text-red-400 text-sm px-2">{formError}</p>
                     )}
 
                     <button
@@ -307,7 +159,7 @@ export default function LandingPage() {
                       }`}
                       disabled={!canSubmit}
                     >
-                      {isSubmitting ? 'Working...' : isRegistering ? 'Initialize Account' : 'Authenticate'}
+                      {flow.busy ? 'Please wait…' : isRegistering ? 'Create account' : 'Sign in'}
                     </button>
                   </form>
 
@@ -315,17 +167,18 @@ export default function LandingPage() {
                     <button
                       onClick={() => {
                         setIsRegistering(!isRegistering);
-                        setFormError('');
+                        setLocalError('');
+                        flow.setError(null);
                       }}
                       className="w-full py-3.5 rounded-2xl border border-white/5 font-semibold text-xs hover:bg-white/5 transition-all text-zinc-400 hover:text-white"
                     >
-                      {isRegistering ? 'Back to Login' : 'Create Researcher Profile'}
+                      {isRegistering ? 'I already have an account' : 'Create an account'}
                     </button>
                   </div>
 
                   <div className="flex justify-between items-center pt-8 border-t border-white/5">
-                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-700">(c) 2026 RESEARCHREEL</span>
-                    <a href="/auth/forget-password" className="text-[10px] font-bold text-zinc-500 hover:text-indigo-400 transition-colors uppercase tracking-widest">Protocol Support</a>
+                    <Link href="/auth/register" className="text-xs text-zinc-500 hover:text-indigo-400 transition-colors">Full sign-up</Link>
+                    <Link href={`/auth/forget-password${email ? `?email=${encodeURIComponent(email)}` : ''}`} className="text-xs text-zinc-500 hover:text-indigo-400 transition-colors">Forgot password?</Link>
                   </div>
                 </>
               )}
@@ -336,19 +189,13 @@ export default function LandingPage() {
 
       <footer className="w-full py-6 flex flex-col items-center gap-4 text-xs text-zinc-500">
         <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 max-w-4xl px-4">
-          <Link href="/search" className="hover:underline">Research</Link>
-          <Link href="/home" className="hover:underline">About</Link>
           <Link href="/explore" className="hover:underline">Explore</Link>
-          <Link href="/auth/forget-password" className="hover:underline">Help</Link>
-          <a href="http://localhost:5000/api-docs" className="hover:underline">API</a>
-          <Link href="/profile" className="hover:underline">Verified</Link>
+          <Link href="/reels" className="hover:underline">Reels</Link>
+          <Link href="/support" className="hover:underline">Help</Link>
+          <Link href="/support#terms" className="hover:underline">Terms</Link>
+          <Link href="/support#privacy" className="hover:underline">Privacy</Link>
         </div>
-        <div className="flex items-center gap-4">
-          <select className="bg-transparent text-xs outline-none cursor-pointer hover:underline" aria-label="Language">
-            <option>English</option>
-          </select>
-          <span>(c) 2026 ResearchReel</span>
-        </div>
+        <span>© {new Date().getFullYear()} ResearchReel</span>
       </footer>
     </div>
   );

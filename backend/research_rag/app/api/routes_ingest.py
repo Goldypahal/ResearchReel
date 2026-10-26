@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import os
+import re
 from typing import List
 from ..models.paper import Paper
 from ..ingestion.parser_factory import get_parser
@@ -12,15 +13,19 @@ chroma = ChromaIndex()
 bm25 = BM25Index()
 
 async def _process_single_file(file: UploadFile, parser_name: str) -> Paper:
-    # 1. Save file
-    temp_path = f"data/raw_papers/{file.filename}"
+    # 1. Save file. Only the base name is used, so a crafted filename can't
+    #    write outside data/raw_papers.
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(file.filename or ""))
+    if not safe_name.lower().endswith(".pdf") or safe_name.startswith("."):
+        raise HTTPException(status_code=400, detail="Only .pdf files can be ingested.")
     os.makedirs("data/raw_papers", exist_ok=True)
+    temp_path = os.path.join("data/raw_papers", safe_name)
     with open(temp_path, "wb") as f:
         f.write(await file.read())
-    
+
     # 2. Parse
     parser = get_parser(parser_name)
-    paper_id = file.filename.replace(".pdf", "")
+    paper_id = safe_name[:-4]
     paper = parser.parse(temp_path, paper_id)
     
     # 3. Chunk

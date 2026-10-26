@@ -1,20 +1,12 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const request = require('supertest');
-const app = require('../src/app');
-const db = require('../src/config/db');
 const jwt = require('jsonwebtoken');
 
-// Mock external systems
 jest.mock('../src/config/db', () => ({
   query: jest.fn(),
   pool: { on: jest.fn(), end: jest.fn() }
-}));
-
-jest.mock('../src/services/plagiarismService', () => ({
-  scanDocument: jest.fn().mockResolvedValue({
-    isOriginal: true,
-    similarityScore: 10,
-    flaggedSections: []
-  })
 }));
 
 jest.mock('../src/config/redisClient', () => {
@@ -44,7 +36,7 @@ jest.mock('../src/services/searchService', () => ({
 
 jest.mock('bullmq', () => ({
   Queue: jest.fn().mockImplementation(() => ({
-    add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),
+    add: jest.fn().mockResolvedValue({ id: 'job-1' }),
     on: jest.fn(),
     close: jest.fn().mockResolvedValue(true)
   })),
@@ -54,84 +46,66 @@ jest.mock('bullmq', () => ({
   }))
 }));
 
-jest.mock('../src/services/aiService', () => ({
-  summarizeDocument: jest.fn().mockResolvedValue({
-    abstract: 'Mocked AI Summary',
-    key_points: ['point 1', 'point 2'],
-    video_script: 'Mocked Video Script'
-  })
+// Text extraction runs after the response; it is exercised end-to-end in scripts/e2e-smoke.js.
+jest.mock('../src/services/documentProcessor', () => ({
+  processDocument: jest.fn().mockResolvedValue(undefined),
+  uploadsRoot: require('path').join(require('os').tmpdir(), 'rr-test-uploads')
 }));
 
-describe('Integration Flow: Document Upload -> AI Summary -> Feed', () => {
-  let token;
+const db = require('../src/config/db');
+const { processDocument } = require('../src/services/documentProcessor');
+const app = require('../src/app');
+
+const USER_ID = '11111111-1111-4111-8111-111111111111';
+const token = jwt.sign({ id: USER_ID, verification_status: 'verified', typ: 'access' }, process.env.JWT_SECRET || 'testsecret');
+
+describe('Document upload', () => {
+  let pdfPath;
 
   beforeAll(() => {
-    token = jwt.sign(
-      { id: 1, verification_status: 'verified' },
-      process.env.JWT_SECRET || 'testsecret'
-    );
+    pdfPath = path.join(os.tmpdir(), 'rr-test-paper.pdf');
+    fs.writeFileSync(pdfPath, '%PDF-1.4\n% minimal test file\n');
   });
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
+  beforeEach(() => jest.clearAllMocks());
 
-  it('should upload a document, generate a summary, and appear in feed', async () => {
-    // 1. Upload document (mock the post creation and DB insert)
+  it('stores the file, registers it as processing, and queues extraction', async () => {
     db.query.mockResolvedValueOnce({
-      rows: [{
-        id: 10,
-        uploader_id: 1,
-        file_name: 'test.pdf',
-        file_type: 'pdf',
-        file_url: 'http://example.com/uploads/test.pdf'
-      }]
-    });
-    db.query.mockResolvedValueOnce({
-      rows: [{
-        id: 10,
-        uploader_id: 1,
-        file_name: 'test.pdf',
-        file_type: 'pdf',
-        file_url: 'http://example.com/uploads/test.pdf',
-        summary_text: 'Mocked AI Summary',
-        key_points: ['point 1', 'point 2']
-      }]
+      rows: [{ id: '22222222-2222-4222-8222-222222222222', uploader_id: USER_ID, title: 'My Paper', status: 'processing' }]
     });
 
-    const uploadRes = await request(app)
-      .post('/api/posts/document/upload')
+    const res = await request(app)
+      .post('/api/v1/assets/upload')
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        file_name: 'test.pdf',
-        file_type: 'pdf',
-        file_url: 'http://example.com/uploads/test.pdf'
-      });
+      .field('title', 'My Paper')
+      .attach('file', pdfPath);
 
-    expect(uploadRes.status).toBe(201);
-    expect(uploadRes.body.success).toBe(true);
-    expect(uploadRes.body.data.summary_text).toBe('Mocked AI Summary');
+    expect(res.status).toBe(201);
+    expect(res.body.data.status).toBe('processing');
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO documents/);
+    expect(params).toContain(USER_ID);
 
-    // 2. Fetch Feed
-    db.query.mockResolvedValueOnce({
-      rows: [{
-        id: 10,
-        author_id: 1,
-        content_type: 'document',
-        summary_text: 'Mocked AI Summary',
-        username: 'testuser',
-        created_at: new Date()
-      }]
-    });
+    await new Promise((r) => setImmediate(r));
+    expect(processDocument).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222', expect.any(String), 'application/pdf', { useExtractedTitle: false });
+  });
 
-    const feedRes = await request(app)
-      .get('/api/posts/feed')
-      .set('Authorization', `Bearer ${token}`);
+  it('rejects file types other than PDF and DOCX', async () => {
+    const exe = path.join(os.tmpdir(), 'rr-test.exe');
+    fs.writeFileSync(exe, 'MZ');
+    const res = await request(app)
+      .post('/api/v1/assets/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .attach('file', exe);
+    expect(res.status).toBe(400);
+    expect(db.query).not.toHaveBeenCalled();
+  });
 
-    expect(feedRes.status).toBe(200);
-    expect(feedRes.body.success).toBe(true);
-    expect(feedRes.body.data.length).toBeGreaterThan(0);
-    expect(feedRes.body.data[0].id).toBe(10);
-    expect(feedRes.body.data[0].summary_text).toBe('Mocked AI Summary');
+  it('no longer accepts the legacy URL-registration endpoint', async () => {
+    const res = await request(app)
+      .post('/api/v1/posts/document/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ file_name: 'x.pdf', file_type: 'pdf', file_url: 'http://example.com/x.pdf' });
+    expect(res.status).toBe(404);
   });
 });

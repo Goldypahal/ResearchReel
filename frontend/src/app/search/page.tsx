@@ -1,103 +1,126 @@
 "use client";
 
-import React, { useState } from 'react';
-import Image from 'next/image';
+import React, { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { FileText, Film, MessageSquare, Search, User, X } from 'lucide-react';
+import { errorMessage, searchApi, usersApi, type SearchResult, type SearchType, type UserCard } from '@/lib/api';
+import UserRow from '@/components/common/UserRow';
+import { EmptyState, ErrorState, LoadingBlock, SkeletonRows } from '@/components/common/States';
+import { cn, timeAgo } from '@/lib/utils';
 
-const RECENT_SEARCHES = [
-  { id: 1, text: 'Quantum Error Correction', type: 'topic' },
-  { id: 2, text: 'sarah_chen', type: 'user', avatar: 'https://i.pravatar.cc/150?u=b042581f4e29026024d' },
-  { id: 3, text: 'CRISPR Technology', type: 'topic' },
-  { id: 4, text: 'Tesla Patents', type: 'tag' },
+const RECENT_KEY = 'recent_searches';
+const TABS: { key: SearchType; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'user', label: 'People' },
+  { key: 'document', label: 'Papers' },
+  { key: 'post', label: 'Posts' },
+  { key: 'video', label: 'Reels' },
 ];
+const ICON = { post: MessageSquare, user: User, document: FileText, video: Film } as const;
+const hrefFor = (r: SearchResult) =>
+  r.type === 'post' ? `/post/${r.id}` : r.type === 'user' ? `/profile/${r.title}` : r.type === 'document' ? `/library/documents/${r.id}` : `/reels?r=${r.id}`;
 
-const SUGGESTED_USERS = [
-  { id: 1, name: 'Dr. Alan Turing', handle: '@alan_t', avatar: 'https://i.pravatar.cc/150?u=a042581f4e29026024d' },
-  { id: 2, name: 'Prof. Sarah Chen', handle: '@sarah_chen', avatar: 'https://i.pravatar.cc/150?u=b042581f4e29026024d' },
-  { id: 3, name: 'Dr. Emily Zhang', handle: '@dr_emily', avatar: 'https://i.pravatar.cc/150?u=c042581f4e29026024d' },
-];
+const readRecent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch { return []; } };
+const writeRecent = (list: string[]) => { try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* storage unavailable */ } };
 
-export default function SearchPage() {
-  const [query, setQuery] = useState('');
+function SearchInner() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const q = params.get('q') || '';
+  const type = (params.get('type') as SearchType) || 'all';
+  const [draft, setDraft] = useState(q);
+  const [results, setResults] = useState<SearchResult[] | null>(null);
+  const [people, setPeople] = useState<UserCard[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<string[]>([]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
+  useEffect(() => { setDraft(q); }, [q]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
+  useEffect(() => { setRecent(readRecent()); }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
+    if (!q.trim()) { setResults(null); setPeople(null); return; }
+    let cancelled = false;
+    setResults(null);
+    setError(null);
+    const next = [q, ...readRecent().filter((x) => x.toLowerCase() !== q.toLowerCase())].slice(0, 8);
+    writeRecent(next);
+    setRecent(next);
+    if (type === 'user') {
+      usersApi.search(q, 30).then((r) => { if (!cancelled) { setPeople(r); setResults([]); } }).catch((err) => !cancelled && setError(errorMessage(err)));
+    } else {
+      setPeople(null);
+      searchApi.search(q, type).then((r) => { if (!cancelled) setResults(r); }).catch((err) => !cancelled && setError(errorMessage(err)));
+    }
+    return () => { cancelled = true; };
+  }, [q, type]);
+
+  const go = (term: string, t: SearchType = type) => router.push(`/search?q=${encodeURIComponent(term)}${t !== 'all' ? `&type=${t}` : ''}`);
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] w-full">
-      <main className="max-w-[600px] mx-auto px-4 pt-10 pb-24">
-        
-        {/* Search Bar */}
-        <div className="relative mb-10">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500">🔍</span>
-          <input 
-            type="text" 
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search scholars, papers, patents..."
-            className="w-full bg-[var(--foreground)]/5 border border-[var(--border)]/10 rounded-2xl py-4 pl-12 pr-4 text-[var(--foreground)] placeholder-zinc-500 focus:ring-2 focus:ring-blue-500/50 outline-none transition-all"
-          />
-          {query && (
-            <button onClick={() => setQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white">✕</button>
-          )}
-        </div>
+    <div className="mx-auto max-w-2xl space-y-6 pb-24">
+      <form onSubmit={(e) => { e.preventDefault(); if (draft.trim()) go(draft.trim()); }} className="relative">
+        <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Search papers, people, posts and reels" aria-label="Search" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--foreground)]/5 py-3.5 pl-12 pr-10 text-sm focus:border-indigo-500/50 focus:outline-none" />
+        {draft && <button type="button" aria-label="Clear" onClick={() => { setDraft(''); router.push('/search'); }} className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground"><X size={16} /></button>}
+      </form>
 
-        {/* Content based on query */}
-        {!query ? (
-          <div className="space-y-10">
-             {/* Recent */}
-             <section>
-                <div className="flex items-center justify-between mb-4">
-                   <h2 className="text-sm font-bold uppercase tracking-widest text-zinc-400">Recent</h2>
-                   <button className="text-xs font-bold text-blue-500 hover:text-blue-400">Clear All</button>
-                </div>
-                <div className="flex flex-col">
-                   {RECENT_SEARCHES.map((search) => (
-                      <div key={search.id} className="flex items-center justify-between py-3 group cursor-pointer">
-                         <div className="flex items-center gap-4">
-                            {search.avatar ? (
-                               <Image src={search.avatar} alt={search.text} width={40} height={40} className="w-10 h-10 rounded-full" />
-                            ) : (
-                               <div className="w-10 h-10 rounded-full bg-[#1A1A1A] flex items-center justify-center text-zinc-500">
-                                  {search.type === 'topic' ? '📄' : '🏷️'}
-                               </div>
-                            )}
-                            <div>
-                               <p className="text-sm font-semibold">{search.text}</p>
-                               <span className="text-xs text-zinc-500 capitalize">{search.type}</span>
-                            </div>
-                         </div>
-                         <button className="text-zinc-500 opacity-0 group-hover:opacity-100">✕</button>
-                      </div>
-                   ))}
-                </div>
-             </section>
-
-             {/* Suggested Scholars */}
-             <section>
-                <h2 className="text-sm font-bold uppercase tracking-widest text-zinc-400 mb-6">Suggested Scholars</h2>
-                <div className="grid grid-cols-1 gap-6">
-                   {SUGGESTED_USERS.map((user) => (
-                      <div key={user.id} className="flex items-center justify-between">
-                         <div className="flex items-center gap-4">
-                            <Image src={user.avatar} alt={user.name} width={48} height={48} className="w-12 h-12 rounded-full object-cover" />
-                            <div>
-                               <p className="text-sm font-bold">{user.name}</p>
-                               <span className="text-xs text-zinc-500">{user.handle}</span>
-                            </div>
-                         </div>
-                         <button className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-5 py-2 rounded-xl transition-all active:scale-95">
-                            Follow
-                         </button>
-                      </div>
-                   ))}
-                </div>
-             </section>
-          </div>
+      {!q ? (
+        recent.length > 0 ? (
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Recent</h2>
+              <button onClick={() => { writeRecent([]); setRecent([]); }} className="text-xs font-semibold text-indigo-400">Clear</button>
+            </div>
+            <ul>
+              {recent.map((r) => (
+                <li key={r}><button onClick={() => go(r, 'all')} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm hover:bg-[var(--foreground)]/5"><Search size={14} className="text-muted-foreground" /> {r}</button></li>
+              ))}
+            </ul>
+          </section>
         ) : (
-          <div className="text-center py-20 text-zinc-500">
-             <div className="text-4xl mb-4">🔬</div>
-             <p>Searching for <span className="text-[var(--foreground)] font-bold">&ldquo;{query}&rdquo;</span>...</p>
+          <p className="text-center text-sm text-muted-foreground">Search by title, abstract, name or tag. Your private papers are included only for you.</p>
+        )
+      ) : (
+        <>
+          <div className="no-scrollbar flex gap-1 overflow-x-auto">
+            {TABS.map((t) => (
+              <button key={t.key} onClick={() => go(q, t.key)} aria-pressed={type === t.key} className={cn('shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold', type === t.key ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:bg-[var(--foreground)]/5')}>{t.label}</button>
+            ))}
           </div>
-        )}
-
-      </main>
+          {error ? <ErrorState message={error} onRetry={() => go(q)} /> : !results ? <SkeletonRows rows={5} /> : type === 'user' ? (
+            people && people.length ? <div className="divide-y divide-[var(--border)] rounded-2xl border border-[var(--border)] px-4">{people.map((u) => <UserRow key={u.id} user={u} />)}</div>
+              : <EmptyState icon={<User size={20} />} title={`No people match “${q}”`} />
+          ) : results.length === 0 ? (
+            <EmptyState icon={<Search size={20} />} title={`No results for “${q}”`} description="Try fewer or different words." />
+          ) : (
+            <ul className="space-y-2">
+              {results.map((r) => {
+                const Icon = ICON[r.type] || Search;
+                return (
+                  <li key={`${r.type}:${r.id}`}>
+                    <Link href={hrefFor(r)} className="flex gap-3 rounded-xl border border-[var(--border)] p-4 hover:border-indigo-500/40">
+                      <Icon size={18} className="mt-0.5 shrink-0 text-indigo-400" />
+                      <div className="min-w-0">
+                        <p className="line-clamp-2 text-sm font-semibold">{r.type === 'user' ? `@${r.title}` : r.title || 'Untitled'}</p>
+                        {r.description && <p className="line-clamp-2 text-xs text-muted-foreground">{r.description}</p>}
+                        <p className="mt-1 text-[11px] capitalize text-muted-foreground">{r.type === 'video' ? 'Reel' : r.type === 'document' ? 'Paper' : r.type}{r.created_at ? ` · ${timeAgo(r.created_at)}` : ''}</p>
+                      </div>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      )}
     </div>
   );
+}
+
+export default function SearchPage() {
+  return <Suspense fallback={<LoadingBlock />}><SearchInner /></Suspense>;
 }

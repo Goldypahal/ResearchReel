@@ -32,3 +32,11 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Runtime data
+dump.rdb
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+
+# Redis snapshots
+*.rdb

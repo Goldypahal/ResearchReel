@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
-const { authMiddleware } = require('../middleware/authMiddleware');
+const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const rateLimiter = require('../middleware/rateLimiter');
 const validate = require('../middleware/validationMiddleware');
-const { registerSchema, loginSchema, otpSchema } = require('../utils/validators');
+const { registerSchema, loginSchema, otpSchema, emailOnlySchema, resetPasswordSchema } = require('../utils/validators');
 
 // Specific Rate Limiters
 const registerLimiter = rateLimiter(5, 3600); // 5 per hour
@@ -101,6 +101,11 @@ router.post('/verify-otp', otpLimiter, validate(otpSchema), authController.verif
  */
 router.post('/login', loginLimiter, validate(loginSchema), authController.login);
 
+// Sign-up code resend and password recovery (responses never reveal whether an account exists)
+router.post('/resend-otp', otpLimiter, validate(emailOnlySchema), authController.resendVerification);
+router.post('/password/forgot', otpLimiter, validate(emailOnlySchema), authController.forgotPassword);
+router.post('/password/reset', otpLimiter, validate(resetPasswordSchema), authController.resetPassword);
+
 /**
  * @swagger
  * /api/v1/auth/logout:
@@ -111,7 +116,7 @@ router.post('/login', loginLimiter, validate(loginSchema), authController.login)
  *       200:
  *         description: Logout successful
  */
-router.post('/logout', authController.logout);
+router.post('/logout', optionalAuth, authController.logout);
 
 /**
  * @swagger
@@ -130,36 +135,27 @@ router.post('/refresh', authController.refreshToken);
 
 /**
  * @swagger
- * /api/v1/auth/verify/orcid:
+ * /api/v1/auth/orcid/start:
  *   post:
- *     summary: Complete ORCID oauth verification
+ *     summary: Start ORCID sign-in; returns the ORCID authorize URL to redirect the browser to
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - orcid_id
- *             properties:
- *               orcid_id:
- *                 type: string
  *     responses:
  *       200:
- *         description: ORCID linked successfully
- *       401:
- *         description: Unauthorized
+ *         description: Authorize URL
+ *       503:
+ *         description: ORCID is not configured on this server
  */
-router.post('/verify/orcid', authMiddleware, authController.orcidCallback);
+router.post('/orcid/start', authMiddleware, authController.orcidStart);
+router.get('/orcid/callback', authController.orcidCallback);
+router.delete('/orcid', authMiddleware, authController.orcidDisconnect);
 
 /**
  * @swagger
  * /api/v1/auth/verify/student:
  *   post:
- *     summary: Complete student academic verification
+ *     summary: Send a verification code to a university email address
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
@@ -170,9 +166,9 @@ router.post('/verify/orcid', authMiddleware, authController.orcidCallback);
  *           schema:
  *             type: object
  *             required:
- *               - university
+ *               - email
  *             properties:
- *               university:
+ *               email:
  *                 type: string
  *     responses:
  *       200:
@@ -180,6 +176,14 @@ router.post('/verify/orcid', authMiddleware, authController.orcidCallback);
  *       401:
  *         description: Unauthorized
  */
-router.post('/verify/student', authMiddleware, authController.studentVerification);
+router.post('/verify/student', authMiddleware, otpLimiter, authController.studentVerification);
+router.post('/verify/student/confirm', authMiddleware, otpLimiter, authController.confirmStudentVerification);
+
+// Account security (signed-in devices, password)
+const account = require('../controllers/accountController');
+router.get('/sessions', authMiddleware, account.listSessions);
+router.delete('/sessions/:id', authMiddleware, account.revokeSession);
+router.post('/sessions/revoke-others', authMiddleware, account.revokeOtherSessions);
+router.put('/password', authMiddleware, loginLimiter, account.changePassword);
 
 module.exports = router;

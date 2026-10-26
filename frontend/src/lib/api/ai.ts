@@ -1,21 +1,41 @@
 import { fetchApi } from './client';
+import type { ReelScene } from './reels';
 
-export interface CitationSource {
-  documentId?: string;
-  page?: number;
-  section?: string;
-  snippet?: string;
+export interface AskCitation {
+  page?: number | null;
+  section?: string | null;
+  text: string;
 }
 
 export interface AskGeminiResponse {
   answer: string;
-  sources?: CitationSource[];
+  citations: AskCitation[];
+  source?: 'rag' | 'gemini';
 }
 
 export interface SummarizeResponse {
   abstract: string;
   key_points: string[];
+  source?: 'rag' | 'gemini';
 }
+
+export interface Recommendation {
+  document_id: string;
+  post_id: string;
+  title: string;
+  doi?: string | null;
+  publication_year?: number | null;
+  journal?: string | null;
+  abstract?: string | null;
+  tags?: string[] | null;
+  username: string;
+  full_name?: string | null;
+  avatar_url?: string | null;
+  institution?: string | null;
+  reactions: number;
+  reason: string;
+}
+
 
 export const aiApi = {
   askGemini: (question: string, documentId?: string): Promise<AskGeminiResponse> =>
@@ -30,12 +50,11 @@ export const aiApi = {
       body: JSON.stringify({ document_id: documentId }),
     }),
 
-  getRecommendations: (query?: string) =>
-    fetchApi(`/ai/recommendations${query ? `?q=${encodeURIComponent(query)}` : ''}`),
+  getRecommendations: (limit = 6): Promise<Recommendation[]> => fetchApi(`/ai/recommendations?limit=${limit}`),
 
-  generateScript: (documentId: string, query?: string) =>
+  generateScript: (documentId: string): Promise<{ script: { title: string; scenes: ReelScene[] }; source: 'gemini' | 'extractive' }> =>
     fetchApi('/ai/script', {
       method: 'POST',
-      body: JSON.stringify({ documentId, query }),
+      body: JSON.stringify({ documentId }),
     }),
 };

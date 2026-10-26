@@ -3,6 +3,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const db = require('../config/db');
+const { AppError } = require('../utils/errors');
 const searchService = require('./searchService');
 
 // Ensure directories exist
@@ -33,16 +34,12 @@ const checkFFmpegAvailable = () => {
 };
 
 /**
- * Validates the video duration using FFprobe (or mock if unavailable)
+ * Reads the video duration with FFprobe.
  */
 const getVideoDuration = async (filePath) => {
   const hasFFmpeg = await checkFFmpegAvailable();
   if (!hasFFmpeg) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FFmpeg/FFprobe is not available in production.');
-    }
-    console.warn('FFmpeg/FFprobe not found. Simulating duration validation (45s).');
-    return 45; // Default mock duration
+    throw new AppError('Video processing is unavailable on this server (FFmpeg is not installed).', 503, 'MEDIA_UNAVAILABLE');
   }
 
   return new Promise((resolve, reject) => {
@@ -80,26 +77,27 @@ const processVideo = async ({
   const localHlsPath = path.join(outputSubDir, hlsManifestName);
   const localThumbPath = path.join(outputSubDir, thumbnailName);
 
-  let durationSeconds = 45;
-  let videoUrl = `/uploads/processed/${videoId}/${hlsManifestName}`;
-  let thumbnailUrl = `/uploads/processed/${videoId}/${thumbnailName}`;
+  const videoUrl = `/uploads/processed/${videoId}/${finalVideoName}`;
+  const hlsUrl = `/uploads/processed/${videoId}/${hlsManifestName}`;
+  const thumbnailUrl = `/uploads/processed/${videoId}/${thumbnailName}`;
 
   try {
-    // 1. Get and Validate Duration
+    if (!hasFFmpeg) {
+      throw new AppError('Video processing is unavailable on this server (FFmpeg is not installed).', 503, 'MEDIA_UNAVAILABLE');
+    }
+    // 1. Get and validate duration
+    let durationSeconds;
     try {
       durationSeconds = Math.round(await getVideoDuration(stagingFilePath));
     } catch (e) {
-      console.warn('Failed to read duration, using mock duration:', e.message);
+      throw new AppError('This file could not be read as a video.', 400, 'INVALID_VIDEO');
     }
-
-    if (durationSeconds < 30 || durationSeconds > 60) {
-      // Cleanup staging file
-      if (fs.existsSync(stagingFilePath)) fs.unlinkSync(stagingFilePath);
-      throw new Error(`Video duration of ${durationSeconds}s is invalid. Video must be between 30 and 60 seconds.`);
+    if (!Number.isFinite(durationSeconds) || durationSeconds < 30 || durationSeconds > 60) {
+      throw new AppError(`Reels must be 30–60 seconds long; this video is ${durationSeconds}s.`, 400, 'INVALID_DURATION');
     }
 
     // 2. Transcode / Thumbnail Generation
-    if (hasFFmpeg) {
+    {
       console.log(`Processing video with FFmpeg for ${videoId}...`);
       
       // Extract Thumbnail at 1s mark
@@ -133,48 +131,16 @@ const processVideo = async ({
       // Also copy original or copy to output folder for direct download
       fs.copyFileSync(stagingFilePath, localVideoPath);
 
-    } else {
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error('FFmpeg/FFprobe is required but not installed in the production environment.');
-      }
-      console.log(`Simulating transcoding & thumbnail for ${videoId} (FFmpeg missing)...`);
-      
-      // Copy staging file directly as the mp4 file
-      fs.copyFileSync(stagingFilePath, localVideoPath);
-
-      // Create a mock m3u8 playlist targeting the mp4 file
-      const mockM3u8Content = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:${durationSeconds}
-#EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:${durationSeconds}.0,
-/uploads/processed/${videoId}/${finalVideoName}
-#EXT-X-ENDLIST`;
-      fs.writeFileSync(localHlsPath, mockM3u8Content);
-
-      // Create a simple 1x1 black pixel JPEG as placeholder thumbnail
-      const placeholderJpgBase64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
-      fs.writeFileSync(localThumbPath, Buffer.from(placeholderJpgBase64, 'base64'));
     }
-
-    // 3. Generate captions mock (representing Whisper output)
-    const captions = [
-      { start: 0, end: 10, text: `Welcome! Today we are discussing: ${title}` },
-      { start: 10, end: durationSeconds, text: description }
-    ];
-    fs.writeFileSync(
-      path.join(outputSubDir, `${videoId}_captions.json`), 
-      JSON.stringify(captions, null, 2)
-    );
 
     // 4. Save to Database (Section 8.1.3 videos table)
     // Make sure duration_seconds is valid (check constraint: between 30 and 60)
-    const dbDuration = Math.max(30, Math.min(60, durationSeconds));
+    const dbDuration = durationSeconds;
     const cleanTags = Array.isArray(tags) ? tags : (tags ? tags.split(',').map(t => t.trim()) : []);
 
     const newReel = await db.query(
-      `INSERT INTO videos (author_id, title, description, video_url, thumbnail_url, duration_seconds, linked_paper_id, timestamps, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      `INSERT INTO videos (author_id, title, description, video_url, thumbnail_url, duration_seconds, linked_paper_id, timestamps, tags, hls_playlist_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
       [
         author_id,
         title,
@@ -184,7 +150,8 @@ const processVideo = async ({
         dbDuration,
         linked_paper_id || null,
         JSON.stringify(timestamps || []),
-        cleanTags
+        cleanTags,
+        hlsUrl
       ]
     );
 

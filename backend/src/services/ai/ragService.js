@@ -3,34 +3,34 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const RAG_SERVICE_URL = process.env.RAG_SERVICE_URL || 'http://localhost:8000/api/v1';
-const REQUEST_TIMEOUT = 15000; // 15 seconds timeout
+const RAG_SERVICE_URL = (process.env.RAG_SERVICE_URL || 'http://localhost:8000/api/v1').replace(/\/$/, '');
+const REQUEST_TIMEOUT = 30000;
+const INGEST_TIMEOUT = 180000; // parsing + embedding a long PDF takes a while
+
+/** Shared secret for the internal RAG service (see RAG_API_KEY in research_rag). */
+const ragHeaders = () => (process.env.RAG_API_KEY ? { 'x-api-key': process.env.RAG_API_KEY } : {});
 
 class RagService {
+  /** RAG is opt-in: set RAG_SERVICE_URL (docker-compose does). */
+  isConfigured() {
+    return Boolean(process.env.RAG_SERVICE_URL);
+  }
+
   /**
    * Send a document for ingestion into the RAG pipeline.
    * @param {string} filePath - Path to the file or a Buffer.
    * @param {string} fileName - Original file name.
    */
   async ingestDocument(fileBuffer, fileName) {
-    try {
-      const FormData = require('form-data');
-      const formData = new FormData();
-      formData.append('file', fileBuffer, { filename: fileName });
-      formData.append('parser_name', 'pymupdf');
-
-      const response = await axios.post(`${RAG_SERVICE_URL}/ingest`, formData, {
-        headers: {
-          ...formData.getHeaders(),
-        },
-        timeout: REQUEST_TIMEOUT
-      });
-
-      return response.data;
-    } catch (error) {
-      console.error('RAG Ingestion Error:', error.message);
-      throw error;
-    }
+    const form = new FormData();
+    form.append('file', new Blob([fileBuffer], { type: 'application/pdf' }), fileName);
+    const response = await axios.post(`${RAG_SERVICE_URL}/ingest`, form, {
+      params: { parser_name: 'pymupdf' },
+      headers: ragHeaders(),
+      timeout: INGEST_TIMEOUT,
+      maxBodyLength: 60 * 1024 * 1024,
+    });
+    return response.data;
   }
 
   /**
@@ -46,6 +46,7 @@ class RagService {
         expand_context: expandContext,
         prompt_version: "v1"
       }, {
+        headers: ragHeaders(),
         timeout: REQUEST_TIMEOUT
       });
 
@@ -63,6 +64,7 @@ class RagService {
         query: prompt,
         paper_ids: [paperId]
       }, {
+        headers: ragHeaders(),
         timeout: REQUEST_TIMEOUT
       });
       return response.data;
@@ -81,6 +83,7 @@ class RagService {
         query: query,
         paper_ids: paperIds
       }, {
+        headers: ragHeaders(),
         timeout: REQUEST_TIMEOUT
       });
 

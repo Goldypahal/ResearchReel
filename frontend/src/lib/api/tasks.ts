@@ -31,8 +31,9 @@ export interface UpdateTaskPayload {
   position?: number;
   title?: string;
   description?: string;
-  assigned_to?: string;
+  assigned_to?: string | null;
   priority?: TaskPriority;
+  due_date?: string | null;
 }
 
 export const tasksApi = {
@@ -44,6 +45,7 @@ export const tasksApi = {
       body: JSON.stringify(payload),
     }),
 
+  deleteTask: (taskId: string) => fetchApi(`/projects/tasks/${taskId}`, { method: 'DELETE' }),
   updateTask: (taskId: string, payload: UpdateTaskPayload): Promise<Task> =>
     fetchApi(`/projects/tasks/${taskId}`, {
       method: 'PUT',

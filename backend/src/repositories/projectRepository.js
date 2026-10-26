@@ -46,10 +46,14 @@ class ProjectRepository {
    */
   async findUserProjects(userId) {
     const query = `
-      SELECT DISTINCT p.*, pm.role as user_role
+      SELECT p.*,
+             COALESCE(me.role, CASE WHEN p.creator_id = $1 THEN 'owner' END) AS user_role,
+             (SELECT COUNT(*)::int FROM project_members m WHERE m.project_id = p.id) AS member_count,
+             (SELECT COUNT(*)::int FROM tasks t WHERE t.project_id = p.id) AS task_count,
+             (SELECT COUNT(*)::int FROM tasks t WHERE t.project_id = p.id AND t.status = 'done') AS done_count
       FROM projects p
-      LEFT JOIN project_members pm ON pm.project_id = p.id
-      WHERE (p.creator_id = $1 OR pm.user_id = $1) AND p.deleted_at IS NULL
+      LEFT JOIN project_members me ON me.project_id = p.id AND me.user_id = $1
+      WHERE (p.creator_id = $1 OR me.user_id IS NOT NULL) AND p.deleted_at IS NULL
       ORDER BY p.updated_at DESC;
     `;
     const result = await pool.query(query, [userId]);

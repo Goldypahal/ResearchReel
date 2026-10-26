@@ -62,6 +62,14 @@ module.exports = {
       return null;
     }
   },
+  ttl: async (key) => {
+    try {
+      return await client.ttl(key);
+    } catch (err) {
+      console.error('[Redis TTL Error]', err);
+      return -2;
+    }
+  },
   get: async (key) => {
     try {
       return await client.get(key);

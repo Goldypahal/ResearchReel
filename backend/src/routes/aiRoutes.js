@@ -18,6 +18,5 @@ router.get('/recommendations', authMiddleware, aiController.getRecommendations);
 
 // Video Editor AI Pipelines (Phase 11)
 router.post('/script', authMiddleware, aiLimiter, aiController.generateScript);
-router.post('/voice', authMiddleware, aiLimiter, aiController.generateVoice);
 
 module.exports = router;

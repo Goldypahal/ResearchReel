@@ -8,7 +8,7 @@ const { AuthorizationError, NotFoundError } = require('../utils/errors');
  * @returns {Promise<{ allowed: boolean, role: string }>}
  */
 async function canAccessProject(userId, projectId) {
-  if (!userId || !projectId) return { allowed: false, role: null };
+  if (!userId || !projectId || !/^[0-9a-f-]{36}$/i.test(String(projectId))) return { allowed: false, role: null };
 
   const query = `
     SELECT p.id, p.creator_id, pm.role

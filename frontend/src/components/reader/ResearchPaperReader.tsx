@@ -21,7 +21,7 @@ const PDFPage = dynamic(
 // Setup PDF worker
 if (typeof window !== 'undefined') {
   import('react-pdf').then(({ pdfjs }) => {
-    pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+    pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
   });
 }
 

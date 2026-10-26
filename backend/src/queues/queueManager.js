@@ -22,11 +22,23 @@ function getQueue(queueName) {
   }
 
   if (!queues[queueName]) {
-    const connection = {
-      host: process.env.REDIS_HOST || '127.0.0.1',
-      port: Number(process.env.REDIS_PORT || 6379),
-      password: process.env.REDIS_PASSWORD || undefined
-    };
+    // Same Redis as the rest of the app (REDIS_URL), with host/port vars as a fallback
+    let connection;
+    if (process.env.REDIS_URL) {
+      const url = new URL(process.env.REDIS_URL);
+      connection = {
+        host: url.hostname,
+        port: Number(url.port || 6379),
+        password: url.password ? decodeURIComponent(url.password) : undefined,
+        username: url.username ? decodeURIComponent(url.username) : undefined
+      };
+    } else {
+      connection = {
+        host: process.env.REDIS_HOST || '127.0.0.1',
+        port: Number(process.env.REDIS_PORT || 6379),
+        password: process.env.REDIS_PASSWORD || undefined
+      };
+    }
 
     queues[queueName] = new Queue(queueName, { connection });
   }

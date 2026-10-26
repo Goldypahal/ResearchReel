@@ -1,302 +1,181 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { BookOpen, CalendarClock, Plus, Radio, Search, Users } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { lectures, type Lecture } from '@/lib/lectures';
-import {
-  Award,
-  BookOpen,
-  ChevronRight,
-  Clock,
-  Filter,
-  GraduationCap,
-  Hand,
-  Mic,
-  MicOff,
-  Plus,
-  Radio,
-  ShieldCheck,
-  Users,
-  Video,
-} from 'lucide-react';
+import { lecturesApi, type Lecture, type LectureWhen } from '@/lib/api';
+import { useCursorList } from '@/lib/useCursorList';
+import { EmptyState, ErrorState, SkeletonRows, Spinner } from '@/components/common/States';
+import Avatar from '@/components/common/Avatar';
+import VerifiedBadge from '@/components/common/VerifiedBadge';
+import { cn, displayName } from '@/lib/utils';
+import { formatWhen, StatusPill } from '@/components/lectures/LectureBits';
 
-const TOPIC_FILTERS = ['All', 'Physics', 'Biology', 'AI & Medicine', 'Astrophysics', 'Mathematics'];
-const STATUS_FILTERS = ['All', 'Live Now', 'Scheduled', 'Ended'];
-
-function getStatusLabel(status: Lecture['status']) {
-  if (status === 'live') return 'LIVE';
-  if (status === 'scheduled') return 'UPCOMING';
-  return 'REPLAY';
-}
-
-function formatDate(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-export default function LecturesPage() {
-  const { user } = useAuth();
-  const [topicFilter, setTopicFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('All');
-
-  const isProfessor = user?.role === 'professor' || user?.role === 'scholar';
-  const liveLectures = lectures.filter((lecture) => lecture.status === 'live').length;
-  const activeAttendees = lectures.reduce((sum, lecture) => sum + lecture.attendees, 0);
-
-  const filtered = lectures.filter((lecture) => {
-    const topicMatch = topicFilter === 'All' || lecture.topic.toLowerCase().includes(topicFilter.toLowerCase());
-    const statusMatch =
-      statusFilter === 'All' ||
-      (statusFilter === 'Live Now' && lecture.status === 'live') ||
-      (statusFilter === 'Scheduled' && lecture.status === 'scheduled') ||
-      (statusFilter === 'Ended' && lecture.status === 'ended');
-    return topicMatch && statusMatch;
-  });
-
-  return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <section className="border-b border-[var(--border)] bg-[var(--foreground)]/[0.03]">
-        <div className="mx-auto grid max-w-6xl gap-8 px-6 py-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
-          <div>
-            <div className="mb-4 flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-cyan-400">
-              <BookOpen size={16} />
-              Academic Lecture Halls
-            </div>
-            <h1 className="max-w-3xl text-4xl font-black tracking-tight md:text-5xl">
-              Attend moderated lectures from leading scientists and educators.
-            </h1>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--foreground)]/62">
-              A modern live classroom with the discipline of old academic halls: one presenter leads, selected
-              professors and scientists can comment, and students attend with permission-based speaking.
-            </p>
-            <div className="mt-6 flex flex-wrap items-center gap-3">
-              <Metric icon={Radio} label="Live halls" value={String(liveLectures)} tone="text-red-400" />
-              <Metric icon={Users} label="Attending" value={activeAttendees.toLocaleString()} tone="text-emerald-400" />
-              <Metric icon={ShieldCheck} label="Moderation" value="Host controlled" tone="text-cyan-400" />
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] p-4 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--foreground)]/40">Lecture protocol</p>
-                <h2 className="mt-1 text-lg font-bold">Presenter grants the floor</h2>
-              </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/12 text-cyan-300">
-                <Mic size={20} />
-              </div>
-            </div>
-            <div className="grid gap-3">
-              <Protocol icon={Video} title="Main lecture stream" text="The educator or scientist remains pinned as the primary speaker." />
-              <Protocol icon={MicOff} title="Students enter muted" text="Students can attend, react, and request speaking permission." />
-              <Protocol icon={Hand} title="Permission queue" text="The presenter promotes only selected people to ask or answer." />
-              <Protocol icon={GraduationCap} title="Expert commentary" text="Professors and scientists can add moderated notes during the lecture." />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="sticky top-14 z-30 border-b border-[var(--border)] bg-[var(--background)]/92 backdrop-blur-xl md:top-0">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-6 py-3">
-          <div className="flex items-center gap-1.5">
-            <Filter size={14} className="text-[var(--foreground)]/40" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-[var(--foreground)]/40">Status</span>
-          </div>
-          {STATUS_FILTERS.map((filter) => (
-            <button
-              key={filter}
-              onClick={() => setStatusFilter(filter)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                statusFilter === filter
-                  ? 'bg-cyan-500 text-black'
-                  : 'bg-[var(--foreground)]/5 text-[var(--foreground)]/60 hover:bg-[var(--foreground)]/10'
-              }`}
-            >
-              {filter}
-            </button>
-          ))}
-          <div className="mx-1 h-4 w-px bg-[var(--border)]" />
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-            {TOPIC_FILTERS.map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setTopicFilter(filter)}
-                className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                  topicFilter === filter
-                    ? 'bg-emerald-500 text-black'
-                    : 'bg-[var(--foreground)]/5 text-[var(--foreground)]/60 hover:bg-[var(--foreground)]/10'
-                }`}
-              >
-                {filter}
-              </button>
-            ))}
-          </div>
-          {isProfessor && (
-            <Link
-              href="/lectures/host"
-              className="ml-auto flex items-center gap-2 rounded-lg bg-[var(--foreground)] px-3 py-2 text-xs font-bold text-[var(--background)] transition-transform active:scale-95"
-            >
-              <Plus size={15} />
-              Host
-            </Link>
-          )}
-        </div>
-      </div>
-
-      <section className="mx-auto max-w-6xl px-6 py-8">
-        <div className="grid gap-4 lg:grid-cols-2">
-          {filtered.map((lecture) => (
-            <LectureCard key={lecture.id} lecture={lecture} />
-          ))}
-        </div>
-
-        {filtered.length === 0 && (
-          <div className="py-24 text-center text-[var(--foreground)]/35">
-            <BookOpen size={40} className="mx-auto mb-3 opacity-40" />
-            <p className="font-semibold">No lectures match your filters.</p>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function Metric({
-  icon: Icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-  tone: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3">
-      <Icon size={18} className={tone} />
-      <div>
-        <p className="text-sm font-black">{value}</p>
-        <p className="text-xs text-[var(--foreground)]/45">{label}</p>
-      </div>
-    </div>
-  );
-}
-
-function Protocol({
-  icon: Icon,
-  title,
-  text,
-}: {
-  icon: React.ElementType;
-  title: string;
-  text: string;
-}) {
-  return (
-    <div className="flex gap-3 rounded-xl border border-[var(--border)] bg-[var(--foreground)]/[0.03] p-3">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--foreground)]/7">
-        <Icon size={17} />
-      </div>
-      <div>
-        <p className="text-sm font-bold">{title}</p>
-        <p className="mt-0.5 text-xs leading-5 text-[var(--foreground)]/50">{text}</p>
-      </div>
-    </div>
-  );
-}
+const TABS: { key: LectureWhen; label: string; auth?: boolean }[] = [
+  { key: 'upcoming', label: 'Upcoming' },
+  { key: 'live', label: 'Live now' },
+  { key: 'past', label: 'Past' },
+  { key: 'mine', label: 'My lectures', auth: true },
+];
 
 function LectureCard({ lecture }: { lecture: Lecture }) {
-  const statusClass =
-    lecture.status === 'live'
-      ? 'border-red-500/25 bg-red-500/[0.04]'
-      : lecture.status === 'scheduled'
-        ? 'border-amber-500/25 bg-amber-500/[0.04]'
-        : 'border-[var(--border)] bg-[var(--foreground)]/[0.025]';
-
+  const seats = lecture.capacity != null ? `${lecture.registered_count}/${lecture.capacity} registered` : `${lecture.registered_count} registered`;
   return (
     <Link
       href={`/lectures/${lecture.id}`}
-      className={`group flex min-h-[320px] flex-col rounded-2xl border p-5 transition-all hover:-translate-y-0.5 hover:border-cyan-400/40 ${statusClass}`}
+      className="group flex flex-col rounded-2xl border border-border bg-card p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40"
     >
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div
-          className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${
-            lecture.status === 'live'
-              ? 'bg-red-500/20 text-red-300'
-              : lecture.status === 'scheduled'
-                ? 'bg-amber-500/20 text-amber-300'
-                : 'bg-zinc-500/20 text-zinc-300'
-          }`}
-        >
-          {lecture.status === 'live' && <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400" />}
-          {getStatusLabel(lecture.status)}
-        </div>
-        <span className="rounded-full bg-[var(--foreground)]/5 px-2.5 py-1 text-xs font-medium text-[var(--foreground)]/45">
-          {lecture.topic}
-        </span>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <StatusPill status={lecture.status} />
+        <span className="truncate rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{lecture.topic}</span>
       </div>
-
-      <h3 className="text-lg font-black leading-snug transition-colors group-hover:text-cyan-300">{lecture.title}</h3>
-      <p className="mt-2 line-clamp-2 text-sm leading-6 text-[var(--foreground)]/52">{lecture.description}</p>
-
-      <div className="my-5 flex items-center gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-500/14 text-sm font-black text-cyan-300">
-          {lecture.presenter[0]}
-        </div>
-        <div>
-          <p className="flex items-center gap-1.5 text-sm font-bold">
-            {lecture.presenter}
-            <Award size={13} className="text-amber-400" />
+      <h3 className="text-lg font-bold leading-snug group-hover:text-primary">{lecture.title}</h3>
+      {lecture.description && <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">{lecture.description}</p>}
+      <div className="mt-4 flex items-center gap-3">
+        <Avatar src={lecture.host_avatar_url} name={displayName({ full_name: lecture.host_name, username: lecture.host_username })} size="sm" />
+        <div className="min-w-0">
+          <p className="flex items-center gap-1 truncate text-sm font-semibold">
+            {displayName({ full_name: lecture.host_name, username: lecture.host_username })}
+            <VerifiedBadge status={lecture.host_verification_status} size={13} />
           </p>
-          <p className="text-xs text-[var(--foreground)]/42">{lecture.presenterRole}</p>
+          {lecture.host_institution && <p className="truncate text-xs text-muted-foreground">{lecture.host_institution}</p>}
         </div>
       </div>
-
-      <div className="mb-5 grid gap-2 sm:grid-cols-2">
-        <SmallStat icon={Mic} label={`${lecture.speakersAllowed} speaker seats`} />
-        <SmallStat icon={ShieldCheck} label={lecture.format} />
-      </div>
-
-      <div className="mb-5 flex flex-wrap gap-1.5">
-        {lecture.tags.map((tag) => (
-          <span key={tag} className="rounded-md bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-300">
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      <div className="mt-auto flex items-center justify-between border-t border-[var(--border)] pt-4">
-        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--foreground)]/50">
-          <span className="flex items-center gap-1">
-            <Users size={12} />
-            {lecture.status === 'live'
-              ? `${lecture.attendees.toLocaleString()} attending`
-              : lecture.status === 'ended'
-                ? `${lecture.attendees.toLocaleString()} attended`
-                : 'Register'}
-          </span>
-          {lecture.scheduledAt && (
-            <span className="flex items-center gap-1">
-              <Clock size={12} />
-              {formatDate(lecture.scheduledAt)}
-            </span>
-          )}
+      {lecture.tags.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {lecture.tags.map((t) => <span key={t} className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] text-primary">{t}</span>)}
         </div>
-        <span className="flex items-center gap-1 text-xs font-bold text-cyan-300 transition-all group-hover:gap-2">
-          {lecture.status === 'live' ? 'Join hall' : lecture.status === 'scheduled' ? 'Preview' : 'Replay'}
-          <ChevronRight size={14} />
-        </span>
+      )}
+      <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-4 text-xs text-muted-foreground" style={{ marginTop: '1rem' }}>
+        <span className="flex items-center gap-1"><CalendarClock size={13} /> {formatWhen(lecture.starts_at)} · {lecture.duration_minutes} min</span>
+        <span className="flex items-center gap-1"><Users size={13} /> {seats}</span>
+        {lecture.is_registered && <span className="font-semibold text-emerald-500">You&apos;re registered</span>}
+        {lecture.is_host && <span className="font-semibold text-primary">You&apos;re hosting</span>}
       </div>
     </Link>
   );
 }
 
-function SmallStat({ icon: Icon, label }: { icon: React.ElementType; label: string }) {
+export default function LecturesPage() {
+  const { user } = useAuth();
+  const [tab, setTab] = useState<LectureWhen>('upcoming');
+  const [topic, setTopic] = useState('');
+  const [query, setQuery] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [topics, setTopics] = useState<{ topic: string; count: number }[]>([]);
+  const [canHost, setCanHost] = useState(false);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(query.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => { lecturesApi.topics().then(setTopics).catch(() => setTopics([])); }, []);
+  useEffect(() => {
+    if (!user) return;
+    lecturesApi.canHost().then((r) => setCanHost(r.can_host)).catch(() => setCanHost(false));
+  }, [user]);
+
+  const fetcher = useCallback(
+    (cursor: string | null) => lecturesApi.list({ when: tab, topic: topic || undefined, q: debounced || undefined }, cursor),
+    [tab, topic, debounced]
+  );
+  const { items, error, hasMore, loading, initialLoading, loadMore, reload } = useCursorList(fetcher);
+
+  const emptyCopy: Record<LectureWhen, { title: string; description: string }> = {
+    upcoming: { title: 'No upcoming lectures yet', description: 'When verified scholars schedule lectures they appear here. Check back soon.' },
+    live: { title: 'Nothing live right now', description: 'Lectures show up here while they are in progress.' },
+    past: { title: 'No past lectures', description: 'Finished lectures, with recordings when hosts add them, appear here.' },
+    mine: { title: 'No lectures yet', description: "Lectures you register for or host will appear here." },
+  };
+
   return (
-    <div className="flex min-h-10 items-center gap-2 rounded-lg bg-[var(--foreground)]/[0.04] px-3 text-xs text-[var(--foreground)]/55">
-      <Icon size={13} className="shrink-0 text-[var(--foreground)]/38" />
-      <span className="truncate">{label}</span>
+    <div className="mx-auto max-w-6xl space-y-6 pb-16">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight"><BookOpen size={22} className="text-primary" /> Lectures</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Live talks from verified scholars and faculty. Register to get the join link, add it to your calendar and send questions to the host.
+          </p>
+        </div>
+        {canHost ? (
+          <Link href="/lectures/host" className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90">
+            <Plus size={16} /> Host a lecture
+          </Link>
+        ) : user ? (
+          <Link href="/settings?tab=verification" className="text-sm text-muted-foreground hover:text-foreground">
+            Verified scholars can host lectures →
+          </Link>
+        ) : null}
+      </header>
+
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex gap-1 overflow-x-auto rounded-xl bg-muted p-1 no-scrollbar">
+          {TABS.filter((t) => !t.auth || user).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={cn('flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                tab === t.key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+            >
+              {t.key === 'live' && <Radio size={13} className="text-red-400" />}
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <label className="relative block md:w-72">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search lectures"
+            aria-label="Search lectures"
+            className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
+          />
+        </label>
+      </div>
+
+      {topics.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {[{ topic: '', count: 0 }, ...topics].map((t) => (
+            <button
+              key={t.topic || 'all'}
+              onClick={() => setTopic(t.topic)}
+              className={cn('rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                topic === t.topic ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground')}
+            >
+              {t.topic || 'All topics'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {error ? (
+        <ErrorState message={error} onRetry={reload} />
+      ) : initialLoading ? (
+        <SkeletonRows rows={4} />
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon={<BookOpen size={20} />}
+          title={debounced || topic ? 'No lectures match your search' : emptyCopy[tab].title}
+          description={debounced || topic ? 'Try a different term or topic.' : emptyCopy[tab].description}
+          action={canHost && tab !== 'past' ? <Link href="/lectures/host" className="text-sm font-semibold text-primary">Host a lecture</Link> : undefined}
+        />
+      ) : (
+        <>
+          <div className="grid gap-4 md:grid-cols-2">
+            {items.map((l) => <LectureCard key={l.id} lecture={l} />)}
+          </div>
+          {hasMore && (
+            <div className="flex justify-center">
+              <button onClick={loadMore} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-xl border border-border px-5 text-sm font-medium hover:bg-muted disabled:opacity-50">
+                {loading ? <Spinner size={16} /> : 'Load more'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

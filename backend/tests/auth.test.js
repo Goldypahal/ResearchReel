@@ -35,7 +35,8 @@ jest.mock('../src/config/redisClient', () => {
 });
 
 jest.mock('../src/utils/emailService', () => ({
-  sendOTP: jest.fn().mockResolvedValue(true)
+  sendOTP: jest.fn().mockResolvedValue(true),
+  sendStudentCode: jest.fn().mockResolvedValue(true)
 }));
 
 jest.mock('../src/services/searchService', () => ({
@@ -80,7 +81,7 @@ describe('Backend Smoke Tests', () => {
   describe('POST /api/auth/register', () => {
     it('should fail registration if fields are missing or invalid', async () => {
       const response = await request(app)
-        .post('/api/auth/register')
+        .post('/api/v1/auth/register')
         .send({ email: 'invalid-email', password: '123' });
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
@@ -95,7 +96,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const response = await request(app)
-        .post('/api/auth/register')
+        .post('/api/v1/auth/register')
         .send({
           email: 'test@example.com',
           username: 'testuser',
@@ -115,7 +116,7 @@ describe('Backend Smoke Tests', () => {
   describe('POST /api/auth/login', () => {
     it('should fail login with invalid fields', async () => {
       const response = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'invalid-email' });
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
@@ -125,7 +126,7 @@ describe('Backend Smoke Tests', () => {
       db.query.mockResolvedValueOnce({ rows: [] });
 
       const response = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'test@example.com', password: 'correct_password' });
 
       expect(response.status).toBe(401);
@@ -144,7 +145,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const response = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'test@example.com', password: 'correct_password' });
 
       expect(response.status).toBe(200);
@@ -168,7 +169,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const registerRes = await request(app)
-        .post('/api/auth/register')
+        .post('/api/v1/auth/register')
         .send({
           email: 'flow@example.com',
           username: 'flowuser',
@@ -187,7 +188,7 @@ describe('Backend Smoke Tests', () => {
       }); // Select user after verification
       
       const verifyRes = await request(app)
-        .post('/api/auth/verify-otp')
+        .post('/api/v1/auth/verify-otp')
         .send({
           email: 'flow@example.com',
           otp: '123456'
@@ -208,7 +209,7 @@ describe('Backend Smoke Tests', () => {
       });
 
       const loginRes = await request(app)
-        .post('/api/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email: 'flow@example.com', password: 'correct_password' });
 
       expect(loginRes.status).toBe(200);
@@ -220,7 +221,7 @@ describe('Backend Smoke Tests', () => {
   describe('Authentication Middleware', () => {
     it('should deny access to private routes if no token is provided', async () => {
       const response = await request(app)
-        .post('/api/auth/verify/student')
+        .post('/api/v1/auth/verify/student')
         .send({ user_id: 1, university: 'MIT' });
 
       expect(response.status).toBe(401);
@@ -230,7 +231,7 @@ describe('Backend Smoke Tests', () => {
 
     it('should deny access to private routes if an invalid token is provided', async () => {
       const response = await request(app)
-        .post('/api/auth/verify/student')
+        .post('/api/v1/auth/verify/student')
         .set('Authorization', 'Bearer invalidtoken')
         .send({ user_id: 1, university: 'MIT' });
 
@@ -240,23 +241,38 @@ describe('Backend Smoke Tests', () => {
     });
 
     it('should allow access to private routes if a valid token is provided', async () => {
-      // Mock db query inside studentVerification
-      db.query.mockResolvedValueOnce({ rows: [] });
-
-      // Generate a mock JWT token
       const token = jwt.sign(
         { id: 1, verification_status: 'verified' },
         process.env.JWT_SECRET || 'testsecret'
       );
 
       const response = await request(app)
-        .post('/api/auth/verify/student')
+        .post('/api/v1/auth/verify/student')
         .set('Authorization', `Bearer ${token}`)
-        .send({ user_id: 1, university: 'MIT' });
+        .send({ email: 'ada@cs.stanford.edu' });
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(response.body.message).toContain('Student ID Submitted');
+      expect(require('../src/utils/emailService').sendStudentCode).toHaveBeenCalledWith('ada@cs.stanford.edu', expect.stringMatching(/^\d{6}$/));
+    });
+
+    it('rejects student verification with a non-academic email', async () => {
+      const token = jwt.sign({ id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
+      const response = await request(app)
+        .post('/api/v1/auth/verify/student')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ email: 'someone@gmail.com' });
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('NOT_ACADEMIC_EMAIL');
+    });
+
+    it('does not let a client choose its own ORCID iD', async () => {
+      const token = jwt.sign({ id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
+      const response = await request(app)
+        .post('/api/v1/auth/verify/orcid')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ orcid_id: '0000-0002-1825-0097' });
+      expect(response.status).toBe(404);
     });
   });
 });

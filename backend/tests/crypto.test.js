@@ -29,9 +29,24 @@ describe('Crypto Helper Tests', () => {
   test('should handle decryption of corrupted payload gracefully', () => {
     const encrypted = encrypt(testKey);
     const parts = encrypted.split(':');
-    // Corrupt the ciphertext part
-    const corrupted = parts[0] + ':badcafebadcafe';
-    const result = decrypt(corrupted);
-    expect(result).toBeNull();
+    // Flip the ciphertext: GCM's auth tag must reject it
+    parts[3] = parts[3].replace(/^./, (c) => (c === 'a' ? 'b' : 'a'));
+    expect(decrypt(parts.join(':'))).toBeNull();
+  });
+
+  test('uses authenticated v2 format with a fresh IV each time', () => {
+    const a = encrypt(testKey);
+    const b = encrypt(testKey);
+    expect(a.startsWith('v2:')).toBe(true);
+    expect(a).not.toBe(b);
+  });
+
+  test('still reads values stored in the legacy CBC format', () => {
+    const crypto = require('crypto');
+    const key = crypto.createHash('sha256').update(process.env.JWT_SECRET).digest();
+    const iv = crypto.randomBytes(16);
+    const c = crypto.createCipheriv('aes-256-cbc', key, iv);
+    const legacy = iv.toString('hex') + ':' + c.update(testKey, 'utf8', 'hex') + c.final('hex');
+    expect(decrypt(legacy)).toBe(testKey);
   });
 });
