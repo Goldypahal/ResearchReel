@@ -92,7 +92,7 @@ function RegisterForm() {
 
         <div className="flex gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-sm text-zinc-300">
           <BadgeCheck size={18} className="text-indigo-400 shrink-0 mt-0.5" />
-          <p>After sign-up you can get a verified badge in Settings — <span className="text-white">Student</span> with a university email, or <span className="text-white">Researcher</span> by connecting ORCID.</p>
+          <p>After sign-up you can get a verified badge in Settings — <span className="text-white">Student</span> with a university email, or <span className="text-white">Scholar</span> by connecting ORCID.</p>
         </div>
 
         <SubmitButton busy={flow.busy} disabled={!fullName || !username || !email || !password || usernameInvalid || passwordShort}>

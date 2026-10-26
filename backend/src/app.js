@@ -96,6 +96,7 @@ const analyticsRoutes = require('./routes/analyticsRoutes');
 const citationRoutes = require('./routes/citationRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const storyRoutes = require('./routes/storyRoutes');
+const lectureRoutes = require('./routes/lectureRoutes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/posts', postRoutes);
@@ -116,6 +117,7 @@ app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/citations', citationRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/stories', storyRoutes);
+app.use('/api/v1/lectures', lectureRoutes);
 app.use('/api/v1', healthRoutes);
 
 

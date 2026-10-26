@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 const social = require('../controllers/socialController');
+const virusScan = require('../middleware/virusScan');
 const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const account = require('../controllers/accountController');
 const os = require('os');
@@ -22,7 +23,7 @@ router.get('/me/analytics', authMiddleware, userController.getAnalytics);
 router.get('/me/achievements', authMiddleware, social.getAchievements);
 router.get('/me/suggestions', authMiddleware, social.getSuggestions);
 router.put('/update', authMiddleware, userController.updateProfile);
-router.post('/me/avatar', authMiddleware, handleAvatar, account.uploadAvatar);
+router.post('/me/avatar', authMiddleware, handleAvatar, virusScan, account.uploadAvatar);
 router.delete('/me/avatar', authMiddleware, account.removeAvatar);
 router.delete('/me', authMiddleware, account.deleteAccount);
 

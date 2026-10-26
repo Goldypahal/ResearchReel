@@ -11,7 +11,8 @@ import { displayName } from '@/lib/utils';
 import { 
   Home, Search, Compass, PlaySquare, MessageCircle, 
   Heart, PlusSquare, Menu,
-  Bookmark, Sun, LogOut, Users, Moon, Library, User, Bot, Settings, LogIn
+  Bookmark, Sun, LogOut, Users, Moon, Library, User, Bot, Settings, LogIn,
+  GraduationCap,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -58,6 +59,7 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
         { name: 'Library', href: '/library', icon: Bookmark },
         { name: 'AI Research', href: '/ai', icon: Bot },
         { name: 'Projects', href: '/projects', icon: Users },
+        { name: 'Lectures', href: '/lectures', icon: GraduationCap },
         { name: 'Reels', href: '/reels', icon: PlaySquare },
         { name: 'Messages', href: '/messages', icon: MessageCircle, badge: unreadMessages },
         { name: 'Notifications', href: '/notifications', icon: Heart, badge: unreadNotifications },
@@ -68,6 +70,7 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
     : [
         { name: 'Explore', href: '/explore', icon: Search },
         { name: 'Reels', href: '/reels', icon: PlaySquare },
+        { name: 'Lectures', href: '/lectures', icon: GraduationCap },
         { name: 'Sign in', href: '/auth/login', icon: LogIn },
       ];
 

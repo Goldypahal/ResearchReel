@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Bell, CheckCheck, FolderKanban, Heart, MessageSquare, UserPlus } from 'lucide-react';
+import { Bell, BookOpen, CheckCheck, FolderKanban, Heart, MessageSquare, UserPlus } from 'lucide-react';
 import { useSocial } from '@/context/SocialContext';
 import { errorMessage, notificationsApi, REACTIONS, type Notification } from '@/lib/api';
 import { cn, displayName, timeAgo } from '@/lib/utils';
@@ -10,11 +10,15 @@ import { EmptyState, ErrorState, SkeletonRows, Spinner } from '@/components/comm
 import Avatar from '@/components/common/Avatar';
 import FollowButton from '@/components/common/FollowButton';
 
-const ICON: Record<string, React.ElementType> = { follow: UserPlus, reaction: Heart, comment: MessageSquare, project_invite: FolderKanban };
+const ICON: Record<string, React.ElementType> = {
+  follow: UserPlus, reaction: Heart, comment: MessageSquare, project_invite: FolderKanban,
+  lecture_registration: BookOpen, lecture_question: BookOpen, lecture_cancelled: BookOpen,
+};
 
 function describe(n: Notification): { text: React.ReactNode; href: string } {
   const actorHref = n.actor_username ? `/profile/${n.actor_username}` : '#';
   const postHref = n.entity_type === 'post' && n.entity_id ? `/post/${n.entity_id}` : actorHref;
+  const lectureHref = n.entity_id ? `/lectures/${n.entity_id}` : '/lectures';
   switch (n.type) {
     case 'follow':
       return { text: 'started following you.', href: actorHref };
@@ -26,6 +30,12 @@ function describe(n: Notification): { text: React.ReactNode; href: string } {
       return { text: 'added you to a project.', href: n.entity_id ? `/projects/${n.entity_id}` : '/projects' };
     case 'comment':
       return { text: <>commented: <span className="opacity-80">“{n.message}”</span></>, href: postHref };
+    case 'lecture_registration':
+      return { text: <>registered for your lecture <span className="font-medium">{n.message}</span>.</>, href: lectureHref };
+    case 'lecture_question':
+      return { text: <>asked in your lecture: <span className="opacity-80">“{n.message}”</span></>, href: lectureHref };
+    case 'lecture_cancelled':
+      return { text: <>cancelled the lecture <span className="font-medium">{n.message}</span>.</>, href: lectureHref };
     default:
       return { text: n.message || 'sent you a notification.', href: postHref };
   }

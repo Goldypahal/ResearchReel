@@ -13,3 +13,4 @@ export * from './tasks';
 export * from './reels';
 export * from './search';
 export * from './billing';
+export * from './lectures';

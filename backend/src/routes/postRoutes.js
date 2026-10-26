@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const postController = require('../controllers/postController');
+const virusScan = require('../middleware/virusScan');
 const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validationMiddleware');
 const { postSchema } = require('../utils/validators');
@@ -24,7 +25,7 @@ router.post('/media', authMiddleware, (req, res, next) => imageUpload.array('ima
   if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') { err.statusCode = 400; err.message = 'Attach up to 4 images.'; }
   err.statusCode = err.statusCode || 400;
   next(err);
-}), postController.uploadPostImages);
+}), virusScan, postController.uploadPostImages);
 router.post('/react', authMiddleware, postController.reactToPost);
 router.post('/view', optionalAuth, postController.viewPost);
 

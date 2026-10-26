@@ -5,6 +5,7 @@ const path = require('path');
 const multer = require('multer');
 const router = express.Router();
 const assetController = require('../controllers/assetController');
+const virusScan = require('../middleware/virusScan');
 const { authMiddleware } = require('../middleware/authMiddleware');
 
 const upload = multer({
@@ -34,7 +35,7 @@ const handleUpload = (req, res, next) => upload.single('file')(req, res, (err) =
 
 router.use(authMiddleware);
 
-router.post('/upload', handleUpload, assetController.uploadDocument);
+router.post('/upload', handleUpload, virusScan, assetController.uploadDocument);
 router.get('/', assetController.getUserAssets);
 router.get('/:id', assetController.getAsset);
 router.patch('/:id', assetController.updateAsset);
