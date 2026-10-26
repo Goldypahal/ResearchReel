@@ -67,12 +67,18 @@ Text:
  * Answer a question about one paper (document_id) or the user's library.
  * RAG first (cited chunks); for a single paper, fall back to Gemini over its text.
  */
-const askGemini = async ({ document_id, question }) => {
+/**
+ * `document_ids` is the set the caller may read (the controller resolves it);
+ * the RAG service is never queried without one, so retrieval can't reach
+ * other people's private papers.
+ */
+const askGemini = async ({ document_id, document_ids, question }) => {
   const scoped = document_id && document_id !== 'global' ? document_id : null;
+  const allowedIds = scoped ? [scoped] : (Array.isArray(document_ids) ? document_ids : []);
 
-  if (ragService.isConfigured()) {
+  if (ragService.isConfigured() && allowedIds.length) {
     try {
-      const result = await ragService.query(question, scoped ? [scoped] : []);
+      const result = await ragService.query(question, allowedIds);
       return {
         answer: result.answer,
         citations: (result.chunks || []).map((chunk) => ({

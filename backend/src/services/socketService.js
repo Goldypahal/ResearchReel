@@ -1,6 +1,5 @@
 const socketIO = require('socket.io');
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 const redisClient = require('../config/redisClient');
 
 let io;
@@ -22,17 +21,17 @@ const readCookie = (header, name) => {
  * Same rules as the REST authMiddleware: a valid access token (cookie or
  * handshake auth) whose session has not been revoked.
  */
+const SESSION_CHECK_MS = Number(process.env.SOCKET_SESSION_CHECK_MS) || 60 * 1000;
+
 const authenticateSocket = async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token || readCookie(socket.handshake.headers.cookie, 'accessToken');
     if (!token) return next(new Error('unauthorized'));
-    const claims = jwt.verify(token, process.env.JWT_SECRET);
-    if (claims.typ === 'refresh') return next(new Error('unauthorized'));
-    if (claims.sid) {
-      const active = await redisClient.get(`session:${claims.id}:${claims.sid}`);
-      if (active === null) return next(new Error('unauthorized'));
-    }
+    const { verifyAccess } = require('../middleware/authMiddleware');
+    const claims = await verifyAccess(token);
+    if (!claims) return next(new Error('unauthorized'));
     socket.data.userId = claims.id;
+    socket.data.sid = claims.sid;
     return next();
   } catch (_) {
     return next(new Error('unauthorized'));
@@ -64,6 +63,16 @@ const init = (server) => {
 
   io.on('connection', (socket) => {
     const userId = socket.data.userId;
+
+    // A socket outlives the request that opened it: drop it once its session
+    // is revoked (sign out, password change, "sign out other devices").
+    const sessionCheck = setInterval(async () => {
+      try {
+        if ((await redisClient.get(`session:${userId}:${socket.data.sid}`)) === null) socket.disconnect(true);
+      } catch (_) { /* Redis blip: check again next time */ }
+    }, SESSION_CHECK_MS);
+    sessionCheck.unref?.();
+    socket.on('disconnect', () => clearInterval(sessionCheck));
     // Personal room for user-scoped events (notifications, new conversations).
     socket.join(`user:${userId}`);
 

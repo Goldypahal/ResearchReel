@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { signedUrl } = require('../utils/fileAccess');
 
 /**
  * Documents are owned through documents.uploader_id (the column every other
@@ -35,8 +36,14 @@ class DocumentRepository {
   /** API-facing row: the (large) extracted text stays server-side; `indexed` says whether AI Q&A can use it. */
   toPublic(row) {
     if (!row) return row;
-    const { extracted_text, rag_indexed_at, ...rest } = row;
-    return { ...rest, has_text: Boolean(extracted_text), ai_indexed: Boolean(rag_indexed_at) };
+    // storage_key is internal; file_url is replaced by a short-lived signed link.
+    const { extracted_text, rag_indexed_at, storage_key, ...rest } = row;
+    return {
+      ...rest,
+      file_url: signedUrl(storage_key, row.file_url),
+      has_text: Boolean(extracted_text),
+      ai_indexed: Boolean(rag_indexed_at),
+    };
   }
 
   async findById(documentId) {

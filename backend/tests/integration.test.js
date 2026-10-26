@@ -79,7 +79,7 @@ describe('Integration Tests: Core Features', () => {
 
   beforeAll(() => {
     token = jwt.sign(
-      { id: 1, verification_status: 'verified' },
+      { sid: 'test-session', id: 1, verification_status: 'verified' },
       process.env.JWT_SECRET || 'testsecret'
     );
   });
@@ -126,6 +126,8 @@ describe('Integration Tests: Core Features', () => {
   });
 
   it('should successfully answer RAG queries', async () => {
+    // "All papers" is resolved to the papers the caller may read before the RAG call.
+    db.query.mockResolvedValueOnce({ rows: [{ id: '33333333-3333-4333-8333-333333333333' }] });
     const res = await request(app)
       .post('/api/v1/ai/ask-gemini')
       .set('Authorization', `Bearer ${token}`)
@@ -133,6 +135,8 @@ describe('Integration Tests: Core Features', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.answer).toBe('This is a mock RAG answer');
+    expect(require('../src/services/ai/ragService').query)
+      .toHaveBeenCalledWith('What is quantum?', ['33333333-3333-4333-8333-333333333333']);
   });
 
   it('should successfully react to a post', async () => {
@@ -177,18 +181,21 @@ describe('Integration Tests: Core Features', () => {
     expect(res.body.data[0].title).toBe('Quantum Computing Post');
   });
 
+  const CONV_ID = '44444444-4444-4444-8444-444444444444';
+
   it('should send and retrieve messages', async () => {
-    // 1. Mock sending a message: participant check, insert, sender lookup, read receipt
+    // 1. Mock sending a message: participant check, block check, insert, sender lookup, read receipt
     db.query
       .mockResolvedValueOnce({ rows: [{ '?column?': 1 }] })
-      .mockResolvedValueOnce({ rows: [{ id: 1, sender_id: 1, content: 'Hello researcher', conversation_id: 'conv_123' }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // no block between participants
+      .mockResolvedValueOnce({ rows: [{ id: 1, sender_id: 1, content: 'Hello researcher', conversation_id: CONV_ID }] })
       .mockResolvedValueOnce({ rows: [{ username: 'researcher' }] })
       .mockResolvedValueOnce({ rows: [] });
 
     const sendRes = await request(app)
       .post('/api/v1/messages/send')
       .set('Authorization', `Bearer ${token}`)
-      .send({ receiver_id: 2, content: 'Hello researcher', conversation_id: 'conv_123', sender_id: 1 });
+      .send({ receiver_id: 2, content: 'Hello researcher', conversation_id: CONV_ID, sender_id: 1 });
 
     expect(sendRes.statusCode).toBe(201);
     expect(sendRes.body.success).toBe(true);
@@ -196,7 +203,7 @@ describe('Integration Tests: Core Features', () => {
 
     // 2. Mock retrieving conversations
     db.query.mockResolvedValueOnce({
-      rows: [{ id: 'conv_123', last_message: 'Hello researcher' }]
+      rows: [{ id: CONV_ID, last_message: 'Hello researcher' }]
     });
 
     const convRes = await request(app)
@@ -215,7 +222,7 @@ describe('Integration Tests: Core Features', () => {
     const res = await request(app)
       .post('/api/v1/messages/send')
       .set('Authorization', `Bearer ${token}`)
-      .send({ content: 'Hello', conversation_id: 'conv_999' });
+      .send({ content: 'Hello', conversation_id: '99999999-9999-4999-8999-999999999999' });
 
     expect(res.statusCode).toBe(403);
   });

@@ -2,6 +2,18 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const redisClient = require('../config/redisClient');
 
+/**
+ * Verifies an access token and its live session. Every token we issue carries
+ * a session id (sid); one without it can't be revoked, so it isn't accepted.
+ * Returns the claims, or null for anything that shouldn't authenticate.
+ */
+const verifyAccess = async (token) => {
+  const claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+  if (claims.typ === 'refresh' || !claims.id || !claims.sid) return null;
+  const active = await redisClient.get(`session:${claims.id}:${claims.sid}`);
+  return active === null ? null : claims;
+};
+
 const authMiddleware = async (req, res, next) => {
   const token = req.cookies?.accessToken || req.header('Authorization')?.split(' ')[1];
 
@@ -10,16 +22,9 @@ const authMiddleware = async (req, res, next) => {
   }
 
   try {
-    const verified = jwt.verify(token, process.env.JWT_SECRET);
-    // A refresh token must never authorise an API call.
-    if (verified.typ === 'refresh') {
-      return res.status(401).json({ success: false, message: 'Invalid or expired token' });
-    }
-    if (verified.sid && verified.id) {
-      const activeSession = await redisClient.get(`session:${verified.id}:${verified.sid}`);
-      if (activeSession === null) {
-        return res.status(401).json({ success: false, message: 'Session revoked or expired' });
-      }
+    const verified = await verifyAccess(token);
+    if (!verified) {
+      return res.status(401).json({ success: false, message: 'Session revoked or expired' });
     }
     req.user = verified;
     next();
@@ -62,12 +67,8 @@ const optionalAuth = async (req, res, next) => {
   const token = req.cookies?.accessToken || req.header('Authorization')?.split(' ')[1];
   if (!token) return next();
   try {
-    const verified = jwt.verify(token, process.env.JWT_SECRET);
-    if (verified.typ === 'refresh') return next();
-    if (verified.sid && verified.id) {
-      const activeSession = await redisClient.get(`session:${verified.id}:${verified.sid}`);
-      if (activeSession === null) return next();
-    }
+    const verified = await verifyAccess(token);
+    if (!verified) return next();
     req.user = verified;
   } catch (_) {
     // Expired or invalid token on a public route: treat as anonymous.
@@ -75,4 +76,4 @@ const optionalAuth = async (req, res, next) => {
   next();
 };
 
-module.exports = { authMiddleware, optionalAuth, checkVerification, checkRole };
+module.exports = { verifyAccess, authMiddleware, optionalAuth, checkVerification, checkRole };
