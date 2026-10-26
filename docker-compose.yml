@@ -159,10 +159,14 @@ services:
         NEXT_PUBLIC_API_URL: ${PUBLIC_URL:-http://localhost:8080}/api/v1
         NEXT_PUBLIC_WSS_URL: ${PUBLIC_URL:-http://localhost:8080}
         NEXT_PUBLIC_SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_URL:-http://localhost:8080}
         NEXT_PUBLIC_SENTRY_DSN: ${SENTRY_DSN:-}
         NEXT_PUBLIC_POSTHOG_KEY: ${POSTHOG_KEY:-}
         NEXT_PUBLIC_POSTHOG_HOST: ${POSTHOG_HOST:-}
     restart: unless-stopped
+    environment:
+      # Server-side reads for link previews and the sitemap go straight to the API container.
+      API_INTERNAL_URL: http://api:5000/api/v1
     depends_on:
       - api
     networks: [internal]
