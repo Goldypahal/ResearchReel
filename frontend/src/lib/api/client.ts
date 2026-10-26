@@ -48,7 +48,7 @@ function refreshSession(): Promise<boolean> {
   return refreshInFlight;
 }
 
-const NO_REFRESH = ['/auth/login', '/auth/register', '/auth/verify-otp', '/auth/resend-otp', '/auth/password/', '/auth/refresh', '/auth/logout'];
+const NO_REFRESH = ['/auth/login', '/auth/register', '/auth/verify-otp', '/auth/resend-otp', '/auth/password/', '/auth/refresh', '/auth/logout', '/notifications/unsubscribe'];
 
 async function request<T>(endpoint: string, options: RequestInit, retried: boolean): Promise<ApiResponse<T>> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;

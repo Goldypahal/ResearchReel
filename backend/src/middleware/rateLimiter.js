@@ -5,6 +5,14 @@ const redisClient = require('../config/redisClient');
  * @param {number} limit - Maximum number of requests allowed in the window
  * @param {number} windowSecs - Window size in seconds
  */
+/**
+ * Client IPs exempt from rate limits (comma separated), e.g. an internal
+ * health monitor or the CI browser-test runner. Empty by default.
+ */
+const ALLOWLIST = new Set(
+  (process.env.RATE_LIMIT_ALLOWLIST || '').split(',').map((s) => s.trim()).filter(Boolean)
+);
+
 const rateLimiter = (limit = 100, windowSecs = 60) => {
   return async (req, res, next) => {
     // Skip rate limiting during testing to prevent tests from failing
@@ -13,6 +21,7 @@ const rateLimiter = (limit = 100, windowSecs = 60) => {
     }
 
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    if (ALLOWLIST.has(ip)) return next();
     const key = `rate:${ip}:${req.path}`;
 
     try {

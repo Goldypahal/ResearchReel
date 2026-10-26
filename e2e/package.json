@@ -1,0 +1,13 @@
+{
+  "name": "researchreel-e2e",
+  "private": true,
+  "description": "Browser tests against a running ResearchReel stack (web + API + Postgres + Redis + Mailpit).",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "pg": "^8.22.0"
+  }
+}

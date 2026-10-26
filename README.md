@@ -55,15 +55,22 @@ codes to the API log. The demo seed creates accounts such as
 `albert@princeton.edu` with the password `Science123!`; it refuses to run with
 `NODE_ENV=production`.
 
-## Checks
+## Tests
 
 ```bash
-cd backend && npm test                                   # API tests
+cd backend && npm test                 # unit tests (fast, mocked)
+cd backend && npm run test:db          # API against real Postgres + Redis (TEST_DATABASE_URL, TEST_REDIS_URL)
 cd frontend && npm run lint && npx tsc --noEmit && npm run build
+cd e2e && npm install && npx playwright test   # browser tests against a running stack
 ```
 
-CI runs these plus dependency audits and a from-scratch migration check on
-every pull request.
+The browser tests expect the web app on :3000, the API on :5000 sending mail
+to [Mailpit](https://mailpit.axllent.org) (SMTP :1025, UI :8025), and
+`DATABASE_URL` set. Run the API with `RATE_LIMIT_ALLOWLIST=127.0.0.1,::1` so
+the many test sign-ups aren't throttled.
+
+CI runs all of these, plus dependency audits and a from-scratch migration
+check, on every pull request.
 
 ## Configuration
 

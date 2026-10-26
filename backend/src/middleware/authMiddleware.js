@@ -17,7 +17,7 @@ const authMiddleware = async (req, res, next) => {
     }
     if (verified.sid && verified.id) {
       const activeSession = await redisClient.get(`session:${verified.id}:${verified.sid}`);
-      if (activeSession === null && process.env.NODE_ENV !== 'test') {
+      if (activeSession === null) {
         return res.status(401).json({ success: false, message: 'Session revoked or expired' });
       }
     }
@@ -64,7 +64,7 @@ const optionalAuth = async (req, res, next) => {
   try {
     const verified = jwt.verify(token, process.env.JWT_SECRET);
     if (verified.typ === 'refresh') return next();
-    if (verified.sid && verified.id && process.env.NODE_ENV !== 'test') {
+    if (verified.sid && verified.id) {
       const activeSession = await redisClient.get(`session:${verified.id}:${verified.sid}`);
       if (activeSession === null) return next();
     }
