@@ -73,6 +73,7 @@ exports.deletePost = async (req, res, next) => {
       [req.params.id, req.user.id]
     );
     if (!result.rowCount) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
+    await require('../services/searchService').removeEntity('posts', req.params.id).catch(() => {});
     return sendSuccess(res, { id: req.params.id }, 'Post deleted.');
   } catch (error) {
     next(error);

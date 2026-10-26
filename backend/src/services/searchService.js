@@ -15,6 +15,43 @@ try {
   console.warn('Elasticsearch initialization failed, falling back to database search:', error.message);
 }
 
+/** Returns `${index}:${id}` keys of hits the viewer may still see right now. */
+const stillVisible = async (hits, viewerId) => {
+  const idsFor = (name) => hits.filter((h) => h._index.includes(name)).map((h) => String(h._source.id))
+    .filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+  const live = "(u.is_deleted IS NULL OR u.is_deleted = FALSE)";
+  const checks = [
+    ['researchreel_documents', idsFor('documents'),
+      `SELECT id FROM documents WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
+         AND (visibility = 'public' OR uploader_id = $2::uuid)`, true],
+    ['researchreel_posts', idsFor('posts'),
+      `SELECT p.id FROM posts p JOIN users u ON u.id = p.author_id
+        WHERE p.id = ANY($1::uuid[]) AND p.deleted_at IS NULL AND ${live}`],
+    ['researchreel_videos', idsFor('videos'),
+      'SELECT id FROM videos WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL'],
+    ['researchreel_users', idsFor('users'),
+      `SELECT u.id FROM users u WHERE u.id = ANY($1::uuid[]) AND ${live} AND u.verification_status <> 'unverified'`],
+  ];
+  const visible = new Set();
+  await Promise.all(checks.map(async ([index, ids, sql, needsViewer]) => {
+    if (!ids.length) return;
+    const { rows } = await db.query(sql, needsViewer ? [ids, viewerId || null] : [ids]);
+    rows.forEach((r) => visible.add(`${index}:${r.id}`));
+  }));
+  return visible;
+};
+
+/** Keeps a document's search entry in step with its row (visibility, title, deletion). */
+const syncDocument = async (documentId) => {
+  if (!esClient) return;
+  const { rows } = await db.query(
+    'SELECT id, uploader_id, title, abstract, doi, file_name, visibility FROM documents WHERE id = $1 AND deleted_at IS NULL',
+    [documentId]
+  );
+  if (rows[0]) await indexEntity('documents', documentId, rows[0]);
+  else await removeEntity('documents', documentId);
+};
+
 /**
  * Perform a search across documents, posts, videos, and users.
  * Supports Elasticsearch with full SQL query fallback.
@@ -71,8 +108,10 @@ const searchDocuments = async (query, type = 'all', cursor = null, limit = 10, v
         nextCursor = hits[hits.length - 1].sort.join(',');
       }
 
-      const visibleHits = hits.filter((hit) => !hit._index.includes('documents')
-        || hit._source.uploader_id === viewerId || hit._source.visibility === 'public');
+      // The index can lag behind Postgres (a paper made private, a post or
+      // account deleted), so every hit is re-checked against the database.
+      const visibleIds = await stillVisible(hits, viewerId);
+      const visibleHits = hits.filter((hit) => visibleIds.has(`${hit._index}:${hit._source.id}`));
       return {
         results: visibleHits.map(hit => ({
           id: hit._source.id,
@@ -228,6 +267,8 @@ const removeEntity = async (index, id) => {
 module.exports = {
   searchDocuments,
   indexEntity,
-  removeEntity
+  removeEntity,
+  syncDocument,
+  stillVisible
 };
 

@@ -36,7 +36,11 @@ query_service = QueryService(retriever, generator, enforcer)
 
 @router.post("/query", response_model=QueryResponse)
 async def query_rag(request: QueryRequest):
-    filters = {"paper_id": request.paper_ids} if request.paper_ids else None
+    # The index holds every user's papers, including private ones. The API
+    # resolves which papers the caller may read; an unscoped query is refused.
+    if not request.paper_ids:
+        raise HTTPException(status_code=400, detail="paper_ids is required: queries must be scoped to papers the caller can read.")
+    filters = {"paper_id": request.paper_ids}
     result = query_service.ask(request.query, filters=filters, expand_context=request.expand_context, prompt_version=request.prompt_version)
     return QueryResponse(
         answer=result['answer'],

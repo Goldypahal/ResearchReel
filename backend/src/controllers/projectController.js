@@ -210,8 +210,9 @@ exports.getDocumentVersions = async (req, res, next) => {
   const userId = req.user.id;
 
   try {
-    const { allowed } = await canAccessDocument(userId, document_id);
-    if (!allowed) {
+    const { allowed, via } = await canAccessDocument(userId, document_id);
+    // Version history holds unpublished edits: owner and project collaborators only.
+    if (!allowed || !['owner', 'project'].includes(via)) {
       return sendError(res, 'Forbidden: Cannot access document versions.', 403, 'AUTHORIZATION_ERROR', req);
     }
 

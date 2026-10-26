@@ -2,7 +2,7 @@ const aiService = require('../services/aiService');
 const db = require('../config/db');
 const redisClient = require('../config/redisClient');
 const crypto = require('crypto');
-const { canAccessDocument } = require('../authorization/documentAuthorization');
+const { canAccessDocument, accessibleIndexedDocumentIds } = require('../authorization/documentAuthorization');
 const { sendSuccess, sendError } = require('../utils/response');
 const documentRepository = require('../repositories/documentRepository');
 const gemini = require('../services/ai/geminiClient');
@@ -81,11 +81,17 @@ exports.askGemini = async (req, res, next) => {
       return sendError(res, 'question parameter is required.', 400, 'VALIDATION_ERROR', req);
     }
 
-    if (document_id && document_id !== 'global') {
+    const scoped = document_id && document_id !== 'global';
+    if (scoped) {
       const { allowed } = await canAccessDocument(userId, document_id);
       if (!allowed) {
         return sendError(res, 'Forbidden: You do not have access to this research document.', 403, 'AUTHORIZATION_ERROR', req);
       }
+    }
+    // "All papers" means all papers this user may read, never the whole index.
+    const documentIds = scoped ? [document_id] : await accessibleIndexedDocumentIds(userId);
+    if (!documentIds.length) {
+      return sendSuccess(res, { answer: 'None of the papers you can read have been indexed for AI answers yet. Upload a paper or open a public one first.', citations: [], source: 'none' }, 'No papers to search.');
     }
 
     const withinLimit = await checkDailyAiCap(userId);
@@ -93,14 +99,15 @@ exports.askGemini = async (req, res, next) => {
       return sendError(res, `Daily limit of ${DAILY_AI_CAP} AI queries reached.`, 429, 'RATE_LIMIT_EXCEEDED', req);
     }
 
-    const questionHash = crypto.createHash('md5').update(question || '').digest('hex');
-    const cacheKey = `doc_qa:${document_id || 'global'}:${questionHash}`;
+    const questionHash = crypto.createHash('sha256').update(question || '').digest('hex');
+    // A single paper's answer is the same for every reader; an "all papers" answer depends on who asks.
+    const cacheKey = scoped ? `doc_qa:${document_id}:${questionHash}` : `doc_qa:global:${userId}:${questionHash}`;
     const cachedAnswer = await redisClient.get(cacheKey);
     if (cachedAnswer) {
       return sendSuccess(res, JSON.parse(cachedAnswer), 'Answer retrieved from cache.');
     }
 
-    const response = await aiService.askGemini({ document_id, question: String(question).slice(0, 2000) });
+    const response = await aiService.askGemini({ document_id: scoped ? document_id : null, document_ids: documentIds, question: String(question).slice(0, 2000) });
     await redisClient.set(cacheKey, JSON.stringify(response), { EX: 86400 });
 
     return sendSuccess(res, response, 'AI answer generated.');

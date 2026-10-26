@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const citationController = require('../controllers/citationController');
-const { authMiddleware: protect } = require('../middleware/authMiddleware');
+const { authMiddleware: protect, checkRole } = require('../middleware/authMiddleware');
 
 router.get('/graph/:doi', protect, citationController.getGraph);
-router.post('/paper', protect, citationController.addPaper);
-router.post('/link', protect, citationController.addCitation);
+// The citation graph is shared by everyone: only admins may write to it by hand.
+router.post('/paper', protect, checkRole(['admin']), citationController.addPaper);
+router.post('/link', protect, checkRole(['admin']), citationController.addCitation);
 
 module.exports = router;
