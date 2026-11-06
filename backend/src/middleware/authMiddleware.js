@@ -11,10 +11,10 @@ const extractToken = (req) => {
  * Verifies a JWT access token and that its session has not been revoked.
  * Returns the decoded payload or throws.
  */
-const verifyAccessToken = async (token) => {
+const verifyAccessToken = async (token, allowedTypes = ['access']) => {
   const verified = jwt.verify(token, process.env.JWT_SECRET);
-  if (verified.type && verified.type !== 'access') {
-    throw new Error('Only access tokens can be used for API access');
+  if (!allowedTypes.includes(verified.type || 'access')) {
+    throw new Error('This token cannot be used for this request');
   }
   if (verified.sid && verified.id) {
     const activeSession = await redisClient.get(`session:${verified.id}:${verified.sid}`);
@@ -45,6 +45,23 @@ const authMiddleware = async (req, res, next) => {
       message: 'Invalid or expired session',
       error: { code: 'AUTHENTICATION_ERROR', message: 'Invalid or expired session' }
     });
+  }
+};
+
+/**
+ * Like authMiddleware, but also accepts short-lived upload tokens (GET /auth/upload-token).
+ * Lets browsers send large files straight to the API instead of through the web proxy.
+ */
+const uploadAuth = async (req, res, next) => {
+  const token = extractToken(req);
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Authentication required', error: { code: 'AUTHENTICATION_ERROR', message: 'Authentication required' } });
+  }
+  try {
+    req.user = await verifyAccessToken(token, ['access', 'upload']);
+    next();
+  } catch (error) {
+    res.status(401).json({ success: false, message: 'Invalid or expired session', error: { code: 'AUTHENTICATION_ERROR', message: 'Invalid or expired session' } });
   }
 };
 
@@ -98,4 +115,4 @@ const checkRole = (roles) => {
   };
 };
 
-module.exports = { authMiddleware, optionalAuth, checkVerification, checkRole, verifyAccessToken, extractToken };
+module.exports = { authMiddleware, uploadAuth, optionalAuth, checkVerification, checkRole, verifyAccessToken, extractToken };

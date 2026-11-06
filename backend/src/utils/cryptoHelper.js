@@ -1,12 +1,12 @@
 const crypto = require('crypto');
 const dotenv = require('dotenv');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key-32-chars-long-at-least!';
-
-// Derive a 32-byte key from JWT_SECRET
-const ENCRYPTION_KEY = crypto.createHash('sha256').update(JWT_SECRET).digest();
+// ENCRYPTION_KEY (preferred) or JWT_SECRET is hashed into the 32-byte AES key.
+// Set ENCRYPTION_KEY separately so rotating JWT_SECRET doesn't invalidate stored API keys.
+const SECRET = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || 'dev-only-insecure-secret';
+const ENCRYPTION_KEY = crypto.createHash('sha256').update(SECRET).digest();
 const IV_LENGTH = 16;
 
 /**

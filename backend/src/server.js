@@ -1,7 +1,7 @@
 const http = require('http');
 const dotenv = require('dotenv');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 // Fail fast on missing critical configuration in production.
 const required = ['DATABASE_URL', 'REDIS_URL', 'JWT_SECRET'];

@@ -31,8 +31,6 @@ export const identifyUser = (userId: string, email?: string, properties?: Record
   if (typeof window !== 'undefined') {
     if (POSTHOG_KEY) {
       posthog.identify(userId, { email, ...properties });
-    } else {
-      console.log(`[Analytics MOCK] Identify User: ${userId}`, { email, ...properties });
     }
   }
 };
@@ -41,8 +39,6 @@ export const resetAnalytics = () => {
   if (typeof window !== 'undefined') {
     if (POSTHOG_KEY) {
       posthog.reset();
-    } else {
-      console.log(`[Analytics MOCK] Reset`);
     }
   }
 };

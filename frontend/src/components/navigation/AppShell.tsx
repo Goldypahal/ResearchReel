@@ -65,9 +65,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex flex-col md:flex-row">
-      <Sidebar onOpenCreate={() => setIsCreationOpen(true)} />
+      {user && <Sidebar onOpenCreate={() => setIsCreationOpen(true)} />}
 
-      <div className="flex-1 flex flex-col md:pl-[72px] min-w-0 transition-all duration-300">
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${user ? 'md:pl-[72px]' : ''}`}>
         <header className="sticky top-0 z-30 h-16 border-b border-[var(--border)] bg-[var(--background)]/90 backdrop-blur-xl px-4 md:px-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 md:hidden">
             <Link href="/home" className="flex items-center gap-2">

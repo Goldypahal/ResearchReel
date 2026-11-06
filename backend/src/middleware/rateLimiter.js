@@ -12,8 +12,10 @@ const rateLimiter = (limit = 100, windowSecs = 60) => {
       return next();
     }
 
-    const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    const key = `rate:${ip}:${req.path}`;
+    // Per user when signed in (route limiters run after auth), otherwise per IP.
+    // Use the full path so routers that each define POST "/" don't share a counter.
+    const who = req.user?.id ? `u:${req.user.id}` : `ip:${req.ip || req.socket.remoteAddress}`;
+    const key = `rate:${who}:${req.method}:${req.baseUrl}${req.path}`;
 
     try {
       const client = redisClient.client;

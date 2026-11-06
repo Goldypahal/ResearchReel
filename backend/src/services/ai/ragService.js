@@ -1,7 +1,7 @@
 const axios = require('axios');
 const dotenv = require('dotenv');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const RAG_SERVICE_URL = process.env.RAG_SERVICE_URL || 'http://localhost:8000/api/v1';
 const REQUEST_TIMEOUT = 15000; // 15 seconds timeout

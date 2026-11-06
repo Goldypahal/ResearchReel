@@ -301,8 +301,16 @@ const issueSocketToken = (user) => jwt.sign(
   { expiresIn: '12h' }
 );
 
+/** Short-lived token for direct-to-API uploads (keeps the same session id for revocation). */
+const issueUploadToken = (user) => jwt.sign(
+  { id: user.id, sid: user.sid, username: user.username, role: user.role, verification_status: user.verification_status, type: 'upload' },
+  process.env.JWT_SECRET,
+  { expiresIn: '15m' }
+);
+
 module.exports = {
   AuthError,
+  issueUploadToken,
   USER_PUBLIC_COLUMNS,
   sanitizeUser,
   register,

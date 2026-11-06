@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const c = require('../controllers/postController');
-const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
+const { authMiddleware, uploadAuth, optionalAuth } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validationMiddleware');
 const { commentSchema } = require('../utils/validators');
 const { mixedUpload, verifyFileSignatures, IMAGE_TYPES } = require('../middleware/upload');
@@ -17,7 +17,7 @@ const checkFieldTypes = (req, res, next) => {
 
 router.get('/feed', optionalAuth, c.getFeed);
 router.get('/saved', authMiddleware, c.getSaved);
-router.post('/', authMiddleware, rateLimiter(60, 3600), postUpload, checkFieldTypes, verifyFileSignatures, c.createPost);
+router.post('/', uploadAuth, rateLimiter(60, 3600), postUpload, checkFieldTypes, verifyFileSignatures, c.createPost);
 router.post('/create', authMiddleware, rateLimiter(60, 3600), postUpload, checkFieldTypes, verifyFileSignatures, c.createPost);
 router.post('/react', authMiddleware, c.like);
 router.post('/view', optionalAuth, c.viewPost);

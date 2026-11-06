@@ -5,7 +5,7 @@
  *
  * Safe to run repeatedly. No demo content is created.
  */
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const argon2 = require('argon2');
 const db = require('../config/db');
 

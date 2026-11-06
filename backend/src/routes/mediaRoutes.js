@@ -5,7 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const router = express.Router();
 const mediaController = require('../controllers/mediaController');
-const { authMiddleware } = require('../middleware/authMiddleware');
+const { authMiddleware, uploadAuth } = require('../middleware/authMiddleware');
 const rateLimiter = require('../middleware/rateLimiter');
 const { UPLOAD_DIR } = require('../services/storageService');
 
@@ -29,6 +29,6 @@ const upload = multer({
   }
 });
 
-router.post('/upload', authMiddleware, rateLimiter(20, 3600), upload.single('video'), mediaController.uploadVideo);
+router.post('/upload', uploadAuth, rateLimiter(20, 3600), upload.single('video'), mediaController.uploadVideo);
 
 module.exports = router;

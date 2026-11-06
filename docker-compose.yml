@@ -1,151 +1,73 @@
-version: '3.8'
+# Local / single-server deployment: `docker compose up --build`
+# Then open http://localhost:3000. Create an admin with:
+#   docker compose exec api sh -c "ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='change-me-please' npm run seed"
 
 services:
-  # Database Service (Section 9.0)
   postgres:
-    image: postgres:15-alpine
-    container_name: researchreel-db
+    image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}
-      POSTGRES_DB: ${POSTGRES_DB:-researchreel}
-    ports:
-      - "5433:5432"
+      POSTGRES_USER: researchreel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-researchreel}
+      POSTGRES_DB: researchreel
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ${PWD}/docs/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    networks:
-      - researchreel-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-researchreel}"]
+      test: ["CMD-SHELL", "pg_isready -U researchreel -d researchreel"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  # Redis Cache & OTP Broker (Section 9.1)
   redis:
     image: redis:7-alpine
-    container_name: researchreel-cache
-    environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}
-    command: redis-server --requirepass ${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}
-    ports:
-      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
-    networks:
-      - researchreel-network
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a $${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_} ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  # Python RAG Microservice (Section 4.0)
-  rag-service:
-    build:
-      context: ./backend/research_rag
-      dockerfile: Dockerfile
-    container_name: researchreel-rag
+  api:
+    build: ./backend
     environment:
-      - PORT=8000
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - QDRANT_URL=${QDRANT_URL}
-      - QDRANT_API_KEY=${QDRANT_API_KEY}
-    ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - researchreel-network
-
-  # Node.js API Gateway & Main Backend (Section 2.0)
-  api-gateway:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: researchreel-gateway
-    environment:
-      - PORT=5000
-      - NODE_ENV=production
-      - JWT_SECRET=${JWT_SECRET}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - RAG_SERVICE_URL=http://rag-service:8000
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
-      - START_WORKER=false
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://researchreel:${POSTGRES_PASSWORD:-researchreel}@postgres:5432/researchreel
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (at least 32 characters)}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - uploads:/app/public/uploads
     ports:
       - "5000:5000"
-    volumes:
-      - media_uploads:/app/public/uploads
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rag-service:
-        condition: service_started
-    networks:
-      - researchreel-network
 
-  # Dedicated Background Task Worker (BullMQ + FFmpeg)
-  video-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: researchreel-worker
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-R$$s3@rchR33l_P0stgr3s_S3cur3!}@postgres:5432/${POSTGRES_DB:-researchreel}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-R_s3_archR33l_R3dis_S3cur3_}@redis:6379
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - START_WORKER=true
-    volumes:
-      - media_uploads:/app/public/uploads
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - researchreel-network
-
-  # Next.js Frontend Web Application (Section 2.0)
-  frontend:
+  web:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: researchreel-web
+      args:
+        BACKEND_URL: http://api:5000
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:5000/api
-      - NEXT_PUBLIC_WSS_URL=ws://localhost:5000
-      - NEXT_PUBLIC_CROSSREF_MAILTO=${NEXT_PUBLIC_CROSSREF_MAILTO}
-      - NEXT_PUBLIC_ORCID_CLIENT_ID=${NEXT_PUBLIC_ORCID_CLIENT_ID}
-      - NEXT_PUBLIC_ENABLE_AI_CHAT=${NEXT_PUBLIC_ENABLE_AI_CHAT:-true}
-      - NEXT_PUBLIC_ENABLE_REALTIME_NOTIFS=${NEXT_PUBLIC_ENABLE_REALTIME_NOTIFS:-true}
+      PORT: 3000
     ports:
       - "3000:3000"
     depends_on:
-      - api-gateway
-    networks:
-      - researchreel-network
-
-networks:
-  researchreel-network:
-    driver: bridge
+      - api
 
 volumes:
   postgres_data:
-    driver: local
   redis_data:
-    driver: local
-  media_uploads:
-    driver: local
+  uploads:

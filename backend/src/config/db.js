@@ -1,7 +1,7 @@
 const { Pool, types } = require('pg');
 const dotenv = require('dotenv');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 // Return BIGINT/COUNT(*) as JS numbers instead of strings (safe for our value ranges).
 types.setTypeParser(20, (v) => (v === null ? null : parseInt(v, 10)));

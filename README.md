@@ -1,113 +1,108 @@
-# 🚀 ResearchReel — Quick Start & Run Guide
+# ResearchReel
 
-ResearchReel is a microservices-based, cloud-native platform designed for sharing research via short-form videos (Reels) and interactive research documents. 
+A social platform for research. People share findings as posts, papers and short video reels, follow each other, discuss, collaborate on projects, host live lectures, and ask an AI assistant about papers.
 
-This repository consists of:
-*   **Next.js Frontend Web App** (`/frontend`) - Runs on port `3000`
-*   **Express API Gateway / Backend** (`/backend`) - Runs on port `5000`
-*   **Python RAG Microservice** (`/backend/research_rag`) - Runs on port `8000`
-*   **Background Video Task Worker** (`video-worker`) - Compiles TTS and builds videos
-*   **Postgres & Redis** - Database and caching backends
+## Features
 
----
+- **Accounts**: email sign-up with a verification code, password reset, session management, ORCID-verified researcher badges
+- **Feed**: posts with text, images or a PDF paper; likes, comments, bookmarks, #tags and @mentions; "Following" and "Everyone" feeds; 24-hour stories
+- **Reels**: vertical video feed; upload your own video, or generate an explainer reel from a paper (script → editable scenes → rendered MP4 with optional AI narration)
+- **Library**: upload PDFs (text is extracted for search and AI), or import publications by DOI or ORCID via Crossref
+- **AI assistant** (optional, Gemini): ask questions grounded in a paper's full text, summaries, conversation history
+- **Messages**: direct messages with live delivery, unread counts and typing indicators
+- **Notifications**: follows, likes, comments, mentions, project invites, lectures, reel processing, all live
+- **Projects**: members and roles, drag-and-drop task boards, shared papers; a "My tasks" board across projects
+- **Lectures**: schedule or go live, registration with a private meeting link, live discussion
+- **Discovery**: search (people, papers, posts, reels, tags), discover, explore, conference deadline tracker, leaderboard, achievements
+- **Moderation**: reporting, moderator console (reports, users, suspensions, roles), audit log
 
-## 🛠️ Prerequisites
+## Architecture
 
-Before running the application, make sure you configure your environment variables:
-
-1.  **Configure API Keys**:
-    *   Create a `.env` file in the workspace root by copying `.env.example`.
-    *   Set your `GEMINI_API_KEY` (powers AI chat & video generation) in the `.env` file or in `backend/.env`.
-    *   Provide any other credentials (like `QDRANT_API_KEY` and `QDRANT_URL`) if utilizing remote vector indices.
-2.  **Verify local files**:
-    *   Ensure a `.env` exists in `/backend` (copied from `backend/.env.example`).
-    *   Ensure a `.env` exists in `/frontend` (copied from `frontend/.env.local`).
-
----
-
-## 🐳 Option A: Running with Docker Compose (Recommended)
-
-Docker Compose spins up the entire stack (PostgreSQL, Redis, Python RAG Service, Node Gateway, Next.js Frontend, and background workers) automatically.
-
-### 1. Start all services
-Run the following command in the root workspace directory:
-```bash
-docker-compose up --build -d
 ```
-This builds and launches the containers in detached (background) mode.
-
-### 2. Seed the Database
-To populate the database with default test users (including `albert@princeton.edu`), sample papers, and reels, run the seed script inside the API Gateway container:
-```bash
-docker-compose exec api-gateway npm run seed
+Browser ──► Next.js web app (frontend/) ──proxy /api, /uploads, /socket.io──► Express API (backend/)
+                                                                               │  ├─ PostgreSQL (data)
+Large uploads (optional) ─────────── direct to API with upload token ──────────┤  ├─ Redis (sessions, rate limits, jobs, realtime)
+                                                                               │  ├─ BullMQ worker + FFmpeg (reels)
+                                                                               │  ├─ Disk or S3-compatible storage (files)
+                                                                               │  └─ Gemini API (optional AI)
 ```
 
-### 3. Access the Application
-*   **Frontend Web App**: [http://localhost:3000](http://localhost:3000)
-*   **API Gateway / Backend**: [http://localhost:5000](http://localhost:5000)
-*   **RAG Microservice**: [http://localhost:8000](http://localhost:8000)
+The browser only talks to the web app's domain; the web server proxies API calls, files and websockets to the API. This keeps auth cookies first-party and lets the API run on a private network. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-### 4. Stop the services
-To stop and remove all containers:
+## Run it locally
+
+Requirements: Node.js 20+, PostgreSQL 14+, Redis 6+, FFmpeg (for reels).
+
 ```bash
-docker-compose down
-```
-
----
-
-## 💻 Option B: Running Locally (Individual Services)
-
-If you prefer to run services manually outside Docker, follow this sequence:
-
-### 1. Backing Services Setup
-Ensure you have local instances of:
-*   **PostgreSQL** running on port `5432` (or the port defined in `backend/.env`) with a database named `researchreel`.
-*   **Redis** running on port `6379`.
-
-### 2. Run Database Migrations & Seeding
-From the `/backend` folder:
-```bash
+# 1. Backend
 cd backend
+cp .env.example .env            # edit DATABASE_URL / REDIS_URL if needed
 npm install
-# Run migrations to update table structures
-npx node-pg-migrate up
-# Seed the database
-npm run seed
-```
+npm run migrate                 # create the database schema
+npm run dev                     # API on http://localhost:5000
 
-### 3. Start Backend & API Gateway
-From the `/backend` folder:
-```bash
-npm run dev
-```
-The gateway will start on port `5000`.
-
-### 4. Start Python RAG Service
-From the `/backend/research_rag` folder:
-```bash
-cd backend/research_rag
-# Set up virtual environment (Windows)
-python -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-# Run the FastAPI server
-python -m app.main
-```
-The RAG service will listen on port `8000`.
-
-### 5. Start Next.js Frontend
-From the `/frontend` folder:
-```bash
+# 2. Frontend (new terminal)
 cd frontend
 npm install
-npm run dev
+npm run dev                     # web app on http://localhost:3000
 ```
-Open [http://localhost:3000](http://localhost:3000) in your web browser.
 
----
+Open http://localhost:3000 and create an account. Without SMTP configured, the verification code is printed in the backend console. To skip email verification locally, set `REQUIRE_EMAIL_VERIFICATION=false` in `backend/.env`.
 
-## 🔑 Default Test Credentials
-Use the following credentials to sign in and test features (once seeded):
-*   **Email / Username**: `albert@princeton.edu`
-*   **Password**: `Science123!`
-*   *Note*: The developer setup bypasses SMTP requirements and directly verifies your session.
+Create an admin account (for the moderation console):
+
+```bash
+cd backend
+ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-password' npm run seed
+```
+
+### With Docker
+
+```bash
+echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
+docker compose up --build
+```
+
+## Tests
+
+```bash
+cd backend && npm test          # integration tests; needs Postgres + Redis
+cd frontend && npm run lint && npm run build
+```
+
+Backend tests create a throwaway `researchreel_test` database. Point them elsewhere with `TEST_DATABASE_URL` and `TEST_REDIS_URL`. CI runs everything on every push (`.github/workflows/ci.yml`).
+
+## Deploy
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)**. It's a one-click Render Blueprint (`render.yaml`) plus a checklist of the settings you need to fill in.
+
+## Configuration
+
+All backend settings are documented in [`backend/.env.example`](backend/.env.example) and frontend settings in [`frontend/.env.example`](frontend/.env.example). The important ones:
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET` | API | Required |
+| `FRONTEND_URL` | API | Public URL of the web app (CORS, email links) |
+| `SMTP_*`, `EMAIL_FROM` | API | Sending verification codes and reset links |
+| `REQUIRE_EMAIL_VERIFICATION` | API | Set `false` to allow sign-up without email |
+| `GEMINI_API_KEY` | API | Turns on AI features (optional) |
+| `S3_*` | API | Store files in S3/R2 instead of local disk (optional) |
+| `BACKEND_URL` / `BACKEND_HOSTPORT` | Web (build) | Where the web app proxies the API |
+| `NEXT_PUBLIC_UPLOAD_URL` | Web (build) | Public API URL for direct large uploads (recommended) |
+
+## Project layout
+
+```
+backend/
+  src/            Express app: routes → controllers → services; socket.io; BullMQ worker
+  migrations/     node-pg-migrate schema migrations (run automatically in Docker)
+  tests/          integration tests (Postgres + Redis)
+  research_rag/   experimental Python RAG service (not used by the app or deployment)
+frontend/
+  src/app/        Next.js App Router pages
+  src/components/ UI components
+  src/lib/api/    typed API client
+docs/             architecture notes; docs/archive holds the original planning documents
+render.yaml       Render Blueprint
+```

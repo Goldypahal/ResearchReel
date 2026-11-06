@@ -7,7 +7,7 @@ const multer = require('multer');
 const dotenv = require('dotenv');
 const cookieParser = require('cookie-parser');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const logger = require('./utils/logger');
 const rateLimiter = require('./middleware/rateLimiter');

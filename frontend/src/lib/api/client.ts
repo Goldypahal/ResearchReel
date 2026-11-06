@@ -97,17 +97,39 @@ export async function fetchApi<T = unknown>(endpoint: string, options: FetchOpti
   return (payload && payload.data !== undefined ? payload.data : payload) as T;
 }
 
+/**
+ * Public URL of the API for large uploads (optional). When set, files go straight to
+ * the API with a short-lived upload token instead of through the web server's proxy.
+ */
+const UPLOAD_BASE_URL = (process.env.NEXT_PUBLIC_UPLOAD_URL || '').replace(/\/$/, '');
+
+const getUploadToken = async (): Promise<string | null> => {
+  if (!UPLOAD_BASE_URL) return null;
+  try {
+    const r = await fetchApi<{ token: string }>('/auth/upload-token');
+    return r.token;
+  } catch {
+    return null;
+  }
+};
+
 /** Multipart upload with progress reporting (fetch has no upload progress). */
-export function uploadWithProgress<T = unknown>(
+export async function uploadWithProgress<T = unknown>(
   endpoint: string,
   form: FormData,
   onProgress?: (fraction: number) => void,
   retried = false
 ): Promise<T> {
+  const uploadToken = await getUploadToken();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_BASE_URL}${endpoint}`);
-    xhr.withCredentials = true;
+    if (uploadToken) {
+      xhr.open('POST', `${UPLOAD_BASE_URL}/api/v1${endpoint}`);
+      xhr.setRequestHeader('Authorization', `Bearer ${uploadToken}`);
+    } else {
+      xhr.open('POST', `${API_BASE_URL}${endpoint}`);
+      xhr.withCredentials = true;
+    }
     xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
     xhr.onerror = () => reject(new ApiError('Upload failed. Check your connection and try again.', 0, 'NETWORK_ERROR'));
     xhr.onload = async () => {

@@ -24,6 +24,7 @@ router.post('/change-password', authMiddleware, validate(v.changePasswordSchema)
 router.get('/sessions', authMiddleware, authController.listSessions);
 router.delete('/sessions/:id', authMiddleware, authController.revokeSession);
 router.get('/socket-token', authMiddleware, authController.socketToken);
+router.get('/upload-token', authMiddleware, authController.uploadToken);
 router.post('/verify/orcid', authMiddleware, authController.orcidCallback);
 router.post('/verify/student', authMiddleware, authController.studentVerification);
 

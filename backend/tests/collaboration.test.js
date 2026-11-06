@@ -149,3 +149,13 @@ describe('health', () => {
     expect(r.body.services.redis.status).toBe('UP');
   });
 });
+
+describe('upload tokens', () => {
+  test('only work on upload endpoints', async () => {
+    const tok = (await alice.agent.get('/api/v1/auth/upload-token')).body.data.token;
+    const r = await request(app).post('/api/v1/posts').set('Authorization', `Bearer ${tok}`).send({ caption: 'via upload token' });
+    expect(r.status).toBe(201);
+    expect((await request(app).get('/api/v1/users/me').set('Authorization', `Bearer ${tok}`)).status).toBe(401);
+    expect((await request(app).delete(`/api/v1/posts/${r.body.data.id}`).set('Authorization', `Bearer ${tok}`)).status).toBe(401);
+  });
+});

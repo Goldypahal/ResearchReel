@@ -1,5 +1,5 @@
 // Standalone background worker (optional): `npm run worker`.
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const worker = require('./workers/videoWorker');
 require('./services/reelScheduler').start();
 

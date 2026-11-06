@@ -186,6 +186,8 @@ exports.revokeSession = async (req, res, next) => {
   }
 };
 
+exports.uploadToken = async (req, res) => sendSuccess(res, { token: authService.issueUploadToken(req.user), expires_in: 900 }, 'Upload token issued.');
+
 exports.socketToken = async (req, res) => sendSuccess(res, { token: authService.issueSocketToken(req.user) }, 'Socket token issued.');
 
 // Researcher verification: link an ORCID iD (format-validated, checksum verified).

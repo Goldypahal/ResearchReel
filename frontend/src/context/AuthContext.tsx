@@ -4,7 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { useRouter } from 'next/navigation';
 import { initAnalytics, identifyUser, resetAnalytics, trackEvent } from '@/lib/analytics';
 import { initSentry } from '@/lib/sentry';
-import { authApi, usersApi, onSessionExpired, type CurrentUser } from '@/lib/api';
+import { authApi, usersApi, onSessionExpired, refreshSession, ApiError, type CurrentUser } from '@/lib/api';
 
 interface AuthContextType {
   user: CurrentUser | null;
@@ -25,7 +25,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadSession = useCallback(async () => {
     try {
-      const me = await usersApi.me();
+      // Probe without the global "session expired" handling: being signed out is normal here.
+      let me: CurrentUser;
+      try {
+        me = await usersApi.me(true);
+      } catch (err) {
+        if (!(err instanceof ApiError && err.statusCode === 401) || !(await refreshSession())) throw err;
+        me = await usersApi.me(true);
+      }
       setUser(me);
       identifyUser(me.id, me.email, { username: me.username, role: me.role });
     } catch {

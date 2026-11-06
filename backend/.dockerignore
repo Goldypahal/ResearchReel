@@ -1,10 +1,11 @@
 node_modules
 npm-debug.log
 .env
-.env.local
+.env.*
+!.env.example
 .git
-.gitignore
 *.log
-*.map
-public/uploads/staging/*
-public/uploads/processed/*
+public/uploads
+tests
+research_rag
+coverage

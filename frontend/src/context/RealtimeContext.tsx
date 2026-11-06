@@ -8,9 +8,10 @@ import { toast } from '@/components/ui/use-toast';
 
 /**
  * Socket.io connection for live notifications, messages and lecture chat.
- * NEXT_PUBLIC_SOCKET_URL points at the API server (websockets can't go through rewrites).
+ * By default it connects to this site's own origin (proxied to the API by next.config);
+ * set NEXT_PUBLIC_SOCKET_URL only if the API is reachable on a different public URL.
  */
-const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:5000' : '');
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || undefined;
 
 type Handler = (payload: unknown) => void;
 
@@ -53,11 +54,11 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     refreshCounts();
 
     const connect = async () => {
-      if (!SOCKET_URL) return;
       let token: string;
       try { token = (await authApi.socketToken()).token; } catch { return; }
       if (cancelled) return;
-      const socket = io(SOCKET_URL, { auth: { token }, transports: ['websocket', 'polling'], withCredentials: true });
+      const opts = { path: '/socket.io', auth: { token }, transports: ['websocket', 'polling'], withCredentials: true };
+      const socket = SOCKET_URL ? io(SOCKET_URL, opts) : io(opts);
       socketRef.current = socket;
       socket.on('connect', () => setConnected(true));
       socket.on('disconnect', () => setConnected(false));
