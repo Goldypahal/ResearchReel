@@ -1,197 +1,183 @@
 "use client";
 
-import React, { useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
-import { 
-  ArrowLeft, Bookmark, Share2, Bot, Sparkles, Film, 
-  Users, Search, ChevronRight, Send, Check, BookOpen, Layers
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useParams, useRouter } from 'next/navigation';
+import { Bot, Download, ExternalLink, Sparkles, Trash2, Film, Pencil, Lock, Globe, Loader2, Share2 } from 'lucide-react';
+import { aiApi, documentsApi, errorMessage, type Paper } from '@/lib/api';
+import { Spinner, ErrorState, Modal, inputClass, primaryBtn, secondaryBtn, dangerBtn, Avatar } from '@/components/common';
+import { useAuth } from '@/context/AuthContext';
+import { formatDate } from '@/lib/format';
+import { toast } from '@/components/ui/use-toast';
 
-export default function DocumentReaderPage() {
+export default function PaperPage() {
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const params = useParams();
-  const docId = params.id as string;
+  const { user } = useAuth();
+  const [paper, setPaper] = useState<Paper | null>(null);
+  const [error, setError] = useState('');
+  const [summarizing, setSummarizing] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [form, setForm] = useState({ title: '', abstract: '', authors: '', doi: '', journal: '', tags: '', visibility: 'public' });
 
-  const [activeTabMobile, setActiveTabMobile] = useState<'document' | 'ai'>('document');
-  const [aiQuestion, setAiQuestion] = useState('');
-  const [aiMessages, setAiMessages] = useState([
-    {
-      sender: 'ai',
-      text: 'Hello! I am your AI Research Copilot for "Attention Is All You Need". Ask me any question regarding methodology, math derivations, or experimental benchmarks.'
-    }
-  ]);
+  const load = () => documentsApi.get(id).then((p) => {
+    setPaper(p);
+    setForm({ title: p.title, abstract: p.abstract || '', authors: (p.authors || []).join(', '), doi: p.doi || '', journal: p.journal || '', tags: (p.tags || []).join(', '), visibility: p.visibility || 'public' });
+  }).catch((e) => setError(errorMessage(e)));
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const outline = [
-    { title: 'Abstract', page: 1 },
-    { title: '1. Introduction', page: 1 },
-    { title: '2. Background', page: 2 },
-    { title: '3. Model Architecture', page: 3 },
-    { title: '4. Why Self-Attention', page: 5 },
-    { title: '5. Training', page: 6 },
-    { title: '6. Results & Benchmarks', page: 7 },
-    { title: '7. Conclusion', page: 9 },
-  ];
+  if (error) return <ErrorState message={error} />;
+  if (!paper) return <Spinner />;
 
-  const handleSendAi = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!aiQuestion.trim()) return;
+  const isOwner = paper.permission === 'owner' || paper.uploader_id === user?.id;
 
-    const userText = aiQuestion;
-    setAiMessages(prev => [...prev, { sender: 'user', text: userText }]);
-    setAiQuestion('');
+  const summarize = async (force = false) => {
+    setSummarizing(true);
+    try {
+      const s = await aiApi.summarize(paper.id, force);
+      setPaper({ ...paper, summary_text: s.abstract, key_points: s.key_points });
+    } catch (err) {
+      toast({ title: 'Could not summarise', description: errorMessage(err), variant: 'destructive' });
+    } finally { setSummarizing(false); }
+  };
 
-    setTimeout(() => {
-      setAiMessages(prev => [
-        ...prev,
-        {
-          sender: 'ai',
-          text: `Based on Section 3 (p. 3) of the paper, the Transformer replaces recurrent layers with multi-head self-attention. This allows O(1) sequential operation length compared to O(n) in RNNs.`
-        }
-      ]);
-    }, 800);
+  const saveEdit = async () => {
+    try {
+      const p = await documentsApi.update(paper.id, {
+        title: form.title, abstract: form.abstract, doi: form.doi, journal: form.journal,
+        authors: form.authors.split(',').map((a) => a.trim()).filter(Boolean),
+        tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
+        visibility: form.visibility as 'public' | 'private',
+      });
+      setPaper({ ...paper, ...p });
+      setEditing(false);
+      toast({ title: 'Paper updated', variant: 'success' });
+    } catch (err) { toast({ title: 'Could not save', description: errorMessage(err), variant: 'destructive' }); }
+  };
+
+  const remove = async () => {
+    try { await documentsApi.remove(paper.id); toast({ title: 'Paper deleted', variant: 'success' }); router.replace('/library'); }
+    catch (err) { toast({ title: 'Could not delete', description: errorMessage(err), variant: 'destructive' }); }
+  };
+
+  const share = async () => {
+    const url = window.location.href;
+    try { if (navigator.share) await navigator.share({ title: paper.title, url }); else { await navigator.clipboard.writeText(url); toast({ title: 'Link copied', variant: 'success', duration: 1500 }); } } catch { /* cancelled */ }
   };
 
   return (
-    <div className="h-[calc(100vh-5rem)] flex flex-col -m-4 md:-m-8 bg-[var(--background)]">
-      {/* Top Utility Header */}
-      <header className="h-14 border-b border-[var(--border)] px-4 flex items-center justify-between gap-4 shrink-0 bg-[var(--background)]/90 backdrop-blur-md">
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={() => router.push('/library')}
-            className="p-1.5 rounded-lg hover:bg-[var(--foreground)]/10 text-muted-foreground hover:text-[var(--foreground)] transition-colors"
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <h1 className="text-sm font-bold text-[var(--foreground)] truncate">
-            Attention Is All You Need (Vaswani et al. 2017)
-          </h1>
+    <div className="max-w-6xl mx-auto grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
+      <div className="space-y-5 min-w-0">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs text-zinc-500">
+            {paper.visibility === 'private' ? <span className="inline-flex items-center gap-1 text-amber-300"><Lock size={12} /> Private</span> : <span className="inline-flex items-center gap-1"><Globe size={12} /> Public</span>}
+            <span>· Added {formatDate(paper.created_at)}</span>
+            {paper.page_count ? <span>· {paper.page_count} pages</span> : null}
+          </div>
+          <h1 className="text-2xl md:text-3xl font-bold leading-tight">{paper.title}</h1>
+          {paper.authors?.length ? <p className="text-sm text-zinc-400">{paper.authors.join(', ')}</p> : null}
+          <p className="text-sm text-zinc-500">
+            {paper.journal}{paper.publication_year ? ` (${paper.publication_year})` : ''}
+            {paper.doi && <> · <a href={`https://doi.org/${paper.doi}`} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">doi:{paper.doi}</a></>}
+          </p>
+          {paper.tags?.length ? (
+            <div className="flex flex-wrap gap-1.5">{paper.tags.map((t) => <Link key={t} href={`/search?q=${encodeURIComponent('#' + t)}`} className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300">#{t}</Link>)}</div>
+          ) : null}
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2 text-xs">
-          <button 
-            onClick={() => router.push(`/ai/summarize?doc=${docId}`)}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 rounded-lg border border-indigo-500/20 font-medium transition-colors"
-          >
-            <Sparkles size={14} />
-            <span>Summarize</span>
-          </button>
-          <button 
-            onClick={() => router.push('/reels/create')}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 rounded-lg border border-purple-500/20 font-medium transition-colors"
-          >
-            <Film size={14} />
-            <span>Reel</span>
-          </button>
-          <button className="p-2 rounded-lg hover:bg-[var(--foreground)]/10 text-muted-foreground hover:text-[var(--foreground)]">
-            <Bookmark size={16} />
-          </button>
-          <button className="p-2 rounded-lg hover:bg-[var(--foreground)]/10 text-muted-foreground hover:text-[var(--foreground)]">
-            <Share2 size={16} />
-          </button>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/ai/ask?doc=${paper.id}`} className={primaryBtn}><Bot size={15} /> Ask AI about this paper</Link>
+          {paper.file_url && <a href={paper.file_url} download className={secondaryBtn}><Download size={15} /> Download PDF</a>}
+          {paper.external_url && <a href={paper.external_url} target="_blank" rel="noopener noreferrer" className={secondaryBtn}><ExternalLink size={15} /> Publisher page</a>}
+          <button onClick={share} className={secondaryBtn}><Share2 size={15} /> Share</button>
+          {isOwner && <Link href="/reels/generator" className={secondaryBtn}><Film size={15} /> Make a reel</Link>}
+          {isOwner && <button onClick={() => setEditing(true)} className={secondaryBtn}><Pencil size={15} /> Edit</button>}
+          {isOwner && <button onClick={() => setConfirmDelete(true)} className={secondaryBtn}><Trash2 size={15} className="text-red-400" /></button>}
         </div>
-      </header>
 
-      {/* 3-Panel Workspace Layout */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Left Panel: Outline & Search */}
-        <aside className="w-64 border-r border-[var(--border)] p-4 space-y-4 hidden lg:flex flex-col shrink-0 bg-[var(--foreground)]/[0.01]">
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search in document..."
-              className="w-full pl-8 pr-3 py-1.5 text-xs bg-[var(--foreground)]/5 border border-[var(--border)] rounded-lg text-[var(--foreground)] focus:outline-none focus:border-indigo-500/40"
-            />
+        {paper.abstract && (
+          <section className="space-y-2">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-500">Abstract</h2>
+            <p className="text-[15px] leading-relaxed whitespace-pre-wrap">{paper.abstract}</p>
+          </section>
+        )}
+
+        {paper.file_url ? (
+          <div className="rounded-2xl border border-[var(--border)] overflow-hidden bg-zinc-900">
+            <iframe src={`${paper.file_url}#view=FitH`} title={`PDF of ${paper.title}`} className="w-full h-[75vh]" />
           </div>
-
-          <div className="flex-1 overflow-y-auto space-y-1">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Document Outline</h3>
-            {outline.map((item) => (
-              <button
-                key={item.title}
-                className="w-full flex items-center justify-between px-3 py-2 text-xs rounded-lg hover:bg-[var(--foreground)]/5 text-left text-muted-foreground hover:text-[var(--foreground)] transition-colors"
-              >
-                <span className="truncate">{item.title}</span>
-                <span className="text-[10px] text-zinc-500">p.{item.page}</span>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        {/* Center Panel: PDF / Document Viewer */}
-        <main className="flex-1 overflow-y-auto p-6 md:p-10 flex flex-col items-center bg-[var(--foreground)]/[0.02]">
-          <div className="w-full max-w-3xl bg-[var(--background)] border border-[var(--border)] rounded-2xl p-8 shadow-xl space-y-6">
-            <div className="border-b border-[var(--border)] pb-6 space-y-2">
-              <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Research Paper</span>
-              <h2 className="text-2xl font-black text-[var(--foreground)] leading-tight">
-                Attention Is All You Need
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, Illia Polosukhin
-              </p>
-            </div>
-
-            <div className="space-y-4 text-sm text-[var(--foreground)]/90 leading-relaxed font-sans">
-              <h3 className="text-base font-bold text-[var(--foreground)]">Abstract</h3>
-              <p>
-                The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose the Transformer, a model architecture eschewing recurrence and instead relying entirely on an attention mechanism to draw global dependencies between input and output.
-              </p>
-
-              <h3 className="text-base font-bold text-[var(--foreground)] pt-4">1. Introduction</h3>
-              <p>
-                Recurrent neural networks, particularly long short-term memory (LSTM) and gated recurrent (GRU) neural networks, have been firmly established as state of the art approaches in sequence modeling and transduction problems such as language modeling and machine translation.
-              </p>
-
-              <h3 className="text-base font-bold text-[var(--foreground)] pt-4">3. Model Architecture</h3>
-              <p>
-                Most competitive neural sequence transduction models have an encoder-decoder structure. Here, the encoder maps an input sequence of symbol representations to a sequence of continuous representations.
-              </p>
-            </div>
-          </div>
-        </main>
-
-        {/* Right Panel: AI Research Copilot */}
-        <aside className="w-80 border-l border-[var(--border)] flex flex-col shrink-0 bg-[var(--background)] hidden md:flex">
-          <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-indigo-400 font-bold text-xs">
-              <Bot size={16} />
-              <span>AI Research Copilot</span>
-            </div>
-          </div>
-
-          <div className="flex-1 p-4 overflow-y-auto space-y-3">
-            {aiMessages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`p-3 rounded-xl text-xs space-y-1 ${
-                  msg.sender === 'ai'
-                    ? 'bg-indigo-500/10 border border-indigo-500/20 text-[var(--foreground)]'
-                    : 'bg-indigo-600 text-white ml-auto max-w-[85%]'
-                }`}
-              >
-                <p className="leading-relaxed">{msg.text}</p>
-              </div>
-            ))}
-          </div>
-
-          <form onSubmit={handleSendAi} className="p-3 border-t border-[var(--border)] relative">
-            <input
-              type="text"
-              placeholder="Ask anything about paper..."
-              value={aiQuestion}
-              onChange={(e) => setAiQuestion(e.target.value)}
-              className="w-full pl-3 pr-10 py-2.5 text-xs bg-[var(--foreground)]/5 border border-[var(--border)] rounded-xl focus:outline-none focus:border-indigo-500/40 text-[var(--foreground)]"
-            />
-            <button
-              type="submit"
-              className="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500"
-            >
-              <Send size={12} />
-            </button>
-          </form>
-        </aside>
+        ) : (
+          <p className="text-sm text-zinc-500">This paper was imported by DOI, so there is no PDF here. Use the publisher link to read it.</p>
+        )}
       </div>
+
+      <aside className="space-y-5">
+        <section className="rounded-2xl border border-[var(--border)] p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-sm flex items-center gap-2"><Sparkles size={15} className="text-indigo-400" /> AI summary</h2>
+            {paper.summary_text && <button onClick={() => summarize(true)} disabled={summarizing} className="text-xs text-zinc-500 hover:text-zinc-300">Regenerate</button>}
+          </div>
+          {paper.summary_text ? (
+            <>
+              <p className="text-sm leading-relaxed">{paper.summary_text}</p>
+              {paper.key_points?.length ? <ul className="list-disc pl-5 space-y-1 text-sm text-zinc-300">{paper.key_points.map((k, i) => <li key={i}>{k}</li>)}</ul> : null}
+            </>
+          ) : (
+            <button onClick={() => summarize()} disabled={summarizing} className={`${secondaryBtn} w-full`}>
+              {summarizing ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} Summarise this paper
+            </button>
+          )}
+        </section>
+
+        {paper.uploader_username && (
+          <section className="rounded-2xl border border-[var(--border)] p-4 flex items-center gap-3">
+            <Avatar src={paper.uploader_avatar_url} name={paper.uploader_name} size={36} />
+            <div className="min-w-0">
+              <p className="text-xs text-zinc-500">Shared by</p>
+              <Link href={`/profile/${paper.uploader_username}`} className="text-sm font-semibold hover:underline">{paper.uploader_name}</Link>
+            </div>
+          </section>
+        )}
+
+        {paper.reels && paper.reels.length > 0 && (
+          <section className="rounded-2xl border border-[var(--border)] p-4 space-y-3">
+            <h2 className="font-bold text-sm">Reels about this paper</h2>
+            <div className="grid grid-cols-3 gap-2">
+              {paper.reels.map((r) => (
+                <Link key={r.id} href={`/reels?id=${r.id}`} className="aspect-[9/16] rounded-lg overflow-hidden bg-black block">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {r.thumbnail_url ? <img src={r.thumbnail_url} alt={r.title} className="w-full h-full object-cover" /> : null}
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+      </aside>
+
+      <Modal open={editing} onClose={() => setEditing(false)} title="Edit paper details" wide>
+        <div className="p-5 grid sm:grid-cols-2 gap-3">
+          <input className={`${inputClass} sm:col-span-2`} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Title" />
+          <input className={inputClass} value={form.authors} onChange={(e) => setForm({ ...form, authors: e.target.value })} placeholder="Authors (comma separated)" />
+          <input className={inputClass} value={form.doi} onChange={(e) => setForm({ ...form, doi: e.target.value })} placeholder="DOI" />
+          <input className={inputClass} value={form.journal} onChange={(e) => setForm({ ...form, journal: e.target.value })} placeholder="Journal / venue" />
+          <input className={inputClass} value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="Tags (comma separated)" />
+          <select className={inputClass} value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} aria-label="Visibility">
+            <option value="public">Public</option><option value="private">Private</option>
+          </select>
+          <textarea className={`${inputClass} sm:col-span-2 min-h-32`} value={form.abstract} onChange={(e) => setForm({ ...form, abstract: e.target.value })} placeholder="Abstract" />
+          <div className="sm:col-span-2 flex justify-end gap-2">
+            <button className={secondaryBtn} onClick={() => setEditing(false)}>Cancel</button>
+            <button className={primaryBtn} onClick={saveEdit}>Save</button>
+          </div>
+        </div>
+      </Modal>
+      <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Delete this paper?">
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-zinc-400">The PDF and its details will be removed. Posts that attached it will no longer show it.</p>
+          <div className="flex justify-end gap-2"><button className={secondaryBtn} onClick={() => setConfirmDelete(false)}>Cancel</button><button className={dangerBtn} onClick={remove}>Delete</button></div>
+        </div>
+      </Modal>
     </div>
   );
 }

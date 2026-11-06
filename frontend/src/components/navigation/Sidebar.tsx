@@ -5,10 +5,12 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { useRealtime } from '@/context/RealtimeContext';
+import { Avatar } from '@/components/common';
 import { 
-  Home, Search, Compass, PlaySquare, MessageCircle, 
+  Home, Compass, PlaySquare, MessageCircle, 
   Heart, PlusSquare, Menu, FileText,
-  Bookmark, Sun, LogOut, Users, Moon, Library, User, BookOpen, Bot, Settings
+  Bookmark, Sun, LogOut, Users, Moon, Library, User, BookOpen, Bot, Settings, Shield, Trophy, Calendar
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -19,6 +21,7 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { unreadNotifications, unreadMessages } = useRealtime();
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   
@@ -52,11 +55,13 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
     { name: 'AI Research', href: '/ai', icon: Bot, hint: 'A' },
     { name: 'Projects', href: '/projects', icon: Users, hint: 'G P' },
     { name: 'Reels', href: '/reels', icon: PlaySquare, hint: 'G R' },
-    { name: 'Messages', href: '/messages', icon: MessageCircle, hint: 'G M' },
-    { name: 'Notifications', href: '/notifications', icon: Heart },
+    { name: 'Messages', href: '/messages', icon: MessageCircle, hint: 'G M', badge: unreadMessages },
+    { name: 'Notifications', href: '/notifications', icon: Heart, badge: unreadNotifications },
+    { name: 'Lectures', href: '/lectures', icon: BookOpen },
     { name: 'Create', href: '#create', icon: PlusSquare, isCreate: true, hint: 'N' },
-    { name: 'Profile', href: `/profile/${user?.username || 'julianewton'}`, icon: User, isAvatar: true },
+    { name: 'Profile', href: `/profile/${user?.username || ''}`, icon: User, isAvatar: true },
     { name: 'Settings', href: '/settings', icon: Settings },
+    ...(user && (user.role === 'admin' || user.role === 'moderator') ? [{ name: 'Moderation', href: '/mod', icon: Shield }] : []),
   ];
 
 
@@ -122,11 +127,12 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
             >
               <div className={`relative transition-transform duration-200 group-hover:scale-105 ${isActive ? 'scale-105' : ''} shrink-0`}>
                 {item.isAvatar ? (
-                  <div className={`w-6 h-6 rounded-full bg-[var(--foreground)]/10 border overflow-hidden flex items-center justify-center text-[10px] ${isActive ? 'border-indigo-500 border-2' : 'border-[var(--border)]/20'}`}>
-                    {user?.full_name?.slice(0,1) || 'U'}
-                  </div>
+                  <Avatar src={user?.avatar_url} name={user?.full_name} size={24} className={isActive ? 'ring-2 ring-indigo-500' : ''} />
                 ) : (
                   <Icon size={24} strokeWidth={isActive ? 2.5 : 2} className={isActive ? 'text-indigo-500 font-bold' : ''} />
+                )}
+                {'badge' in item && typeof item.badge === 'number' && item.badge > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">{item.badge > 9 ? '9+' : item.badge}</span>
                 )}
               </div>
               <span 
@@ -147,9 +153,21 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
         {isMoreOpen && (
           <div className="absolute bottom-16 left-0 w-64 bg-[var(--background)] rounded-2xl shadow-2xl overflow-hidden border border-[var(--border)] animate-in fade-in slide-in-from-bottom-4 duration-200 z-[60] backdrop-blur-xl">
             <div className="p-2 border-b border-[var(--border)]">
-              <Link href="/editor" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
+              <Link href="/workspace" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
                 <FileText size={18} />
-                <span>Editor</span>
+                <span>My tasks</span>
+              </Link>
+              <Link href="/explore/conference" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
+                <Calendar size={18} />
+                <span>Conferences</span>
+              </Link>
+              <Link href="/leaderboard" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
+                <Trophy size={18} />
+                <span>Leaderboard</span>
+              </Link>
+              <Link href="/achievements" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
+                <Trophy size={18} />
+                <span>Achievements</span>
               </Link>
               <Link href="/saved" className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold text-[var(--foreground)]">
                 <Bookmark size={18} />
@@ -180,13 +198,8 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
               </div>
             </div>
             <div className="p-2">
-              <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-colors text-sm font-semibold">
-                <Users size={18} />
-                <span>Switch accounts</span>
-              </button>
-              <div className="h-px bg-[var(--border)] my-1" />
               <button 
-                onClick={logout}
+                onClick={() => { logout(); }}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-red-500/10 transition-colors text-sm font-semibold text-red-500"
               >
                 <LogOut size={18} />

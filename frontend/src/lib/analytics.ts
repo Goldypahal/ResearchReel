@@ -22,7 +22,7 @@ export const trackEvent = (event: string, properties?: Record<string, unknown>) 
     if (POSTHOG_KEY) {
       posthog.capture(event, properties);
     } else {
-      console.log(`[Analytics MOCK] Event: ${event}`, properties);
+      // Analytics disabled (no NEXT_PUBLIC_POSTHOG_KEY).
     }
   }
 };

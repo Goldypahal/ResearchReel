@@ -1,1239 +1,350 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import {
-  Sparkles, Play, Pause, Save, Upload, 
-  Volume2, FileText, CheckCircle2, Loader2, AlertCircle, 
-  ArrowLeft, Plus, Trash2, Smartphone, VolumeX, Eye
-} from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { Sparkles, Plus, Trash2, ArrowUp, ArrowDown, Play, Pause, Save, Send, Loader2, Settings2, FileText, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
+import { reelsApi, aiApi, errorMessage, type ReelDraft, type Scene, type AutomationSettings } from '@/lib/api';
+import { Spinner, Modal, inputClass, primaryBtn, secondaryBtn } from '@/components/common';
+import UploadPaperModal from '@/components/ui/UploadPaperModal';
+import { toast } from '@/components/ui/use-toast';
+import { timeAgo } from '@/lib/format';
 
-interface Scene {
-  title: string;
-  dialogue: string;
-  backgroundStyle: string;
-  duration: number;
-}
+const STYLES: Record<string, string> = {
+  'indigo-dark': 'from-indigo-950 to-indigo-900',
+  'slate-gradient': 'from-slate-950 to-slate-800',
+  'emerald-glow': 'from-emerald-950 to-emerald-800',
+  'crimson-deep': 'from-red-950 to-red-900',
+  'violet-pulsar': 'from-violet-950 to-violet-800',
+};
+const STATUS_STYLES: Record<string, string> = {
+  draft: 'bg-zinc-500/15 text-zinc-300', generating: 'bg-amber-500/15 text-amber-300', completed: 'bg-emerald-500/15 text-emerald-300', failed: 'bg-red-500/15 text-red-300',
+};
+const totalSeconds = (scenes: Scene[]) => scenes.reduce((s, x) => s + (Number(x.duration) || 0), 0);
 
-interface Draft {
-  id: string;
-  title: string;
-  description: string;
-  scenes: Scene[] | string;
-  status: string;
-  linked_paper_id?: string;
-  part_number?: number;
-  total_parts?: number;
-}
+function Preview({ scenes }: { scenes: Scene[] }) {
+  const [playing, setPlaying] = useState(false);
+  const [idx, setIdx] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-interface Document {
-  id: string;
-  file_name: string;
-  summary_text?: string;
-  created_at: string;
-}
+  const stop = useCallback(() => {
+    setPlaying(false);
+    if (timer.current) clearTimeout(timer.current);
+    if (typeof window !== 'undefined') window.speechSynthesis?.cancel();
+  }, []);
 
-interface AutomationSettings {
-  auto_generate: boolean;
-  auto_upload: boolean;
-  upload_interval_hours: number;
-  next_upload_at?: string;
-  has_api_key?: boolean;
-}
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
-
-export default function ReelGeneratorPage() {
-  const { token } = useAuth();
-  const router = useRouter();
-
-  // State Management
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [selectedDocId, setSelectedDocId] = useState<string>('');
-  const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [activeDraft, setActiveDraft] = useState<Draft | null>(null);
-  const [automation, setAutomation] = useState<AutomationSettings>({
-    auto_generate: false,
-    auto_upload: false,
-    upload_interval_hours: 24,
-    next_upload_at: undefined,
-    has_api_key: false
-  });
-  const [geminiApiKey, setGeminiApiKey] = useState<string>('');
-
-  // Script Split / Multi-Part States
-  const [splitMode, setSplitMode] = useState<'single' | 'multi'>('single');
-  const [partsMode, setPartsMode] = useState<'auto' | 'custom'>('auto');
-  const [partsCount, setPartsCount] = useState<number>(3);
-
-  // Action/Loading States
-  const [isLoadingDocs, setIsLoadingDocs] = useState(false);
-  const [isLoadingDrafts, setIsLoadingDrafts] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isPublishing, setIsPublishing] = useState(false);
-  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-
-  // File Upload State
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-
-  // Interactive Live Preview State
-  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
-  const [currentPreviewSceneIdx, setCurrentPreviewSceneIdx] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-  const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const slideshowTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
+  useEffect(() => stop, [stop]);
   useEffect(() => {
-    fetchInitialData();
-    // Cleanup synthesis on unmount
-    return () => {
-      stopPreviewSpeech();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  const getHeaders = () => ({
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token || localStorage.getItem('token') || ''}`
-  });
-
-  const fetchInitialData = async () => {
-    if (!token && !localStorage.getItem('token')) return;
-    setIsLoadingDocs(true);
-    setIsLoadingDrafts(true);
-    setErrorMsg(null);
-
-    try {
-      // 1. Fetch user's papers
-      const docsRes = await fetch(`${API_BASE}/reels/documents`, { headers: getHeaders() });
-      const docsData = await docsRes.json();
-      if (docsRes.ok && docsData.success) {
-        setDocuments(docsData.data || []);
-        if (docsData.data && docsData.data.length > 0) {
-          setSelectedDocId(docsData.data[0].id);
-        }
-      }
-
-      // 2. Fetch drafts
-      const draftsRes = await fetch(`${API_BASE}/reels/drafts`, { headers: getHeaders() });
-      const draftsData = await draftsRes.json();
-      if (draftsRes.ok && draftsData.success) {
-        setDrafts(draftsData.data || []);
-        if (draftsData.data && draftsData.data.length > 0) {
-          loadActiveDraft(draftsData.data[0]);
-        }
-      }
-
-      // 3. Fetch automation settings
-      const autoRes = await fetch(`${API_BASE}/reels/automation`, { headers: getHeaders() });
-      const autoData = await autoRes.json();
-      if (autoRes.ok && autoData.success) {
-        setAutomation(autoData.data);
-      }
-    } catch (err) {
-      console.error('Error fetching studio data:', err);
-      setErrorMsg('Failed to connect to studio APIs.');
-    } finally {
-      setIsLoadingDocs(false);
-      setIsLoadingDrafts(false);
-    }
-  };
-
-  const loadActiveDraft = (draft: Draft) => {
-    stopPreviewSpeech();
-    let scenesParsed: Scene[] = [];
-    if (typeof draft.scenes === 'string') {
-      try {
-        scenesParsed = JSON.parse(draft.scenes);
-      } catch {
-        scenesParsed = [];
-      }
-    } else {
-      scenesParsed = draft.scenes || [];
-    }
-    setActiveDraft({
-      ...draft,
-      scenes: scenesParsed
-    });
-    setCurrentPreviewSceneIdx(0);
-    setIsPreviewPlaying(false);
-  };
-
-  // Upload new paper within generator workspace
-  const handleUploadPaper = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedFile) return;
-
-    setIsUploadingDoc(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('document', selectedFile);
-      formData.append('title', selectedFile.name);
-
-      const res = await fetch(`${API_BASE}/posts/document/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token || localStorage.getItem('token') || ''}`
-        },
-        body: formData
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to upload paper');
-
-      setSuccessMsg('Paper uploaded successfully! Analyzing contents...');
-      setSelectedFile(null);
-
-      // Refresh documents
-      const docsRes = await fetch(`${API_BASE}/reels/documents`, { headers: getHeaders() });
-      const docsData = await docsRes.json();
-      if (docsRes.ok && docsData.success) {
-        setDocuments(docsData.data || []);
-        setSelectedDocId(data.data.id);
-      }
-
-      // If auto-generate is active, a draft will be made in the background. Refresh drafts shortly.
-      setTimeout(async () => {
-        const draftsRes = await fetch(`${API_BASE}/reels/drafts`, { headers: getHeaders() });
-        const draftsData = await draftsRes.json();
-        if (draftsRes.ok && draftsData.success) {
-          setDrafts(draftsData.data || []);
-          if (draftsData.data.length > 0) {
-            loadActiveDraft(draftsData.data[0]);
-          }
-        }
-      }, 3000);
-
-    } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Error uploading document.');
-    } finally {
-      setIsUploadingDoc(false);
-    }
-  };
-
-  // Generate a draft from selected paper
-  const handleGenerateDraft = async () => {
-    if (!selectedDocId) {
-      setErrorMsg('Please select a paper first.');
-      return;
-    }
-
-    setIsGenerating(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    stopPreviewSpeech();
-
-    try {
-      const res = await fetch(`${API_BASE}/reels/generate-draft`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          document_id: selectedDocId,
-          split_mode: splitMode,
-          parts_mode: partsMode,
-          parts_count: partsCount
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to generate draft.');
-
-      setSuccessMsg(
-        splitMode === 'multi'
-          ? `Generated series with ${Array.isArray(data.data) ? data.data.length : 'multiple'} parts!`
-          : 'AI summary draft generated successfully!'
-      );
-      
-      // Update local state
-      const newDrafts = Array.isArray(data.data) ? data.data : [data.data];
-      const updatedDrafts = [...newDrafts, ...drafts];
-      setDrafts(updatedDrafts);
-      if (newDrafts.length > 0) {
-        loadActiveDraft(newDrafts[0]);
-      }
-
-    } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Error generating AI draft.');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // Update scene details locally
-  const handleSceneChange = (index: number, field: keyof Scene, value: string | number) => {
-    if (!activeDraft) return;
-    const currentScenes = [...(activeDraft.scenes as Scene[])];
-    currentScenes[index] = {
-      ...currentScenes[index],
-      [field]: value
-    };
-    setActiveDraft({
-      ...activeDraft,
-      scenes: currentScenes
-    });
-  };
-
-  // Add new scene
-  const handleAddScene = () => {
-    if (!activeDraft) return;
-    const currentScenes = [...(activeDraft.scenes as Scene[])];
-    currentScenes.push({
-      title: 'New Key Point',
-      dialogue: 'Explain a key insight from your paper in simple terms.',
-      backgroundStyle: 'indigo-dark',
-      duration: 8
-    });
-    setActiveDraft({
-      ...activeDraft,
-      scenes: currentScenes
-    });
-  };
-
-  // Delete scene
-  const handleDeleteScene = (index: number) => {
-    if (!activeDraft) return;
-    const currentScenes = [...(activeDraft.scenes as Scene[])];
-    if (currentScenes.length <= 1) {
-      setErrorMsg('A reel draft must have at least one scene.');
-      return;
-    }
-    currentScenes.splice(index, 1);
-    setActiveDraft({
-      ...activeDraft,
-      scenes: currentScenes
-    });
-    if (currentPreviewSceneIdx >= currentScenes.length) {
-      setCurrentPreviewSceneIdx(0);
-    }
-  };
-
-  // Save draft edits to the database
-  const handleSaveDraft = async () => {
-    if (!activeDraft) return;
-    setIsSaving(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-
-    try {
-      const res = await fetch(`${API_BASE}/reels/draft/${activeDraft.id}`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          title: activeDraft.title,
-          description: activeDraft.description,
-          scenes: activeDraft.scenes
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to save draft.');
-
-      setSuccessMsg('Draft changes saved successfully.');
-      
-      // Update drafts list
-      setDrafts(prev => prev.map(d => d.id === activeDraft.id ? data.data : d));
-
-    } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Failed to save changes.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Save automation settings
-  const handleSaveAutomation = async () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-
-    try {
-      const payload = {
-        ...automation,
-        gemini_api_key: geminiApiKey || undefined
-      };
-
-      const res = await fetch(`${API_BASE}/reels/automation`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to update settings.');
-
-      setSuccessMsg(geminiApiKey ? 'Automation settings and Gemini API Key updated.' : 'Automation settings updated.');
-      setAutomation(data.data);
-      setGeminiApiKey(''); // Clear the input field after successful save
-    } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Failed to save automation.');
-    }
-  };
-
-  // Disconnect the custom Gemini API Key
-  const handleDisconnectApiKey = async () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
-
-    try {
-      const res = await fetch(`${API_BASE}/reels/automation`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          ...automation,
-          gemini_api_key: '' // Empty string signals the backend to clear the key
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to disconnect key.');
-
-      setSuccessMsg('Gemini API Key disconnected successfully.');
-      setAutomation(data.data);
-      setGeminiApiKey('');
-    } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Failed to disconnect API key.');
-    }
-  };
-
-  // Compile and Publish Reel to Feed
-  const handlePublishReel = async () => {
-    if (!activeDraft) return;
-    
-    // Auto-save first
-    await handleSaveDraft();
-
-    setIsPublishing(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    stopPreviewSpeech();
-
-    try {
-      const res = await fetch(`${API_BASE}/reels/publish-draft/${activeDraft.id}`, {
-        method: 'POST',
-        headers: getHeaders()
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to publish reel.');
-
-      setSuccessMsg('Publishing started in background! Redirecting to feed...');
-      
-      setTimeout(() => {
-        router.push('/reels');
-      }, 2000);
-
-    } catch (err) {
-      const error = err as Error;
-      setErrorMsg(error.message || 'Failed to start compilation.');
-      setIsPublishing(false);
-    }
-  };
-
-  // Voiceover TTS preview using browser Speech Synthesis API
-  const speakSceneVoiceover = (text: string, onEndCallback?: () => void) => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
-
-    window.speechSynthesis.cancel(); // Cancel any ongoing speech
-
-    if (isMuted) {
-      if (onEndCallback) {
-        // Mock a wait matching reading speed (approx 140 words per minute)
-        const wordCount = text.split(/\s+/).length;
-        const durationMs = Math.max(3000, (wordCount / 140) * 60 * 1000);
-        slideshowTimeoutRef.current = setTimeout(onEndCallback, durationMs);
-      }
-      return;
-    }
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.05; // Slightly faster natural pacing
-    utterance.pitch = 1.0;
-    
-    // Choose a high-quality English voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const premiumVoice = voices.find(v => 
-      v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Apple'))
-    );
-    if (premiumVoice) utterance.voice = premiumVoice;
-
-    if (onEndCallback) {
-      utterance.onend = () => {
-        onEndCallback();
-      };
-      utterance.onerror = () => {
-        onEndCallback();
-      };
-    }
-
-    speechUtteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-  };
-
-  const stopPreviewSpeech = () => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
+    if (!playing) return;
+    const scene = scenes[idx];
+    if (!scene) { stop(); setIdx(0); return; }
+    if (window.speechSynthesis && scene.dialogue) {
       window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(scene.dialogue));
     }
-    if (slideshowTimeoutRef.current) {
-      clearTimeout(slideshowTimeoutRef.current);
-      slideshowTimeoutRef.current = null;
-    }
-  };
+    timer.current = setTimeout(() => setIdx((i) => i + 1), (Number(scene.duration) || 6) * 1000);
+    return () => { if (timer.current) clearTimeout(timer.current); };
+  }, [playing, idx, scenes, stop]);
 
-  // Continuous play simulation in the virtual smartphone
-  useEffect(() => {
-    if (!isPreviewPlaying || !activeDraft) {
-      stopPreviewSpeech();
-      return;
-    }
-
-    const scenes = activeDraft.scenes as Scene[];
-    if (scenes.length === 0) return;
-
-    const currentScene = scenes[currentPreviewSceneIdx];
-    const durationMs = (currentScene.duration || 8) * 1000;
-
-    // Trigger dialogue speech
-    speakSceneVoiceover(currentScene.dialogue, () => {
-      // Transition to next slide when speaking finishes
-      if (isPreviewPlaying) {
-        setCurrentPreviewSceneIdx(prev => (prev + 1) % scenes.length);
-      }
-    });
-
-    // Fallback timer if speech API doesn't trigger or is delayed
-    slideshowTimeoutRef.current = setTimeout(() => {
-      if (isPreviewPlaying) {
-        setCurrentPreviewSceneIdx(prev => (prev + 1) % scenes.length);
-      }
-    }, durationMs + 2000);
-
-    return () => {
-      stopPreviewSpeech();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPreviewPlaying, currentPreviewSceneIdx, activeDraft]);
-
-  const togglePreviewPlay = () => {
-    setIsPreviewPlaying(!isPreviewPlaying);
-  };
-
-  const getStyleGradient = (styleName: string) => {
-    switch (styleName) {
-      case 'slate-gradient':
-        return 'from-slate-900 via-zinc-900 to-stone-900';
-      case 'emerald-glow':
-        return 'from-emerald-950 via-teal-900 to-slate-950';
-      case 'crimson-deep':
-        return 'from-rose-950 via-red-950 to-zinc-950';
-      case 'violet-pulsar':
-        return 'from-violet-950 via-purple-900 to-slate-950';
-      case 'indigo-dark':
-      default:
-        return 'from-indigo-950 via-blue-950 to-slate-950';
-    }
-  };
-
+  const scene = scenes[Math.min(idx, scenes.length - 1)];
   return (
-    <div className="min-h-screen bg-[#050508] text-zinc-100 flex flex-col font-sans selection:bg-indigo-500/30">
-      
-      {/* Header Bar */}
-      <header className="sticky top-0 bg-[#050508]/85 backdrop-blur-md border-b border-zinc-800/60 z-30 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => router.back()} 
-            className="p-2 hover:bg-zinc-800/50 rounded-xl transition-all"
-          >
-            <ArrowLeft size={18} className="text-zinc-400" />
-          </button>
-          <div>
-            <h1 className="text-lg font-black tracking-tight uppercase italic flex items-center gap-2">
-              <Sparkles size={18} className="text-indigo-400 animate-pulse" />
-              AI Research Reel Studio
-            </h1>
-            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-0.5">
-              NotebookLM-style Automated Short-Form Creator
-            </p>
+    <div className="space-y-2">
+      <div className={`aspect-[9/16] rounded-2xl bg-gradient-to-b ${STYLES[scene?.backgroundStyle] || STYLES['indigo-dark']} flex flex-col items-center justify-center p-6 text-center text-white relative overflow-hidden`}>
+        {scene ? (
+          <>
+            <p className="text-2xl font-bold leading-tight">{scene.title}</p>
+            <p className="absolute bottom-[18%] inset-x-6 text-sm text-indigo-100">{scene.dialogue}</p>
+          </>
+        ) : <p className="text-sm text-white/60">Add scenes to preview</p>}
+        <div className="absolute top-3 inset-x-3 flex gap-1">
+          {scenes.map((_, i) => <div key={i} className={`h-0.5 flex-1 rounded ${i <= idx && playing ? 'bg-white' : 'bg-white/30'}`} />)}
+        </div>
+      </div>
+      <button className={`${secondaryBtn} w-full`} onClick={() => (playing ? stop() : (setIdx(0), setPlaying(true)))} disabled={!scenes.length}>
+        {playing ? <><Pause size={15} /> Stop preview</> : <><Play size={15} /> Preview with narration</>}
+      </button>
+      <p className="text-[11px] text-zinc-500 text-center">Preview uses your browser&apos;s voice. The published reel is rendered on the server{' '}(~{totalSeconds(scenes)}s).</p>
+    </div>
+  );
+}
+
+function AutomationPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [s, setS] = useState<AutomationSettings | null>(null);
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) reelsApi.automation().then(setS).catch(() => {}); }, [open]);
+  const save = async (patch: Partial<AutomationSettings> & { gemini_api_key?: string }) => {
+    setBusy(true);
+    try { setS(await reelsApi.updateAutomation(patch)); toast({ title: 'Settings saved', variant: 'success' }); setKey(''); }
+    catch (err) { toast({ title: 'Could not save settings', description: errorMessage(err), variant: 'destructive' }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal open={open} onClose={onClose} title="Reel automation">
+      {!s ? <Spinner /> : (
+        <div className="p-5 space-y-5 text-sm">
+          <label className="flex items-start gap-3">
+            <input type="checkbox" className="mt-1 accent-indigo-500" checked={s.auto_generate} disabled={busy} onChange={(e) => save({ auto_generate: e.target.checked })} />
+            <span><strong>Draft a reel for every new paper</strong><br /><span className="text-zinc-500">When you upload a paper, a script draft is created automatically.</span></span>
+          </label>
+          <label className="flex items-start gap-3">
+            <input type="checkbox" className="mt-1 accent-indigo-500" checked={s.auto_upload} disabled={busy} onChange={(e) => save({ auto_upload: e.target.checked })} />
+            <span><strong>Publish drafts on a schedule</strong><br /><span className="text-zinc-500">Renders and posts your oldest draft every interval.</span></span>
+          </label>
+          <div className="flex items-center gap-3">
+            <span>Every</span>
+            <select className={`${inputClass} w-32`} value={s.upload_interval_hours} disabled={busy} onChange={(e) => save({ upload_interval_hours: Number(e.target.value) })}>
+              {[6, 12, 24, 48, 72, 168].map((h) => <option key={h} value={h}>{h < 24 ? `${h} hours` : h === 168 ? '1 week' : `${h / 24} day${h > 24 ? 's' : ''}`}</option>)}
+            </select>
+            {s.next_upload_at && s.auto_upload && <span className="text-xs text-zinc-500">Next: {new Date(s.next_upload_at).toLocaleString()}</span>}
+          </div>
+          <div className="space-y-2 pt-3 border-t border-[var(--border)]">
+            <p><strong>Your own Gemini API key</strong> <span className="text-zinc-500">(optional)</span></p>
+            <p className="text-xs text-zinc-500">Use your own key for script writing and narration. It is stored encrypted. {s.has_api_key ? 'A key is saved.' : 'No key saved — the platform key is used if available.'}</p>
+            <div className="flex gap-2">
+              <input type="password" className={inputClass} placeholder="AIza…" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" />
+              <button className={primaryBtn} disabled={busy || !key.trim()} onClick={() => save({ gemini_api_key: key.trim() })}>Save</button>
+            </div>
+            {s.has_api_key && <button className="text-xs text-red-400" onClick={() => save({ gemini_api_key: '' })}>Remove saved key</button>}
           </div>
         </div>
+      )}
+    </Modal>
+  );
+}
 
-        <div className="flex items-center gap-3">
-          {activeDraft && (
-            <>
-              <button
-                onClick={handleSaveDraft}
-                disabled={isSaving}
-                className="px-4 py-2 border border-zinc-800 hover:border-zinc-700 bg-zinc-900 text-xs font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
-              >
-                {isSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                Save Draft
-              </button>
-              <button
-                onClick={handlePublishReel}
-                disabled={isPublishing}
-                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95 disabled:opacity-50 flex items-center gap-2"
-              >
-                {isPublishing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                Publish Reel
-              </button>
-            </>
-          )}
+export default function ReelGeneratorPage() {
+  const [papers, setPapers] = useState<{ id: string; title: string }[] | null>(null);
+  const [drafts, setDrafts] = useState<ReelDraft[]>([]);
+  const [paperId, setPaperId] = useState('');
+  const [split, setSplit] = useState<'single' | 'multi'>('single');
+  const [partsMode, setPartsMode] = useState<'auto' | 'manual'>('auto');
+  const [parts, setParts] = useState(3);
+  const [generating, setGenerating] = useState(false);
+  const [active, setActive] = useState<ReelDraft | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [aiReady, setAiReady] = useState<boolean | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
+
+  const loadAll = useCallback(async () => {
+    try {
+      const [p, d] = await Promise.all([reelsApi.myPapers(), reelsApi.drafts()]);
+      setPapers(p); setDrafts(d);
+      setPaperId((cur) => cur || p[0]?.id || '');
+    } catch (err) {
+      setPapers([]);
+      toast({ title: 'Could not load your papers', description: errorMessage(err), variant: 'destructive' });
+    }
+  }, []);
+  useEffect(() => { loadAll(); aiApi.status().then((s) => setAiReady(s.configured)).catch(() => setAiReady(false)); }, [loadAll]);
+
+  // Poll while any draft is rendering.
+  useEffect(() => {
+    if (!drafts.some((d) => d.status === 'generating')) return;
+    const t = setInterval(async () => {
+      try {
+        const d = await reelsApi.drafts();
+        setDrafts(d);
+        setActive((cur) => (cur ? d.find((x) => x.id === cur.id) || cur : cur));
+      } catch { /* keep polling */ }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [drafts]);
+
+  const generate = async () => {
+    if (!paperId) return;
+    setGenerating(true);
+    try {
+      const r = await reelsApi.generate({ document_id: paperId, split_mode: split, parts_mode: partsMode, parts_count: parts });
+      const created = Array.isArray(r) ? r : [r];
+      setDrafts((prev) => [...created, ...prev]);
+      setActive(created[0]); setDirty(false);
+      toast({ title: created.length > 1 ? `${created.length} drafts created` : 'Draft created', description: 'Review and edit the script, then publish.', variant: 'success' });
+    } catch (err) {
+      toast({ title: 'Could not generate a script', description: errorMessage(err), variant: 'destructive' });
+    } finally { setGenerating(false); }
+  };
+
+  const edit = (patch: Partial<ReelDraft>) => { setActive((a) => (a ? { ...a, ...patch } : a)); setDirty(true); };
+  const editScene = (i: number, patch: Partial<Scene>) => active && edit({ scenes: active.scenes.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
+  const moveScene = (i: number, d: -1 | 1) => {
+    if (!active) return;
+    const s = [...active.scenes];
+    const j = i + d;
+    if (j < 0 || j >= s.length) return;
+    [s[i], s[j]] = [s[j], s[i]];
+    edit({ scenes: s });
+  };
+
+  const save = async (): Promise<boolean> => {
+    if (!active) return false;
+    setSaving(true);
+    try {
+      const d = await reelsApi.updateDraft(active.id, { title: active.title, description: active.description, scenes: active.scenes });
+      setActive(d); setDrafts((prev) => prev.map((x) => (x.id === d.id ? d : x))); setDirty(false);
+      return true;
+    } catch (err) {
+      toast({ title: 'Could not save draft', description: errorMessage(err), variant: 'destructive' });
+      return false;
+    } finally { setSaving(false); }
+  };
+
+  const publish = async () => {
+    if (!active) return;
+    if (dirty && !(await save())) return;
+    try {
+      await reelsApi.publishDraft(active.id);
+      const upd = { ...active, status: 'generating' as const };
+      setActive(upd); setDrafts((prev) => prev.map((x) => (x.id === upd.id ? upd : x)));
+      toast({ title: 'Rendering started', description: 'We will notify you when your reel is live.', variant: 'success' });
+    } catch (err) {
+      toast({ title: 'Could not publish', description: errorMessage(err), variant: 'destructive' });
+    }
+  };
+
+  const remove = async (d: ReelDraft) => {
+    try {
+      await reelsApi.deleteDraft(d.id);
+      setDrafts((prev) => prev.filter((x) => x.id !== d.id));
+      if (active?.id === d.id) setActive(null);
+    } catch (err) { toast({ title: 'Could not delete draft', description: errorMessage(err), variant: 'destructive' }); }
+  };
+
+  const locked = active?.status === 'generating' || active?.status === 'completed';
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Sparkles className="text-indigo-400" /> Reel generator</h1>
+          <p className="text-sm text-zinc-500">Turn a paper into a short explainer video. Edit the script, preview it, then publish.</p>
         </div>
-      </header>
+        <button className={secondaryBtn} onClick={() => setAutoOpen(true)}><Settings2 size={15} /> Automation</button>
+      </div>
 
-      {/* Main Grid Workspace */}
-      <div className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-6 p-6">
-        
-        {/* Left Panel: Paper List & Automation Configuration (xl:col-span-3) */}
-        <div className="xl:col-span-3 flex flex-col gap-6">
-          
-          {/* Documents/Papers Upload & Selector */}
-          <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-3xl p-5 flex flex-col gap-4">
-            <div>
-              <h2 className="text-sm font-black uppercase tracking-wider italic text-indigo-400">
-                1. Select Research Paper
-              </h2>
-              <p className="text-[10px] text-zinc-500 font-medium">
-                Choose a paper to extract insight cards
-              </p>
-            </div>
+      {aiReady === false && (
+        <div className="flex gap-3 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-sm text-amber-200">
+          <AlertCircle size={18} className="shrink-0 mt-0.5" />
+          <span>AI script writing isn&apos;t enabled on this server, so scripts are built from sentences in the paper itself. Add your own Gemini key under Automation to get AI-written scripts and narration.</span>
+        </div>
+      )}
 
-            {isLoadingDocs ? (
-              <div className="py-8 flex items-center justify-center">
-                <Loader2 className="animate-spin text-indigo-500" size={24} />
-              </div>
-            ) : documents.length === 0 ? (
-              <div className="py-6 text-center text-xs text-zinc-500 border border-dashed border-zinc-800 rounded-2xl p-4">
-                No research papers found. Upload one below to start generating!
-              </div>
+      <div className="grid lg:grid-cols-[300px_minmax(0,1fr)_280px] gap-6">
+        <section className="space-y-4">
+          <div className="rounded-2xl border border-[var(--border)] p-4 space-y-3">
+            <h2 className="font-semibold text-sm">1. Choose a paper</h2>
+            {papers === null ? <Spinner className="py-4" /> : papers.length === 0 ? (
+              <p className="text-sm text-zinc-500">Upload a paper to get started.</p>
             ) : (
-              <div className="flex flex-col gap-2 max-h-[160px] overflow-y-auto no-scrollbar">
-                {documents.map((doc) => (
-                  <button
-                    key={doc.id}
-                    onClick={() => setSelectedDocId(doc.id)}
-                    className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all ${
-                      selectedDocId === doc.id
-                        ? 'border-indigo-500 bg-indigo-500/10'
-                        : 'border-zinc-800 bg-zinc-950/40 hover:bg-zinc-800/30'
-                    }`}
-                  >
-                    <FileText size={16} className={selectedDocId === doc.id ? 'text-indigo-400' : 'text-zinc-500'} />
-                    <span className="text-[11px] font-semibold truncate flex-1">{doc.file_name}</span>
-                  </button>
-                ))}
-              </div>
+              <select className={inputClass} value={paperId} onChange={(e) => setPaperId(e.target.value)} aria-label="Paper">
+                {papers.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+              </select>
             )}
-
-            {/* Quick Upload Form */}
-            <form onSubmit={handleUploadPaper} className="border-t border-zinc-800/60 pt-4 flex flex-col gap-3">
-              <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                Upload New Paper (PDF/Image)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="file"
-                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                  className="hidden"
-                  id="generator-file-upload"
-                  accept="application/pdf,image/*"
-                />
-                <label
-                  htmlFor="generator-file-upload"
-                  className="flex-1 px-3 py-2 bg-zinc-950/60 border border-zinc-800 hover:border-zinc-700 rounded-xl text-[10px] text-zinc-400 font-semibold cursor-pointer truncate"
-                >
-                  {selectedFile ? selectedFile.name : 'Select PDF / Image...'}
-                </label>
-                <button
-                  type="submit"
-                  disabled={!selectedFile || isUploadingDoc}
-                  className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl disabled:opacity-40 transition-all flex items-center justify-center shrink-0"
-                >
-                  {isUploadingDoc ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                </button>
-              </div>
-            </form>
-
-            {/* Script Split Options */}
-            <div className="border-t border-zinc-800/60 pt-4 flex flex-col gap-3">
-              <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                Generation Mode
-              </label>
-              
-              <div className="grid grid-cols-2 gap-2 bg-zinc-950/40 p-1 rounded-xl border border-zinc-800/60">
-                <button
-                  type="button"
-                  onClick={() => setSplitMode('single')}
-                  className={`py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                    splitMode === 'single'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Single Summary
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSplitMode('multi')}
-                  className={`py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                    splitMode === 'multi'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Multi-Part Series
-                </button>
-              </div>
-
-              {splitMode === 'multi' && (
-                <div className="flex flex-col gap-2 bg-zinc-950/20 border border-zinc-800/40 p-3 rounded-xl">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Parts Allocation</span>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPartsMode('auto')}
-                        className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded ${
-                          partsMode === 'auto'
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-zinc-800 text-zinc-400'
-                        }`}
-                      >
-                        Auto Mode
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPartsMode('custom')}
-                        className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded ${
-                          partsMode === 'custom'
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-zinc-800 text-zinc-400'
-                        }`}
-                      >
-                        Custom Count
-                      </button>
-                    </div>
-                  </div>
-
-                  {partsMode === 'auto' ? (
-                    <p className="text-[9px] text-zinc-500 italic mt-1 leading-relaxed">
-                      🤖 Gemini will analyze the paper complexity and dynamically generate the optimal number of script parts.
-                    </p>
-                  ) : (
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[10px] text-zinc-400 font-semibold flex-1">Number of Parts:</span>
-                      <input
-                        type="number"
-                        min={2}
-                        max={5}
-                        value={partsCount}
-                        onChange={(e) => setPartsCount(Math.min(5, Math.max(2, parseInt(e.target.value) || 2)))}
-                        className="w-12 px-2 py-1 bg-zinc-900 border border-zinc-800 rounded-lg text-center text-xs font-black text-white focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                  )}
+            <button className={`${secondaryBtn} w-full`} onClick={() => setUploadOpen(true)}><Upload size={15} /> Upload a paper</button>
+            <div className="space-y-2 text-sm">
+              <label className="flex items-center gap-2"><input type="radio" className="accent-indigo-500" checked={split === 'single'} onChange={() => setSplit('single')} /> Single reel</label>
+              <label className="flex items-center gap-2"><input type="radio" className="accent-indigo-500" checked={split === 'multi'} onChange={() => setSplit('multi')} /> Multi-part series</label>
+              {split === 'multi' && (
+                <div className="pl-6 space-y-2">
+                  <label className="flex items-center gap-2"><input type="radio" className="accent-indigo-500" checked={partsMode === 'auto'} onChange={() => setPartsMode('auto')} /> Decide automatically</label>
+                  <label className="flex items-center gap-2"><input type="radio" className="accent-indigo-500" checked={partsMode === 'manual'} onChange={() => setPartsMode('manual')} />
+                    <input type="number" min={2} max={6} value={parts} onChange={(e) => setParts(Math.min(6, Math.max(2, Number(e.target.value) || 2)))} className={`${inputClass} w-16 py-1`} aria-label="Number of parts" /> parts
+                  </label>
                 </div>
               )}
             </div>
-
-            <button
-              onClick={handleGenerateDraft}
-              disabled={isGenerating || !selectedDocId}
-              className="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-600/10 flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {isGenerating ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  Generating AI Script...
-                </>
-              ) : (
-                <>
-                  <Sparkles size={14} />
-                  Generate AI Reel Draft
-                </>
-              )}
+            <button className={`${primaryBtn} w-full`} onClick={generate} disabled={!paperId || generating}>
+              {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} Generate script
             </button>
           </div>
 
-          {/* Draft History & Series Parts */}
-          <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-3xl p-5 flex flex-col gap-4">
-            <div>
-              <h2 className="text-sm font-black uppercase tracking-wider italic text-indigo-400">
-                Studio History
-              </h2>
-              <p className="text-[10px] text-zinc-500 font-medium">
-                Load previous summaries and series parts
-              </p>
-            </div>
-
-            {isLoadingDrafts ? (
-              <div className="py-4 flex items-center justify-center">
-                <Loader2 className="animate-spin text-indigo-500" size={20} />
-              </div>
-            ) : drafts.length === 0 ? (
-              <div className="py-4 text-center text-xs text-zinc-500 border border-dashed border-zinc-800 rounded-2xl p-4">
-                No drafts saved yet.
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 max-h-[180px] overflow-y-auto no-scrollbar">
-                {drafts.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => loadActiveDraft(d)}
-                    className={`flex flex-col items-start gap-1 p-3 rounded-xl border text-left transition-all ${
-                      activeDraft?.id === d.id
-                        ? 'border-indigo-500 bg-indigo-500/10'
-                        : 'border-zinc-800 bg-zinc-950/40 hover:bg-zinc-800/30'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full gap-2">
-                      <span className="text-[11px] font-black truncate flex-1">{d.title}</span>
-                      {d.part_number && d.total_parts && d.total_parts > 1 ? (
-                        <span className="px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-[7px] font-black uppercase tracking-wider text-purple-400 shrink-0">
-                          Part {d.part_number}/{d.total_parts}
-                        </span>
-                      ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-[7px] font-black uppercase tracking-wider text-zinc-500 shrink-0">
-                          Single
-                        </span>
-                      )}
+          <div className="rounded-2xl border border-[var(--border)] p-4 space-y-2">
+            <h2 className="font-semibold text-sm">Your drafts</h2>
+            {drafts.length === 0 && <p className="text-sm text-zinc-500">No drafts yet.</p>}
+            <ul className="space-y-1 max-h-96 overflow-y-auto">
+              {drafts.map((d) => (
+                <li key={d.id}>
+                  <button onClick={() => { if (!dirty || confirm('Discard unsaved changes?')) { setActive(d); setDirty(false); } }}
+                    className={`w-full text-left p-2.5 rounded-xl hover:bg-[var(--foreground)]/5 ${active?.id === d.id ? 'bg-[var(--foreground)]/5' : ''}`}>
+                    <p className="text-sm font-medium truncate">{d.title}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold ${STATUS_STYLES[d.status]}`}>{d.status === 'generating' ? 'rendering' : d.status}</span>
+                      {d.total_parts && d.total_parts > 1 && <span className="text-[11px] text-zinc-500">Part {d.part_number}/{d.total_parts}</span>}
+                      <span className="text-[11px] text-zinc-500 ml-auto">{timeAgo(d.updated_at)}</span>
                     </div>
-                    {d.description && (
-                      <span className="text-[9px] text-zinc-500 line-clamp-1">{d.description}</span>
-                    )}
                   </button>
-                ))}
-              </div>
-            )}
+                </li>
+              ))}
+            </ul>
           </div>
+        </section>
 
-          {/* Automation Configuration Panel */}
-          <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-3xl p-5 flex flex-col gap-4">
-            <div>
-              <h2 className="text-sm font-black uppercase tracking-wider italic text-indigo-400">
-                Pipeline Settings
-              </h2>
-              <p className="text-[10px] text-zinc-500 font-medium">
-                NotebookLM Auto-Generation Orchestrator
-              </p>
-            </div>
-
-            <div className="space-y-4 pt-1">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={automation.auto_generate}
-                  onChange={(e) => setAutomation({ ...automation, auto_generate: e.target.checked })}
-                  className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 text-indigo-600 focus:ring-indigo-500/20 mt-0.5"
-                />
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-zinc-300">Auto-Generate Reel Draft</span>
-                  <span className="text-[9px] text-zinc-500 leading-tight">Create AI slide script on paper upload</span>
-                </div>
-              </label>
-
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={automation.auto_upload}
-                  onChange={(e) => setAutomation({ ...automation, auto_upload: e.target.checked })}
-                  className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 text-indigo-600 focus:ring-indigo-500/20 mt-0.5"
-                />
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-zinc-300">Auto-Publish to Feed</span>
-                  <span className="text-[9px] text-zinc-500 leading-tight">Automatically render and post to feed</span>
-                </div>
-              </label>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                  Upload Queue Cycle (Hours)
-                </label>
-                <input
-                  type="number"
-                  value={automation.upload_interval_hours}
-                  onChange={(e) => setAutomation({ ...automation, upload_interval_hours: parseInt(e.target.value) || 24 })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none focus:border-indigo-500/50"
-                  min={1}
-                />
-              </div>
-
-              <button
-                onClick={handleSaveAutomation}
-                className="w-full py-2.5 bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
-              >
-                Save Preferences
-              </button>
-
-              {automation.auto_upload && automation.next_upload_at && (
-                <div className="text-[10px] text-zinc-400 bg-[#050508]/60 p-3 rounded-xl border border-zinc-800/60 mt-1 space-y-1">
-                  <div className="text-[8px] font-black uppercase tracking-widest text-indigo-400">Scheduled Queue Run</div>
-                  <div className="font-bold text-zinc-200">
-                    {new Date(automation.next_upload_at).toLocaleString()}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Connect Gemini API Key Panel */}
-          <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-3xl p-5 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-black uppercase tracking-wider italic text-indigo-400">
-                  Connect Gemini (BYOK)
-                </h2>
-                <p className="text-[10px] text-zinc-500 font-medium">
-                  Use your own key for reel generation
-                </p>
-              </div>
-              {automation.has_api_key ? (
-                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[8px] font-black uppercase tracking-wider text-emerald-400">
-                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
-                  Active
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-[8px] font-black uppercase tracking-wider text-zinc-500">
-                  Inactive
-                </span>
-              )}
-            </div>
-
-            <div className="space-y-3 pt-1">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                  Gemini API Key
-                </label>
-                <input
-                  type="password"
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  placeholder={automation.has_api_key ? "••••••••••••••••••••••••" : "AIzaSy..."}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none focus:border-indigo-500/50 placeholder-zinc-700 font-mono"
-                />
-                <span className="text-[8px] text-zinc-500 leading-normal">
-                  Your key is securely encrypted and stored. Leave blank to use system default.
-                </span>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSaveAutomation}
-                  disabled={!geminiApiKey}
-                  className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white text-[9px] font-black uppercase tracking-widest rounded-xl transition-all"
-                >
-                  Save Key
-                </button>
-                {automation.has_api_key && (
-                  <button
-                    onClick={handleDisconnectApiKey}
-                    className="px-3 py-2 bg-zinc-950 border border-zinc-800 hover:bg-red-500/10 hover:border-red-500/20 text-zinc-400 hover:text-red-400 text-[9px] font-black uppercase tracking-widest rounded-xl transition-all"
-                  >
-                    Disconnect
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Middle Panel: Script Editor Workspace (xl:col-span-6) */}
-        <div className="xl:col-span-6 flex flex-col gap-5">
-          {activeDraft ? (
-            <div className="bg-zinc-900/20 border border-zinc-800/50 rounded-3xl p-6 flex-1 flex flex-col gap-5 overflow-y-auto no-scrollbar max-h-[82vh]">
-              
-              {/* Draft Info */}
-              <div className="flex items-start justify-between border-b border-zinc-800/60 pb-4">
-                <div className="space-y-1">
-                  <input
-                    type="text"
-                    value={activeDraft.title}
-                    onChange={(e) => setActiveDraft({ ...activeDraft, title: e.target.value })}
-                    className="text-lg font-black bg-transparent border-none outline-none text-zinc-100 placeholder-zinc-700 w-full focus:ring-0"
-                    placeholder="Draft Title"
-                  />
-                  <input
-                    type="text"
-                    value={activeDraft.description}
-                    onChange={(e) => setActiveDraft({ ...activeDraft, description: e.target.value })}
-                    className="text-xs bg-transparent border-none outline-none text-zinc-500 placeholder-zinc-800 w-full focus:ring-0"
-                    placeholder="Short summary/description of the reel"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  {activeDraft.part_number && activeDraft.total_parts && activeDraft.total_parts > 1 && (
-                    <div className="bg-purple-500/10 border border-purple-500/20 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider text-purple-400">
-                      Part {activeDraft.part_number} of {activeDraft.total_parts}
-                    </div>
-                  )}
-                  <div className="bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider text-indigo-400">
-                    {activeDraft.status}
-                  </div>
-                </div>
-              </div>
-
-              {/* Error & Success Messages */}
-              {errorMsg && (
-                <div className="flex items-start gap-2.5 text-red-400 text-xs bg-red-500/8 border border-red-500/20 rounded-xl p-3">
-                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-
-              {successMsg && (
-                <div className="flex items-start gap-2.5 text-emerald-400 text-xs bg-emerald-500/8 border border-emerald-500/20 rounded-xl p-3">
-                  <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
-                  <span>{successMsg}</span>
-                </div>
-              )}
-
-              {/* Scene List */}
-              <div className="space-y-6 flex-1">
-                {(activeDraft.scenes as Scene[]).map((scene, idx) => (
-                  <div 
-                    key={idx} 
-                    className="bg-zinc-950/40 border border-zinc-800/60 rounded-2xl p-5 flex flex-col gap-4 relative group"
-                  >
-                    
-                    {/* Scene Header */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">
-                        Insight Card {idx + 1}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => speakSceneVoiceover(scene.dialogue)}
-                          title="Preview Scene Voiceover Narration"
-                          className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors flex items-center justify-center"
-                        >
-                          <Volume2 size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteScene(idx)}
-                          className="p-1.5 bg-zinc-900 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 rounded-lg transition-colors flex items-center justify-center"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Scene Inputs */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      
-                      {/* Left Block */}
-                      <div className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                            Slide Title
-                          </label>
-                          <input
-                            type="text"
-                            value={scene.title}
-                            onChange={(e) => handleSceneChange(idx, 'title', e.target.value)}
-                            className="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-xl px-3 py-2 text-xs font-semibold text-zinc-200 outline-none"
-                            placeholder="e.g. Breakthrough"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                              Visual Style
-                            </label>
-                            <select
-                              value={scene.backgroundStyle}
-                              onChange={(e) => handleSceneChange(idx, 'backgroundStyle', e.target.value)}
-                              className="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-xl px-2 py-2 text-xs text-zinc-300 outline-none"
-                            >
-                              <option value="indigo-dark">Indigo Glow</option>
-                              <option value="slate-gradient">Slate Gradient</option>
-                              <option value="emerald-glow">Emerald Bio</option>
-                              <option value="crimson-deep">Crimson Laser</option>
-                              <option value="violet-pulsar">Violet Quantum</option>
-                            </select>
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                              Duration (Sec)
-                            </label>
-                            <input
-                              type="number"
-                              value={scene.duration}
-                              onChange={(e) => handleSceneChange(idx, 'duration', parseInt(e.target.value) || 8)}
-                              className="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-xl px-3 py-2 text-xs text-zinc-300 outline-none"
-                              min={3}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Dialogue Script */}
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                          Voiceover Dialogue Script
-                        </label>
-                        <textarea
-                          value={scene.dialogue}
-                          onChange={(e) => handleSceneChange(idx, 'dialogue', e.target.value)}
-                          className="w-full h-[88px] bg-zinc-900/60 border border-zinc-800/60 rounded-xl px-3 py-2 text-xs leading-relaxed text-zinc-300 resize-none outline-none"
-                          placeholder="What will the AI say out loud..."
-                        />
-                      </div>
-
-                    </div>
-                  </div>
-                ))}
-
-                <button
-                  onClick={handleAddScene}
-                  className="w-full py-3.5 border-2 border-dashed border-zinc-800 hover:border-zinc-700 bg-zinc-900/10 hover:bg-zinc-900/20 text-zinc-400 hover:text-zinc-200 text-xs font-black uppercase tracking-widest rounded-2xl transition-all flex items-center justify-center gap-2 active:scale-99"
-                >
-                  <Plus size={14} />
-                  Add Insight Card
-                </button>
-              </div>
-
+        <section className="rounded-2xl border border-[var(--border)] p-4 min-h-96">
+          {!active ? (
+            <div className="h-full flex flex-col items-center justify-center text-center text-zinc-500 gap-2 py-20">
+              <FileText size={32} />
+              <p className="text-sm">Generate a script or open a draft to edit it.</p>
             </div>
           ) : (
-            <div className="bg-zinc-900/20 border border-zinc-800/50 rounded-3xl p-12 flex-1 flex flex-col items-center justify-center text-center gap-5">
-              <div className="w-16 h-16 bg-zinc-900 rounded-2xl border border-zinc-800 flex items-center justify-center text-indigo-400">
-                <Eye size={28} />
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold ${STATUS_STYLES[active.status]}`}>{active.status === 'generating' ? 'rendering' : active.status}</span>
+                {active.paper_title && <span className="text-xs text-zinc-500 truncate">from “{active.paper_title}”</span>}
+                <button onClick={() => remove(active)} disabled={active.status === 'generating'} className="ml-auto text-zinc-500 hover:text-red-400 disabled:opacity-40" aria-label="Delete draft"><Trash2 size={16} /></button>
               </div>
-              <div className="space-y-2">
-                <h3 className="text-base font-black uppercase tracking-tight italic">No Draft Loaded</h3>
-                <p className="text-xs text-zinc-500 max-w-sm leading-relaxed">
-                  Select a draft from the history, or select a paper on the left to generate a new script from scratch.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right Panel: Interactive Phone Slide Preview (xl:col-span-3) */}
-        <div className="xl:col-span-3 flex flex-col items-center gap-4">
-          <div className="sticky top-24 flex flex-col items-center gap-4 w-full">
-            
-            {/* Phone Container */}
-            <div className="relative w-[280px] h-[497px] bg-black border-[6px] border-zinc-800 rounded-[40px] overflow-hidden shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] flex flex-col">
-              
-              {/* Camera Notch */}
-              <div className="absolute top-2.5 left-1/2 -translate-x-1/2 w-20 h-4 bg-zinc-800 rounded-full z-20 flex items-center justify-center">
-                <div className="w-2.5 h-2.5 bg-black rounded-full ml-auto mr-3"></div>
-              </div>
-
-              {activeDraft && (activeDraft.scenes as Scene[]).length > 0 ? (
-                (() => {
-                  const scenes = activeDraft.scenes as Scene[];
-                  const scene = scenes[currentPreviewSceneIdx];
-                  
-                  return (
-                    <div className={`w-full h-full bg-gradient-to-b ${getStyleGradient(scene.backgroundStyle)} relative flex flex-col justify-between p-6 pt-12 pb-8 z-10 transition-all duration-700`}>
-                      
-                      {/* Slide Indicator Dots */}
-                      <div className="flex gap-1.5 w-full justify-center">
-                        {scenes.map((_, i) => (
-                          <div 
-                            key={i} 
-                            onClick={() => setCurrentPreviewSceneIdx(i)}
-                            className={`h-1 rounded-full transition-all duration-300 cursor-pointer ${
-                              currentPreviewSceneIdx === i ? 'w-6 bg-white' : 'w-2 bg-white/30'
-                            }`}
-                          />
-                        ))}
-                      </div>
-
-                      {/* Center Content Title */}
-                      <div className="flex-1 flex flex-col justify-center text-center px-2">
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-400 mb-2 block animate-pulse">
-                          Insight {currentPreviewSceneIdx + 1}
-                        </span>
-                        <h4 className="text-xl font-black uppercase tracking-tight italic leading-snug drop-shadow-md text-white">
-                          {scene.title || 'Untitled Card'}
-                        </h4>
-                      </div>
-
-                      {/* Captions Overlay at Bottom */}
-                      <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl p-3 text-center">
-                        <p className="text-[11px] font-semibold text-white/95 leading-relaxed">
-                          {scene.dialogue || 'Double-click to write narration.'}
-                        </p>
-                      </div>
-
-                      {/* Playback Indicators */}
-                      {isPreviewPlaying && (
-                        <div className="absolute bottom-20 right-4 flex items-center gap-1 bg-indigo-500/20 px-2 py-0.5 rounded-full border border-indigo-500/30">
-                          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping"></span>
-                          <span className="text-[8px] font-black uppercase tracking-widest text-indigo-400">TTS Audio Play</span>
+              {active.status === 'completed' && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-500/10 text-emerald-300 text-sm"><CheckCircle2 size={16} /> Published. <Link href="/reels" className="underline">View in reels</Link></div>
+              )}
+              {active.status === 'failed' && <div className="p-3 rounded-xl bg-red-500/10 text-red-300 text-sm">Rendering failed. Edit the script and publish again.</div>}
+              <input className={inputClass} value={active.title} onChange={(e) => edit({ title: e.target.value })} disabled={locked} maxLength={200} aria-label="Title" />
+              <textarea className={`${inputClass} min-h-16`} value={active.description || ''} onChange={(e) => edit({ description: e.target.value })} disabled={locked} maxLength={1000} placeholder="Description" />
+              <ol className="space-y-3">
+                {active.scenes.map((s, i) => (
+                  <li key={i} className="rounded-xl border border-[var(--border)] p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-zinc-500 w-6">{i + 1}</span>
+                      <input className={`${inputClass} py-1.5`} value={s.title} onChange={(e) => editScene(i, { title: e.target.value })} disabled={locked} maxLength={80} placeholder="On-screen title" aria-label={`Scene ${i + 1} title`} />
+                      <input type="number" min={3} max={20} className={`${inputClass} py-1.5 w-20`} value={s.duration} onChange={(e) => editScene(i, { duration: Number(e.target.value) })} disabled={locked} aria-label="Seconds" />
+                      <span className="text-xs text-zinc-500">s</span>
+                    </div>
+                    <textarea className={`${inputClass} min-h-16`} value={s.dialogue} onChange={(e) => editScene(i, { dialogue: e.target.value })} disabled={locked} maxLength={400} placeholder="Narration" aria-label={`Scene ${i + 1} narration`} />
+                    <div className="flex items-center gap-2">
+                      {Object.keys(STYLES).map((st) => (
+                        <button key={st} disabled={locked} onClick={() => editScene(i, { backgroundStyle: st })} aria-label={st}
+                          className={`w-6 h-6 rounded-full bg-gradient-to-b ${STYLES[st]} ${s.backgroundStyle === st ? 'ring-2 ring-white' : ''}`} />
+                      ))}
+                      {!locked && (
+                        <div className="ml-auto flex gap-1">
+                          <button onClick={() => moveScene(i, -1)} className="p-1 text-zinc-500 hover:text-white" aria-label="Move up"><ArrowUp size={15} /></button>
+                          <button onClick={() => moveScene(i, 1)} className="p-1 text-zinc-500 hover:text-white" aria-label="Move down"><ArrowDown size={15} /></button>
+                          <button onClick={() => edit({ scenes: active.scenes.filter((_, j) => j !== i) })} className="p-1 text-zinc-500 hover:text-red-400" aria-label="Remove scene"><Trash2 size={15} /></button>
                         </div>
                       )}
-
                     </div>
-                  );
-                })()
-              ) : (
-                <div className="w-full h-full bg-zinc-950 flex flex-col items-center justify-center p-6 text-center text-zinc-600 gap-3">
-                  <Smartphone size={40} strokeWidth={1} />
-                  <span className="text-xs font-semibold">Preview Station Empty</span>
+                  </li>
+                ))}
+              </ol>
+              {!locked && (
+                <button className={secondaryBtn} disabled={active.scenes.length >= 12} onClick={() => edit({ scenes: [...active.scenes, { title: 'New scene', dialogue: '', duration: 6, backgroundStyle: 'indigo-dark' }] })}>
+                  <Plus size={15} /> Add scene
+                </button>
+              )}
+              {!locked && (
+                <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
+                  <button className={secondaryBtn} onClick={save} disabled={!dirty || saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save</button>
+                  <button className={primaryBtn} onClick={publish} disabled={saving || active.scenes.length === 0}><Send size={15} /> Publish reel</button>
                 </div>
               )}
             </div>
+          )}
+        </section>
 
-            {/* Playback Controls */}
-            {activeDraft && (
-              <div className="flex items-center gap-4 bg-zinc-900/60 border border-zinc-800/60 px-5 py-2.5 rounded-2xl shadow-md">
-                <button
-                  onClick={() => {
-                    const scenes = activeDraft.scenes as Scene[];
-                    setCurrentPreviewSceneIdx(prev => (prev - 1 + scenes.length) % scenes.length);
-                  }}
-                  className="text-xs text-zinc-400 hover:text-zinc-200"
-                >
-                  Prev
-                </button>
-
-                <button
-                  onClick={togglePreviewPlay}
-                  className="w-10 h-10 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-all"
-                >
-                  {isPreviewPlaying ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
-                </button>
-
-                <button
-                  onClick={() => setIsMuted(!isMuted)}
-                  className="p-1.5 bg-zinc-950 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors"
-                  title={isMuted ? 'Unmute voice' : 'Mute voice (simulated delay)'}
-                >
-                  {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-                </button>
-
-                <button
-                  onClick={() => {
-                    const scenes = activeDraft.scenes as Scene[];
-                    setCurrentPreviewSceneIdx(prev => (prev + 1) % scenes.length);
-                  }}
-                  className="text-xs text-zinc-400 hover:text-zinc-200"
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
+        <section>{active && <Preview scenes={active.scenes} />}</section>
       </div>
 
+      <UploadPaperModal isOpen={uploadOpen} onClose={() => setUploadOpen(false)} onSuccess={(doc) => { loadAll(); setPaperId(doc.id); }} />
+      <AutomationPanel open={autoOpen} onClose={() => setAutoOpen(false)} />
     </div>
   );
 }

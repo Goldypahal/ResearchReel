@@ -1,161 +1,113 @@
 "use client";
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Heart, MessageCircle, Bookmark, Share2, Plus, Play, ExternalLink, Sparkles, Film } from 'lucide-react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { Film, Plus, Sparkles } from 'lucide-react';
+import { reelsApi, errorMessage, type Reel } from '@/lib/api';
+import { Spinner, ErrorState, EmptyState } from '@/components/common';
+import ReelPlayer from '@/components/reels/ReelPlayer';
 
-export default function ReelsFeedPage() {
-  const router = useRouter();
-  const [liked, setLiked] = useState<Record<string, boolean>>({});
-  const [likeCounts, setLikeCounts] = useState<Record<string, number>>({
-    reel_1: 234,
-    reel_2: 512
-  });
+function ReelsFeed() {
+  const startId = useSearchParams().get('id');
+  const [reels, setReels] = useState<Reel[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [active, setActive] = useState(0);
+  const [muted, setMuted] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const loadingMore = useRef(false);
 
-  const reels = [
-    {
-      id: 'reel_1',
-      title: 'Why Transformers Outperform RNNs in Parallel Processing',
-      author: '@rajvir',
-      authorName: 'Rajvir Singh',
-      paperTitle: 'Attention Is All You Need',
-      paperId: 'doc_1',
-      comments: 42,
-      duration: '0:45',
-      gradient: 'from-indigo-900 via-purple-950 to-black'
-    },
-    {
-      id: 'reel_2',
-      title: 'BERT Bidirectional Context Explained in 60 Seconds',
-      author: '@julianewton',
-      authorName: 'Dr. Julia Newton',
-      paperTitle: 'BERT: Pre-training of Deep Bidirectional Transformers',
-      paperId: 'doc_2',
-      comments: 89,
-      duration: '1:00',
-      gradient: 'from-blue-900 via-slate-950 to-black'
-    }
-  ];
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const r = await reelsApi.list({ limit: 10 });
+      let list = r.reels;
+      if (startId && !list.some((x) => x.id === startId)) {
+        try { list = [await reelsApi.get(startId), ...list]; } catch { /* deleted reel */ }
+      } else if (startId) {
+        const idx = list.findIndex((x) => x.id === startId);
+        list = [...list.slice(idx), ...list.slice(0, idx)];
+      }
+      setReels(list); setCursor(r.nextCursor);
+    } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); }
+  }, [startId]);
+  useEffect(() => { load(); }, [load]);
 
-  const handleToggleLike = (reelId: string) => {
-    setLiked(prev => {
-      const isCurrentlyLiked = !!prev[reelId];
-      const newLikedState = !isCurrentlyLiked;
-      setLikeCounts(counts => ({
-        ...counts,
-        [reelId]: counts[reelId] + (newLikedState ? 1 : -1)
-      }));
-      return { ...prev, [reelId]: newLikedState };
-    });
-  };
+  const more = useCallback(async () => {
+    if (!cursor || loadingMore.current) return;
+    loadingMore.current = true;
+    try {
+      const r = await reelsApi.list({ cursor, limit: 10 });
+      setReels((prev) => [...prev, ...r.reels.filter((x) => !prev.some((p) => p.id === x.id))]);
+      setCursor(r.nextCursor);
+    } catch { /* retry on next scroll */ } finally { loadingMore.current = false; }
+  }, [cursor]);
+
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root) return;
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          const i = Number((e.target as HTMLElement).dataset.index);
+          setActive(i);
+          if (i >= reels.length - 3) more();
+        }
+      });
+    }, { root, threshold: 0.65 });
+    root.querySelectorAll('[data-index]').forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, [reels.length, more]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!containerRef.current || (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const next = Math.max(0, Math.min(reels.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1)));
+        containerRef.current.querySelector(`[data-index="${next}"]`)?.scrollIntoView({ behavior: 'smooth' });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, reels.length]);
+
+  if (loading) return <Spinner label="Loading reels" />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
+  if (reels.length === 0) {
+    return (
+      <EmptyState icon={<Film size={32} />} title="No reels yet" description="Turn a paper into a short explainer, or upload your own video."
+        action={<div className="flex gap-3"><Link href="/reels/generator" className="text-sm font-semibold text-indigo-400">Generate from a paper</Link><Link href="/reels/create" className="text-sm font-semibold text-indigo-400">Upload a video</Link></div>} />
+    );
+  }
 
   return (
-    <div className="max-w-md mx-auto space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-extrabold text-[var(--foreground)] flex items-center gap-2">
-          <Film size={22} className="text-purple-400" />
-          <span>Research Reels</span>
-        </h1>
+    <div ref={containerRef} className="h-[calc(100dvh-10rem)] md:h-[calc(100dvh-8rem)] overflow-y-scroll snap-y snap-mandatory no-scrollbar mx-auto w-full max-w-[420px] space-y-4">
+      {reels.map((r, i) => (
+        <div key={r.id} data-index={i} className="snap-start h-full">
+          {Math.abs(i - active) <= 2 ? (
+            <ReelPlayer reel={r} active={i === active} muted={muted} onToggleMute={() => setMuted((m) => !m)}
+              onDeleted={(id) => setReels((prev) => prev.filter((x) => x.id !== id))} />
+          ) : <div className="w-full h-full bg-black md:rounded-3xl" />}
+        </div>
+      ))}
+    </div>
+  );
+}
 
-        <button
-          onClick={() => router.push('/reels/create')}
-          className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors flex items-center gap-1.5"
-        >
-          <Plus size={14} />
-          <span>Create Reel</span>
-        </button>
+export default function ReelsPage() {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between max-w-[420px] mx-auto">
+        <h1 className="text-xl font-extrabold flex items-center gap-2"><Film size={22} className="text-purple-400" /> Reels</h1>
+        <div className="flex gap-2">
+          <Link href="/reels/generator" className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-indigo-600 text-white"><Sparkles size={13} /> From paper</Link>
+          <Link href="/reels/create" className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-[var(--foreground)]/10"><Plus size={13} /> Upload</Link>
+        </div>
       </div>
-
-      {/* Vertical Reels List */}
-      <div className="space-y-8">
-        {reels.map((reel) => {
-          const isLiked = !!liked[reel.id];
-          const count = likeCounts[reel.id];
-
-          return (
-            <div
-              key={reel.id}
-              className={`relative h-[560px] rounded-3xl overflow-hidden bg-gradient-to-b ${reel.gradient} border border-[var(--border)] shadow-2xl flex flex-col justify-between p-6 text-white`}
-            >
-              {/* Top Bar */}
-              <div className="flex items-center justify-between z-10">
-                <span className="text-[10px] font-extrabold uppercase tracking-widest px-3 py-1 bg-white/10 backdrop-blur-md rounded-full border border-white/15 text-purple-300">
-                  Academic Reel • {reel.duration}
-                </span>
-
-                <button
-                  onClick={() => router.push(`/library/documents/${reel.paperId}`)}
-                  className="px-3 py-1 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-xs font-medium flex items-center gap-1.5 transition-colors border border-white/15"
-                >
-                  <ExternalLink size={12} />
-                  <span>Source Paper</span>
-                </button>
-              </div>
-
-              {/* Center Play Button Overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-16 h-16 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white/80">
-                  <Play size={28} className="ml-1" />
-                </div>
-              </div>
-
-              {/* Bottom Info & Action Bar */}
-              <div className="flex items-end justify-between gap-4 z-10">
-                <div className="space-y-2 max-w-[75%]">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-indigo-500/30 border border-white/20 flex items-center justify-center font-bold text-xs">
-                      {reel.authorName.slice(0, 1)}
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold">{reel.authorName}</p>
-                      <p className="text-[10px] text-zinc-400">{reel.author}</p>
-                    </div>
-                  </div>
-
-                  <h3 className="text-sm font-bold leading-snug line-clamp-2">
-                    {reel.title}
-                  </h3>
-
-                  <p className="text-[11px] text-purple-300/80 font-medium">
-                    Paper: {reel.paperTitle}
-                  </p>
-                </div>
-
-                {/* Right Floating Actions */}
-                <div className="flex flex-col items-center gap-4 text-xs">
-                  <button
-                    onClick={() => handleToggleLike(reel.id)}
-                    className="flex flex-col items-center gap-1 group"
-                  >
-                    <div className={`p-3 rounded-full backdrop-blur-md transition-all ${
-                      isLiked ? 'bg-red-500/20 text-red-500 scale-110' : 'bg-white/10 text-white group-hover:scale-105'
-                    }`}>
-                      <Heart size={20} className={isLiked ? 'fill-red-500' : ''} />
-                    </div>
-                    <span className="text-[10px] font-semibold">{count}</span>
-                  </button>
-
-                  <button className="flex flex-col items-center gap-1 group">
-                    <div className="p-3 rounded-full bg-white/10 backdrop-blur-md text-white group-hover:scale-105 transition-transform">
-                      <MessageCircle size={20} />
-                    </div>
-                    <span className="text-[10px] font-semibold">{reel.comments}</span>
-                  </button>
-
-                  <button className="p-3 rounded-full bg-white/10 backdrop-blur-md text-white hover:scale-105 transition-transform">
-                    <Bookmark size={20} />
-                  </button>
-
-                  <button className="p-3 rounded-full bg-white/10 backdrop-blur-md text-white hover:scale-105 transition-transform">
-                    <Share2 size={20} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <Suspense fallback={<Spinner />}><ReelsFeed /></Suspense>
     </div>
   );
 }

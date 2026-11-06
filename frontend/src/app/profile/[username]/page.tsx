@@ -1,239 +1,156 @@
 "use client";
 
-import React, { useState } from 'react';
-import ProfileHeader from '@/components/profile/ProfileHeader';
-import AnalyticsDashboard from '@/components/profile/AnalyticsDashboard';
-import DOIImportModal, { ImportedPaper } from '@/components/profile/DOIImportModal';
-import PostCard from '@/components/feed/PostCard';
-import { Grid, PlaySquare, BarChart2, Bookmark, BookOpen, X } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
-import { useSocial } from '@/context/SocialContext';
+import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useParams, useRouter } from 'next/navigation';
+import { Grid, PlaySquare, BookOpen, BarChart2, MessageCircle, Link as LinkIcon, Building2, Settings, Upload, Award } from 'lucide-react';
+import { usersApi, reelsApi, documentsApi, messagesApi, errorMessage, type Profile, type Reel, type Paper } from '@/lib/api';
+import { Avatar, VerifiedBadge, Spinner, ErrorState, EmptyState, secondaryBtn, primaryBtn } from '@/components/common';
+import FollowButton from '@/components/common/FollowButton';
+import Feed from '@/components/feed/Feed';
+import PaperCard from '@/components/library/PaperCard';
+import FollowListModal from '@/components/profile/FollowListModal';
+import EditProfileModal from '@/components/profile/EditProfileModal';
+import AnalyticsPanel from '@/components/profile/AnalyticsPanel';
+import DOIImportModal from '@/components/profile/DOIImportModal';
+import { compactNumber } from '@/lib/format';
+import { toast } from '@/components/ui/use-toast';
 
-const MOCK_USER = {
-  username: "julianewton",
-  full_name: "Dr. Julia Newton",
-  bio: "Lead Research Scientist specializing in neuro-symbolic reasoning and large scale transformer architectures for autonomous logic validation. Bridges the gap between neural performance and symbolic consistency.",
-  verification_status: "scholar",
-  orcid_id: "0000-0001-2345-6789",
-  institution_name: "MIT CSAIL",
-  research_interests: ["NeuroSymbolic", "Transformers", "LogicValidation", "ArtificialIntelligence"],
-  follower_count: 14200,
-  post_count: 85
-};
+type Tab = 'posts' | 'reels' | 'papers' | 'analytics';
 
-type ProfileTab = 'content' | 'analytics' | 'reels' | 'saved';
+function ReelsGrid({ username }: { username: string }) {
+  const [reels, setReels] = useState<Reel[] | null>(null);
+  useEffect(() => { reelsApi.list({ author: username, limit: 30 }).then((r) => setReels(r.reels)).catch(() => setReels([])); }, [username]);
+  if (!reels) return <Spinner />;
+  if (!reels.length) return <EmptyState icon={<PlaySquare size={28} />} title="No reels yet" />;
+  return (
+    <div className="grid grid-cols-3 gap-1.5">
+      {reels.map((r) => (
+        <Link key={r.id} href={`/reels?id=${r.id}`} className="relative aspect-[9/16] bg-black rounded-lg overflow-hidden group">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {r.thumbnail_url && <img src={r.thumbnail_url} alt={r.title} className="w-full h-full object-cover group-hover:opacity-80" />}
+          <span className="absolute bottom-1.5 left-2 text-xs text-white font-semibold drop-shadow">▶ {compactNumber(r.view_count)}</span>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function PapersList({ username, isSelf, refreshKey }: { username: string; isSelf: boolean; refreshKey: number }) {
+  const [papers, setPapers] = useState<Paper[] | null>(null);
+  useEffect(() => {
+    setPapers(null);
+    documentsApi.list(isSelf ? { scope: 'mine' } : { author: username }).then((r) => setPapers(r.documents)).catch(() => setPapers([]));
+  }, [username, isSelf, refreshKey]);
+  if (!papers) return <Spinner />;
+  if (!papers.length) return <EmptyState icon={<BookOpen size={28} />} title="No papers yet" description={isSelf ? 'Upload a PDF or import your publications by DOI or ORCID.' : undefined} />;
+  return <div className="space-y-3">{papers.map((p) => <PaperCard key={p.id} paper={p} showUploader={false} />)}</div>;
+}
 
 export default function ProfilePage() {
-  const { user: authUser } = useAuth();
-  const { profiles, followersMap } = useSocial();
-  const [tab, setTab] = useState<ProfileTab>('content');
-  const [isDOIModalOpen, setIsDOIModalOpen] = useState(false);
-  const [importedPapers, setImportedPapers] = useState<ImportedPaper[]>([]);
-  const [expandedPaperId, setExpandedPaperId] = useState<string | null>(null);
+  const { username } = useParams<{ username: string }>();
+  const router = useRouter();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [error, setError] = useState('');
+  const [tab, setTab] = useState<Tab>('posts');
+  const [list, setList] = useState<'followers' | 'following' | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [paperKey, setPaperKey] = useState(0);
 
-  const profile = authUser ? profiles[authUser.username] : undefined;
+  const load = useCallback(() => {
+    setError('');
+    usersApi.profile(username).then(setProfile).catch((e) => setError(errorMessage(e)));
+  }, [username]);
+  useEffect(() => { load(); setTab('posts'); }, [load]);
 
-  // Use social profile state when available so settings changes update this view.
-  const user = authUser ? {
-    ...MOCK_USER,
-    username: authUser.username,
-    full_name: profile?.full_name || authUser.full_name || authUser.username,
-    bio: profile?.bio || MOCK_USER.bio,
-    verification_status: profile?.verification_status || authUser.verification_status || MOCK_USER.verification_status,
-    orcid_id: profile?.orcid_id || MOCK_USER.orcid_id,
-    institution_name: profile?.institution_name || MOCK_USER.institution_name,
-    research_interests: profile?.research_interests || MOCK_USER.research_interests,
-    follower_count: followersMap[authUser.username]?.length ?? MOCK_USER.follower_count,
-    post_count: 1 + importedPapers.length,
-  } : MOCK_USER;
+  if (error) return <ErrorState message={error} onRetry={load} />;
+  if (!profile) return <Spinner />;
 
-  const handleImport = (papers: ImportedPaper[]) => {
-    setImportedPapers(prev => {
-      // Deduplicate by id
-      const existingIds = new Set(prev.map(p => p.id));
-      const fresh = papers.filter(p => !existingIds.has(p.id));
-      return [...fresh, ...prev];
-    });
-    // Switch to content tab to show new papers
-    setTab('content');
+  const message = async () => {
+    try { const c = await messagesApi.start(profile.username); router.push(`/messages?c=${c.id}`); }
+    catch (err) { toast({ title: 'Could not start conversation', description: errorMessage(err), variant: 'destructive' }); }
   };
 
-  const removeImported = (id: string) => {
-    setImportedPapers(prev => prev.filter(p => p.id !== id));
-  };
-
-  const tabs: { key: ProfileTab; label: string; icon: React.ComponentType<{ size: number; strokeWidth?: number }> }[] = [
-    { key: 'content', label: 'POSTS', icon: Grid },
-    { key: 'reels', label: 'REELS', icon: PlaySquare },
-    { key: 'saved', label: 'SAVED', icon: Bookmark },
-    { key: 'analytics', label: 'ANALYTICS', icon: BarChart2 },
+  const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
+    { id: 'posts', label: 'Posts', icon: Grid },
+    { id: 'reels', label: 'Reels', icon: PlaySquare },
+    { id: 'papers', label: 'Papers', icon: BookOpen },
+    ...(profile.is_self ? [{ id: 'analytics' as Tab, label: 'Analytics', icon: BarChart2 }] : []),
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-indigo-500/30">
-      <main className="max-w-[935px] mx-auto pt-12 pb-24">
-        
-        {/* Profile Header */}
-        <ProfileHeader 
-          user={user} 
-          onImportPapers={() => setIsDOIModalOpen(true)}
-        />
-
-        {/* Navigation Tabs */}
-        <div className="flex items-center justify-center gap-12 border-t border-[var(--border)]/10 mt-0">
-           {tabs.map((t) => {
-             const Icon = t.icon;
-             const isActive = tab === t.key;
-             return (
-               <button 
-                 key={t.key} 
-                 onClick={() => setTab(t.key)}
-                 className={`flex items-center gap-1.5 py-4 border-t transition-all relative ${
-                   isActive 
-                   ? 'border-[var(--foreground)] text-[var(--foreground)]' 
-                   : 'border-transparent text-zinc-500 hover:text-[var(--foreground)]'
-                 }`}
-               >
-                  <Icon size={12} strokeWidth={isActive ? 2.5 : 1.5} />
-                  <span className="text-[12px] font-black tracking-[0.1em]">{t.label}</span>
-               </button>
-             );
-           })}
+    <div className="max-w-4xl mx-auto space-y-8">
+      <header className="flex flex-col sm:flex-row gap-6 sm:gap-10 items-center sm:items-start">
+        <Avatar src={profile.avatar_url} name={profile.full_name} size={128} className="text-4xl" />
+        <div className="flex-1 min-w-0 space-y-4 text-center sm:text-left">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3">
+            <h1 className="text-xl font-semibold">@{profile.username}</h1>
+            {profile.is_self ? (
+              <>
+                <button className={secondaryBtn} onClick={() => setEditing(true)}>Edit profile</button>
+                <Link href="/settings" className="p-2 rounded-xl hover:bg-[var(--foreground)]/5" aria-label="Settings"><Settings size={18} /></Link>
+              </>
+            ) : (
+              <>
+                <FollowButton username={profile.username} initial={profile.is_following} onChange={(f, n) => setProfile((p) => p && { ...p, is_following: f, followers_count: n ?? p.followers_count })} />
+                <button className={secondaryBtn} onClick={message}><MessageCircle size={15} /> Message</button>
+              </>
+            )}
+          </div>
+          <div className="flex justify-center sm:justify-start gap-6 text-sm">
+            <span><strong>{compactNumber(profile.post_count)}</strong> posts</span>
+            <button onClick={() => setList('followers')} className="hover:underline"><strong>{compactNumber(profile.followers_count)}</strong> followers</button>
+            <button onClick={() => setList('following')} className="hover:underline"><strong>{compactNumber(profile.following_count)}</strong> following</button>
+          </div>
+          <div className="space-y-1.5">
+            <p className="font-semibold flex items-center justify-center sm:justify-start gap-1.5">{profile.full_name} <VerifiedBadge status={profile.verification_status} size={16} /></p>
+            {profile.follows_you && <span className="inline-block text-[11px] px-2 py-0.5 rounded bg-[var(--foreground)]/10 text-zinc-400">Follows you</span>}
+            {profile.institution && <p className="text-sm text-zinc-400 flex items-center justify-center sm:justify-start gap-1.5"><Building2 size={14} /> {profile.institution}</p>}
+            {profile.bio && <p className="text-sm whitespace-pre-wrap">{profile.bio}</p>}
+            <div className="flex flex-wrap justify-center sm:justify-start gap-x-4 gap-y-1 text-sm">
+              {profile.website && <a href={profile.website} target="_blank" rel="noopener noreferrer nofollow" className="text-indigo-400 inline-flex items-center gap-1"><LinkIcon size={13} /> {profile.website.replace(/^https?:\/\//, '')}</a>}
+              {profile.orcid_id && <a href={`https://orcid.org/${profile.orcid_id}`} target="_blank" rel="noopener noreferrer" className="text-emerald-400">ORCID {profile.orcid_id}</a>}
+              <Link href={profile.is_self ? '/achievements' : `/achievements?u=${profile.username}`} className="text-amber-300 inline-flex items-center gap-1"><Award size={13} /> Achievements</Link>
+            </div>
+            {profile.research_interests?.length ? (
+              <div className="flex flex-wrap justify-center sm:justify-start gap-1.5 pt-1">
+                {profile.research_interests.map((t) => <Link key={t} href={`/search?q=${encodeURIComponent(t)}`} className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300">{t}</Link>)}
+              </div>
+            ) : null}
+          </div>
         </div>
+      </header>
 
-        {/* Content Section */}
-        <section className="mt-4">
-           {tab === 'content' && (
-             <div className="space-y-6">
-               {/* ── Imported DOI Papers (full post cards) ── */}
-               {importedPapers.length > 0 && (
-                 <div className="space-y-4">
-                   <div className="flex items-center justify-between px-2">
-                     <div className="flex items-center gap-2">
-                       <BookOpen size={14} className="text-indigo-400" />
-                       <span className="text-xs font-black uppercase tracking-widest text-indigo-400">
-                         Imported Research Papers ({importedPapers.length})
-                       </span>
-                     </div>
-                   </div>
+      <div className="border-t border-[var(--border)] flex justify-center gap-8" role="tablist">
+        {tabs.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
+            className={`flex items-center gap-1.5 py-3 text-xs font-semibold uppercase tracking-wider border-t-2 -mt-px ${tab === t.id ? 'border-[var(--foreground)]' : 'border-transparent text-zinc-500'}`}>
+            <t.icon size={14} /> {t.label}{t.id === 'reels' ? ` ${profile.reel_count}` : t.id === 'papers' ? ` ${profile.paper_count}` : ''}
+          </button>
+        ))}
+      </div>
 
-                   {/* Expanded post view */}
-                   {expandedPaperId && (
-                     <div className="border border-indigo-500/20 rounded-2xl p-4 bg-indigo-500/5">
-                       {importedPapers.filter(p => p.id === expandedPaperId).map(paper => (
-                         <PostCard key={paper.id} post={paper} />
-                       ))}
-                     </div>
-                   )}
+      <div className="max-w-xl mx-auto w-full">
+        {tab === 'posts' && <Feed author={profile.username} emptyTitle="No posts yet" emptyDescription={profile.is_self ? 'Share your first post with the community.' : `@${profile.username} hasn't posted yet.`} />}
+        {tab === 'analytics' && profile.is_self && <AnalyticsPanel />}
+      </div>
+      {tab === 'reels' && <ReelsGrid username={profile.username} />}
+      {tab === 'papers' && (
+        <div className="space-y-4">
+          {profile.is_self && (
+            <div className="flex gap-2 justify-end">
+              <button className={secondaryBtn} onClick={() => setImporting(true)}>Import by DOI / ORCID</button>
+              <Link href="/library" className={primaryBtn}><Upload size={15} /> Upload PDF</Link>
+            </div>
+          )}
+          <PapersList username={profile.username} isSelf={profile.is_self} refreshKey={paperKey} />
+        </div>
+      )}
 
-                   {/* Grid thumbnails */}
-                   <div className="grid grid-cols-3 gap-1 md:gap-4">
-                     {importedPapers.map(paper => (
-                       <div
-                         key={paper.id}
-                         onClick={() => setExpandedPaperId(prev => prev === paper.id ? null : paper.id)}
-                         className={`aspect-square relative group cursor-pointer overflow-hidden rounded-xl md:rounded-2xl border transition-all hover:shadow-xl hover:shadow-indigo-500/10 ${
-                           expandedPaperId === paper.id
-                             ? 'border-indigo-500/50 shadow-xl shadow-indigo-500/10'
-                             : 'border-zinc-800/50 bg-zinc-900/40'
-                         }`}
-                       >
-                         {/* Thumbnail content */}
-                         <div className="w-full h-full bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent flex flex-col items-center justify-center p-3 text-center gap-2">
-                           <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
-                             <BookOpen size={18} />
-                           </div>
-                           <p className="text-[9px] font-bold text-zinc-300 leading-tight line-clamp-3">{paper.title}</p>
-                           {paper.year && (
-                             <span className="text-[8px] font-mono text-zinc-600">{paper.year}</span>
-                           )}
-                         </div>
-
-                         {/* Hover overlay */}
-                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center gap-1.5 p-2">
-                           <span className="text-[9px] font-black uppercase tracking-widest text-white">View Post</span>
-                           {typeof paper.cited_by_count === 'number' && (
-                             <div className="flex items-center gap-1 text-[9px] text-zinc-300 font-bold">
-                               <span>📚</span>
-                               <span>{paper.cited_by_count} citations</span>
-                             </div>
-                           )}
-                         </div>
-
-                         {/* Remove button */}
-                         <button
-                           onClick={e => { e.stopPropagation(); removeImported(paper.id); }}
-                           className="absolute top-1.5 right-1.5 w-5 h-5 bg-red-600/80 hover:bg-red-600 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
-                           title="Remove paper"
-                         >
-                           <X size={10} className="text-white" />
-                         </button>
-                       </div>
-                     ))}
-                   </div>
-                 </div>
-               )}
-
-               {/* ── Placeholder grid for other posts ── */}
-               <div className="grid grid-cols-3 gap-1 md:gap-8">
-                  {[...Array(9)].map((_, i) => (
-                    <div key={i} className="aspect-square bg-[var(--foreground)]/5 border border-[var(--border)]/5 relative group cursor-pointer overflow-hidden rounded-xl md:rounded-2xl shadow-sm transition-all hover:shadow-xl">
-                       <div className="w-full h-full bg-gradient-to-br from-[var(--foreground)]/5 to-[var(--foreground)]/10 flex flex-col items-center justify-center text-zinc-500 text-[10px] font-black uppercase tracking-widest gap-2">
-                          <div className="w-8 h-8 rounded-full border border-[var(--border)]/10 flex items-center justify-center bg-[var(--background)] shadow-inner">
-                             <Grid size={14} className="text-indigo-500/50" />
-                          </div>
-                          RESEARCH DATA {i + 1}
-                       </div>
-                       <div className="absolute inset-0 bg-[var(--foreground)]/5 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center gap-6">
-                          <div className="flex items-center gap-1.5 font-black text-sm"><span className="text-lg">❤️</span> 1.2k</div>
-                          <div className="flex items-center gap-1.5 font-black text-sm"><span className="text-lg">💬</span> 48</div>
-                       </div>
-                    </div>
-                  ))}
-               </div>
-             </div>
-           )}
-           
-           {tab === 'analytics' && (
-              <div className="py-10">
-                <AnalyticsDashboard />
-              </div>
-           )}
-
-           {tab === 'reels' && (
-              <div className="flex flex-col items-center justify-center py-32 text-center space-y-6">
-                 <div className="w-20 h-20 rounded-full border-2 border-[var(--border)]/20 flex items-center justify-center bg-[var(--foreground)]/5">
-                    <PlaySquare size={36} strokeWidth={1} className="text-zinc-500" />
-                 </div>
-                 <div className="space-y-2">
-                    <h2 className="text-2xl font-black tracking-tight uppercase">Capture your research in motion</h2>
-                    <p className="text-zinc-500 max-w-xs text-sm font-medium">Share bite-sized scientific breakthroughs and lab insights with the community.</p>
-                 </div>
-                 <button className="text-indigo-500 font-black uppercase text-[10px] tracking-widest hover:text-indigo-600 transition-colors bg-indigo-500/5 px-6 py-2.5 rounded-full border border-indigo-500/20">Create your first reel</button>
-              </div>
-           )}
-
-           {tab === 'saved' && (
-              <div className="flex flex-col items-center justify-center py-32 text-center space-y-6">
-                 <div className="w-20 h-20 rounded-full border-2 border-[var(--border)]/20 flex items-center justify-center bg-[var(--foreground)]/5">
-                    <Bookmark size={36} strokeWidth={1} className="text-zinc-500" />
-                 </div>
-                 <div className="space-y-2">
-                    <h2 className="text-2xl font-black tracking-tight uppercase">Save for later</h2>
-                    <p className="text-zinc-500 max-w-xs text-sm font-medium">Keep track of interesting papers, discussions, and breakthrough reels.</p>
-                 </div>
-              </div>
-           )}
-        </section>
-
-      </main>
-
-      {/* DOI Import Modal */}
-      <DOIImportModal
-        isOpen={isDOIModalOpen}
-        onClose={() => setIsDOIModalOpen(false)}
-        onImport={handleImport}
-      />
+      {list && <FollowListModal username={profile.username} type={list} open onClose={() => { setList(null); load(); }} />}
+      {profile.is_self && editing && <EditProfileModal profile={profile} open={editing} onClose={() => setEditing(false)} onSaved={(p) => setProfile((cur) => cur && { ...cur, ...p })} />}
+      <DOIImportModal isOpen={importing} onClose={() => setImporting(false)} onImported={() => setPaperKey((k) => k + 1)} />
     </div>
   );
 }

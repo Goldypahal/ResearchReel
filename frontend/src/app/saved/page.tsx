@@ -1,77 +1,46 @@
 "use client";
 
-import React, { useState } from 'react';
-import Feed from '@/components/feed/Feed';
+import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Bookmark, PlaySquare } from 'lucide-react';
+import { postsApi, reelsApi, errorMessage, type Post, type Reel } from '@/lib/api';
+import { Spinner, EmptyState, ErrorState } from '@/components/common';
+import PostCard from '@/components/feed/PostCard';
 
 export default function SavedPage() {
-  const [tab, setTab] = useState<'all' | 'papers' | 'reels' | 'code'>('all');
+  const [tab, setTab] = useState<'posts' | 'reels'>('posts');
+  const [posts, setPosts] = useState<Post[] | null>(null);
+  const [reels, setReels] = useState<Reel[] | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setError('');
+    if (tab === 'posts') postsApi.saved().then((r) => setPosts(r.posts)).catch((e) => setError(errorMessage(e)));
+    else reelsApi.saved().then(setReels).catch((e) => setError(errorMessage(e)));
+  }, [tab]);
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] selection:bg-indigo-500/30">
-      <main className="max-w-7xl mx-auto px-4 pt-6 md:pt-24 pb-12 md:pb-24 space-y-12">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-white/5 pb-10">
-           <div className="space-y-1">
-              <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] italic">Knowledge Library (Section 3.6.2)</span>
-              <h2 className="text-4xl font-black tracking-tight text-white italic">Saved Resources</h2>
-           </div>
-           
-           <div className="flex gap-8 relative overflow-x-auto no-scrollbar pb-2">
-              {[
-                { key: 'all', label: 'All Artifacts' },
-                { key: 'papers', label: 'Technical Papers' },
-                { key: 'reels', label: 'Reel Summaries' },
-                { key: 'code', label: 'Code & Data' }
-              ].map(t => (
-                <button 
-                  key={t.key} 
-                  onClick={() => setTab(t.key as 'all' | 'papers' | 'reels' | 'code')}
-                  className={`text-[11px] font-black uppercase tracking-widest transition-all relative pb-2 ${tab === t.key ? 'text-indigo-500' : 'text-zinc-600 hover:text-white'}`}
-                >
-                   {t.label}
-                   {tab === t.key && <span className="absolute bottom-0 left-0 w-full h-[3px] bg-indigo-500 shadow-lg shadow-indigo-500/30"></span>}
-                </button>
-              ))}
-           </div>
+    <div className="max-w-2xl mx-auto space-y-5">
+      <h1 className="text-2xl font-bold flex items-center gap-2"><Bookmark /> Saved</h1>
+      <div className="flex gap-1 p-1 rounded-xl bg-[var(--foreground)]/5 w-fit" role="tablist">
+        {(['posts', 'reels'] as const).map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold capitalize ${tab === t ? 'bg-[var(--background)] shadow' : 'text-zinc-500'}`}>{t}</button>
+        ))}
+      </div>
+      {error && <ErrorState message={error} />}
+      {!error && tab === 'posts' && (posts === null ? <Spinner /> : posts.length === 0 ? <EmptyState icon={<Bookmark size={28} />} title="No saved posts" description="Tap the bookmark on any post to save it for later." /> : (
+        <div className="space-y-5">{posts.map((p) => <PostCard key={p.id} post={p} />)}</div>
+      ))}
+      {!error && tab === 'reels' && (reels === null ? <Spinner /> : reels.length === 0 ? <EmptyState icon={<PlaySquare size={28} />} title="No saved reels" /> : (
+        <div className="grid grid-cols-3 gap-1.5">
+          {reels.map((r) => (
+            <Link key={r.id} href={`/reels?id=${r.id}`} className="aspect-[9/16] bg-black rounded-lg overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {r.thumbnail_url && <img src={r.thumbnail_url} alt={r.title} className="w-full h-full object-cover" />}
+            </Link>
+          ))}
         </div>
-
-        <section className="animate-fade-in">
-           {tab === 'all' && (
-              <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-[1fr_300px] gap-12">
-                 <Feed />
-                 <aside className="space-y-8 hidden md:block">
-                    <div className="p-8 bg-zinc-900/40 border border-white/5 rounded-[40px] space-y-6">
-                       <h3 className="text-[10px] font-black text-zinc-600 uppercase tracking-widest italic">Library Stats</h3>
-                       <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                             <span className="text-xs font-bold text-white">Papers</span>
-                             <span className="text-xs text-indigo-500 font-black">12</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                             <span className="text-xs font-bold text-white">Reels</span>
-                             <span className="text-xs text-indigo-500 font-black">45</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                             <span className="text-xs font-bold text-white">Code Gists</span>
-                             <span className="text-xs text-indigo-500 font-black">8</span>
-                          </div>
-                       </div>
-                       <button className="w-full h-10 bg-white/5 border border-white/5 text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-white hover:text-black transition-all">Organize Folders</button>
-                    </div>
-                 </aside>
-              </div>
-           )}
-
-           {tab !== 'all' && (
-              <div className="text-center py-40 animate-fade-in opacity-50 relative overflow-hidden bg-zinc-900/40 rounded-[48px] border border-white/5">
-                 <div className="text-4xl">📂</div>
-                 <h3 className="text-xl font-black text-white italic">Category Empty</h3>
-                 <p className="text-xs font-bold text-zinc-600 uppercase tracking-widest">Filter results to see your saved items.</p>
-              </div>
-           )}
-        </section>
-
-      </main>
-
+      ))}
     </div>
   );
 }

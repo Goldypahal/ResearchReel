@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import Sidebar from './Sidebar';
@@ -8,21 +8,35 @@ import MobileNav from './MobileNav';
 import CreationSheet from '../ui/CreationSheet';
 import UploadPaperModal from '../ui/UploadPaperModal';
 import { useAuth } from '@/context/AuthContext';
+import { useRealtime } from '@/context/RealtimeContext';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import { Search, Bell, Library, Plus } from 'lucide-react';
+import { Avatar, Spinner } from '@/components/common';
+import { Search, Bell, Library, Plus, MessageCircle } from 'lucide-react';
 
-const PUBLIC_ROUTES = ['/landing'];
-const AUTH_ROUTES = ['/auth', '/login', '/register'];
+/** Pages that render without the app chrome and without requiring sign-in. */
+const STANDALONE = ['/', '/auth'];
+const PUBLIC_WITH_SHELL = ['/support'];
+
+const isStandalone = (p: string) => p === '/' || STANDALONE.some((r) => r !== '/' && p.startsWith(r));
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [isCreationOpen, setIsCreationOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
+  const { unreadNotifications, unreadMessages } = useRealtime();
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() || '/';
 
-  // Register global keyboard shortcuts
+  const standalone = isStandalone(pathname);
+  const requiresAuth = !standalone && !PUBLIC_WITH_SHELL.some((r) => pathname.startsWith(r));
+
+  useEffect(() => {
+    if (!isLoading && !user && requiresAuth) {
+      router.replace(`/auth/login?next=${encodeURIComponent(pathname)}`);
+    }
+  }, [isLoading, user, requiresAuth, pathname, router]);
+
   useKeyboardShortcuts({
     onOpenSearch: () => {
       const searchInput = document.getElementById('global-search-input');
@@ -38,33 +52,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   });
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
-    }
-  };
+  if (standalone) return <>{children}</>;
 
-  // Route classification check
-  const isStandalonePage =
-    pathname === '/' ||
-    PUBLIC_ROUTES.some((route) => pathname?.startsWith(route)) ||
-    AUTH_ROUTES.some((route) => pathname?.startsWith(route));
-
-  if (isStandalonePage) {
-    return <>{children}</>;
+  if (requiresAuth && (isLoading || !user)) {
+    return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
   }
 
-  const profileHref = user?.username ? `/profile/${user.username}` : '/settings';
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+  };
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex flex-col md:flex-row">
-      {/* Desktop Persistent Sidebar */}
       <Sidebar onOpenCreate={() => setIsCreationOpen(true)} />
 
-      {/* Main Layout Container */}
       <div className="flex-1 flex flex-col md:pl-[72px] min-w-0 transition-all duration-300">
-        {/* Top Utility Bar */}
         <header className="sticky top-0 z-30 h-16 border-b border-[var(--border)] bg-[var(--background)]/90 backdrop-blur-xl px-4 md:px-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 md:hidden">
             <Link href="/home" className="flex items-center gap-2">
@@ -73,68 +76,60 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
           </div>
 
-          {/* Global Search Bar */}
-          <form onSubmit={handleSearchSubmit} className="flex-1 max-w-lg relative hidden sm:block">
-            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <form onSubmit={handleSearchSubmit} className="flex-1 max-w-lg relative hidden sm:block" role="search">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
             <input
               id="global-search-input"
-              type="text"
-              placeholder="Search research papers, topics, authors, reels... (Press '/' to focus)"
+              type="search"
+              aria-label="Search"
+              placeholder="Search people, papers, posts, reels or #tags  ( / )"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-xs bg-[var(--foreground)]/5 border border-[var(--border)] rounded-full focus:outline-none focus:border-indigo-500/50 transition-all text-[var(--foreground)] placeholder:text-muted-foreground"
+              className="w-full pl-10 pr-4 py-2 text-sm bg-[var(--foreground)]/5 border border-[var(--border)] rounded-full focus:outline-none focus:border-indigo-500/50 transition-all text-[var(--foreground)] placeholder:text-zinc-500"
             />
           </form>
 
-          {/* Top Bar Actions */}
-          <div className="flex items-center gap-3 ml-auto">
-            <button
-              onClick={() => setIsCreationOpen(true)}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full text-xs font-semibold shadow-md transition-colors"
-            >
-              <Plus size={14} />
-              <span>Create</span>
-            </button>
-
-            <Link
-              href="/notifications"
-              className="p-2 rounded-full hover:bg-[var(--foreground)]/5 text-muted-foreground hover:text-[var(--foreground)] transition-colors relative"
-              aria-label="Notifications"
-            >
-              <Bell size={20} />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full animate-ping" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full" />
-            </Link>
-
-            <Link
-              href={profileHref}
-              className="w-8 h-8 rounded-full border border-indigo-500/30 overflow-hidden bg-indigo-500/10 flex items-center justify-center font-bold text-xs text-indigo-400 hover:scale-105 transition-transform"
-            >
-              {user?.full_name?.slice(0, 1) || user?.username?.slice(0, 1) || 'U'}
-            </Link>
-          </div>
+          {user && (
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={() => setIsCreationOpen(true)}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full text-xs font-semibold shadow-md transition-colors"
+              >
+                <Plus size={14} />
+                <span>Create</span>
+              </button>
+              <Link href="/search" className="sm:hidden p-2 rounded-full hover:bg-[var(--foreground)]/5" aria-label="Search"><Search size={20} /></Link>
+              <Link href="/messages" className="md:hidden p-2 rounded-full hover:bg-[var(--foreground)]/5 relative" aria-label={`Messages${unreadMessages ? `, ${unreadMessages} unread` : ''}`}>
+                <MessageCircle size={20} />
+                {unreadMessages > 0 && <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">{unreadMessages > 9 ? '9+' : unreadMessages}</span>}
+              </Link>
+              <Link href="/notifications" className="p-2 rounded-full hover:bg-[var(--foreground)]/5 relative" aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`}>
+                <Bell size={20} />
+                {unreadNotifications > 0 && <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">{unreadNotifications > 9 ? '9+' : unreadNotifications}</span>}
+              </Link>
+              <Link href={`/profile/${user.username}`} aria-label="Your profile" className="hover:scale-105 transition-transform">
+                <Avatar src={user.avatar_url} name={user.full_name} size={32} />
+              </Link>
+            </div>
+          )}
+          {!user && (
+            <div className="ml-auto flex gap-2">
+              <Link href="/auth/login" className="text-sm font-semibold px-3 py-1.5">Sign in</Link>
+              <Link href="/auth/register" className="text-sm font-semibold px-3 py-1.5 rounded-full bg-indigo-600 text-white">Join</Link>
+            </div>
+          )}
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 pb-20 md:pb-6 px-4 md:px-8 py-6 min-w-0">
-          {children}
-        </main>
+        <main className="flex-1 pb-20 md:pb-6 px-4 md:px-8 py-6 min-w-0">{children}</main>
       </div>
 
-      {/* Persistent Mobile Bottom Navigation */}
-      <MobileNav onOpenCreate={() => setIsCreationOpen(true)} />
-
-      {/* Global Overlays */}
-      <CreationSheet
-        isOpen={isCreationOpen}
-        onClose={() => setIsCreationOpen(false)}
-        onOpenUploadModal={() => setIsUploadOpen(true)}
-      />
-
-      <UploadPaperModal
-        isOpen={isUploadOpen}
-        onClose={() => setIsUploadOpen(false)}
-      />
+      {user && <MobileNav onOpenCreate={() => setIsCreationOpen(true)} />}
+      {user && (
+        <>
+          <CreationSheet isOpen={isCreationOpen} onClose={() => setIsCreationOpen(false)} onOpenUploadModal={() => setIsUploadOpen(true)} />
+          <UploadPaperModal isOpen={isUploadOpen} onClose={() => setIsUploadOpen(false)} />
+        </>
+      )}
     </div>
   );
 }

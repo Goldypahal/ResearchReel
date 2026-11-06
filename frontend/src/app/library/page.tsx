@@ -1,149 +1,81 @@
 "use client";
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Bookmark, Upload, FileText, MoreVertical, Bot, Film, Users, History, Trash2, ExternalLink } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Upload, Search, BookOpen, Link2 } from 'lucide-react';
 import UploadPaperModal from '@/components/ui/UploadPaperModal';
+import DOIImportModal from '@/components/profile/DOIImportModal';
+import PaperCard from '@/components/library/PaperCard';
+import { Spinner, ErrorState, EmptyState, LoadMore, inputClass, primaryBtn, secondaryBtn } from '@/components/common';
+import { documentsApi, errorMessage, type Paper } from '@/lib/api';
 
 export default function LibraryPage() {
-  const [activeTab, setActiveTab] = useState<'all' | 'recent' | 'favorites' | 'shared'>('all');
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const router = useRouter();
+  const [tab, setTab] = useState<'mine' | 'public'>('mine');
+  const [q, setQ] = useState('');
+  const [query, setQuery] = useState('');
+  const [docs, setDocs] = useState<Paper[] | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [doiOpen, setDoiOpen] = useState(false);
 
-  const documents = [
-    {
-      id: 'doc_1',
-      title: 'Attention Is All You Need',
-      authors: 'Vaswani et al.',
-      addedDate: '2 days ago',
-      hasSummary: true,
-      favorite: true
-    },
-    {
-      id: 'doc_2',
-      title: 'BERT: Pre-training of Deep Bidirectional Transformers',
-      authors: 'Devlin et al.',
-      addedDate: '1 week ago',
-      hasSummary: true,
-      favorite: false
-    },
-    {
-      id: 'doc_3',
-      title: 'Retrieval-Augmented Generation for Knowledge-Intensive Tasks',
-      authors: 'Lewis et al.',
-      addedDate: '2 weeks ago',
-      hasSummary: true,
-      favorite: true
-    }
-  ];
+  const load = useCallback(async () => {
+    setDocs(null); setError('');
+    try {
+      const r = await documentsApi.list({ scope: tab, q: query || undefined });
+      setDocs(r.documents); setCursor(r.nextCursor);
+    } catch (err) { setError(errorMessage(err)); }
+  }, [tab, query]);
+  useEffect(() => { load(); }, [load]);
+
+  const more = useCallback(async () => {
+    if (!cursor) return;
+    setLoadingMore(true);
+    try {
+      const r = await documentsApi.list({ scope: tab, q: query || undefined, cursor });
+      setDocs((prev) => [...(prev || []), ...r.documents]); setCursor(r.nextCursor);
+    } catch { /* retry */ } finally { setLoadingMore(false); }
+  }, [cursor, tab, query]);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-[var(--foreground)]">
-            My Research Library
-          </h1>
-          <p className="text-xs md:text-sm text-muted-foreground mt-1">
-            Manage your uploaded papers, AI indexed research documents, and saved literature.
-          </p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BookOpen className="text-indigo-400" /> Library</h1>
+          <p className="text-sm text-zinc-500">Your papers and research shared by the community.</p>
         </div>
-
-        <button
-          onClick={() => setIsUploadOpen(true)}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition-colors flex items-center gap-2"
-        >
-          <Upload size={16} />
-          <span>Upload Paper</span>
-        </button>
+        <div className="flex gap-2">
+          <button className={secondaryBtn} onClick={() => setDoiOpen(true)}><Link2 size={15} /> Import by DOI</button>
+          <button className={primaryBtn} onClick={() => setUploadOpen(true)}><Upload size={15} /> Upload PDF</button>
+        </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-[var(--border)]">
-        {(['all', 'recent', 'favorites', 'shared'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-3 text-xs font-semibold capitalize border-b-2 transition-all ${
-              activeTab === tab
-                ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-muted-foreground hover:text-[var(--foreground)]'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 p-1 rounded-xl bg-[var(--foreground)]/5" role="tablist">
+          {(['mine', 'public'] as const).map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold ${tab === t ? 'bg-[var(--background)] shadow' : 'text-zinc-500'}`}>
+              {t === 'mine' ? 'My papers' : 'Community'}
+            </button>
+          ))}
+        </div>
+        <form className="flex-1 min-w-48 relative" onSubmit={(e) => { e.preventDefault(); setQuery(q.trim()); }}>
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+          <input className={`${inputClass} pl-9`} placeholder="Search title, author, DOI or tag" value={q} onChange={(e) => setQ(e.target.value)} />
+        </form>
       </div>
 
-      {/* Document Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {documents.map((doc) => (
-          <div
-            key={doc.id}
-            className="p-5 rounded-2xl bg-[var(--foreground)]/[0.02] border border-[var(--border)] hover:border-indigo-500/40 transition-all space-y-4 relative group"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
-                <FileText size={20} />
-              </div>
-              <div className="flex items-center gap-1">
-                {doc.favorite && (
-                  <Bookmark size={16} className="text-amber-400 fill-amber-400" />
-                )}
-              </div>
-            </div>
+      {error ? <ErrorState message={error} onRetry={load} /> : docs === null ? <Spinner /> : docs.length === 0 ? (
+        <EmptyState icon={<BookOpen size={32} />} title={query ? 'No matching papers' : tab === 'mine' ? 'Your library is empty' : 'No papers shared yet'}
+          description={tab === 'mine' && !query ? 'Upload a PDF or import your publications by DOI.' : undefined} />
+      ) : (
+        <div className="space-y-3">
+          {docs.map((d) => <PaperCard key={d.id} paper={d} showUploader={tab === 'public'} />)}
+          <LoadMore onVisible={more} loading={loadingMore} hasMore={Boolean(cursor)} />
+        </div>
+      )}
 
-            <div className="space-y-1">
-              <h3 
-                onClick={() => router.push(`/library/documents/${doc.id}`)}
-                className="text-sm font-bold text-[var(--foreground)] hover:text-indigo-400 cursor-pointer transition-colors line-clamp-1"
-              >
-                {doc.title}
-              </h3>
-              <p className="text-xs text-muted-foreground">{doc.authors}</p>
-              <p className="text-[11px] text-muted-foreground/70">Added {doc.addedDate}</p>
-            </div>
-
-            {doc.hasSummary && (
-              <span className="inline-block px-2.5 py-0.5 text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md">
-                AI Summary Ready
-              </span>
-            )}
-
-            <div className="pt-2 border-t border-[var(--border)]/50 flex items-center justify-between text-xs">
-              <button
-                onClick={() => router.push(`/library/documents/${doc.id}`)}
-                className="text-indigo-400 font-semibold hover:underline flex items-center gap-1"
-              >
-                <ExternalLink size={14} /> Open Reader
-              </button>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => router.push(`/ai/ask?doc=${doc.id}`)}
-                  title="Ask AI"
-                  className="p-1.5 rounded-lg hover:bg-[var(--foreground)]/10 text-muted-foreground hover:text-indigo-400"
-                >
-                  <Bot size={15} />
-                </button>
-                <button
-                  onClick={() => router.push('/reels/create')}
-                  title="Generate Reel"
-                  className="p-1.5 rounded-lg hover:bg-[var(--foreground)]/10 text-muted-foreground hover:text-purple-400"
-                >
-                  <Film size={15} />
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <UploadPaperModal
-        isOpen={isUploadOpen}
-        onClose={() => setIsUploadOpen(false)}
-      />
+      <UploadPaperModal isOpen={uploadOpen} onClose={() => setUploadOpen(false)} onSuccess={() => { setTab('mine'); load(); }} />
+      <DOIImportModal isOpen={doiOpen} onClose={() => setDoiOpen(false)} onImported={() => { setTab('mine'); load(); }} />
     </div>
   );
 }

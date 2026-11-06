@@ -1,103 +1,86 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { initAnalytics, trackEvent, identifyUser, resetAnalytics } from '@/lib/analytics';
+import { initAnalytics, identifyUser, resetAnalytics, trackEvent } from '@/lib/analytics';
 import { initSentry } from '@/lib/sentry';
-
-export type UserRole = 'student' | 'professor' | 'scholar' | 'viewer' | 'admin' | 'moderator' | 'user';
-
-interface User {
-  id: string;
-  email: string;
-  username: string;
-  verification_status: string;
-  role: UserRole;
-  full_name?: string;
-}
+import { authApi, usersApi, onSessionExpired, type CurrentUser } from '@/lib/api';
 
 interface AuthContextType {
-  user: User | null;
-  token: string | null;
-  login: (userData: User, token: string) => void;
-  logout: () => void;
-  updateUser: (userData: User) => void;
+  user: CurrentUser | null;
   isLoading: boolean;
+  /** Store a freshly-authenticated user (after login / OTP verification). */
+  login: (user: CurrentUser) => void;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+  updateUser: (partial: Partial<CurrentUser>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    // Initialize monitoring tools
-    initAnalytics();
-    initSentry();
-
-    // Remove legacy insecure localStorage token storage
-    localStorage.removeItem('token');
-
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
-        setUser(parsedUser);
-        identifyUser(parsedUser.id, parsedUser.email, { username: parsedUser.username, role: parsedUser.role });
-      } catch (e) {
-        console.error("Failed to parse saved user", e);
-        localStorage.removeItem('user');
-      }
+  const loadSession = useCallback(async () => {
+    try {
+      const me = await usersApi.me();
+      setUser(me);
+      identifyUser(me.id, me.email, { username: me.username, role: me.role });
+    } catch {
+      setUser(null);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, []);
 
-  const login = (userData: User, newToken?: string) => {
-    setUser(userData);
-    if (newToken) setToken(newToken);
-    localStorage.removeItem('token');
-    localStorage.setItem('user', JSON.stringify(userData));
-    identifyUser(userData.id, userData.email, { username: userData.username, role: userData.role });
-    trackEvent('login', { userId: userData.id, email: userData.email });
-  };
+  useEffect(() => {
+    initAnalytics();
+    initSentry();
+    // Clean up storage keys written by older versions of the app.
+    try { localStorage.removeItem('token'); localStorage.removeItem('user'); } catch { /* storage unavailable */ }
+    loadSession();
+  }, [loadSession]);
 
-  const updateUser = (userData: User) => {
-    setUser(userData);
-    localStorage.setItem('user', JSON.stringify(userData));
-  };
-
-  const logout = () => {
+  useEffect(() => onSessionExpired(() => {
     setUser(null);
-    setToken(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    const path = window.location.pathname;
+    if (path !== '/' && !path.startsWith('/auth')) {
+      router.replace(`/auth/login?next=${encodeURIComponent(path + window.location.search)}`);
+    }
+  }), [router]);
+
+  const login = useCallback((u: CurrentUser) => {
+    setUser(u);
+    identifyUser(u.id, u.email, { username: u.username, role: u.role });
+    trackEvent('login', { userId: u.id });
+  }, []);
+
+  const logout = useCallback(async () => {
+    try { await authApi.logout(); } catch { /* already signed out */ }
+    setUser(null);
     resetAnalytics();
+    router.replace('/');
+  }, [router]);
 
-    fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+  const refreshUser = useCallback(async () => {
+    try { setUser(await usersApi.me()); } catch { /* keep current */ }
+  }, []);
 
-    document.cookie.split(";").forEach((c) => {
-      document.cookie = c
-        .replace(/^ +/, "")
-        .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-    });
-    router.push('/');
-  };
+  const updateUser = useCallback((partial: Partial<CurrentUser>) => {
+    setUser((prev) => (prev ? { ...prev, ...partial } : prev));
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, updateUser, isLoading }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, refreshUser, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (context === undefined) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };

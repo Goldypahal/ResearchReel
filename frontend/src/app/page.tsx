@@ -1,19 +1,15 @@
 "use client";
 
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import LandingPage from '@/components/ui/LandingPage';
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
 
 export default function Root() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
-
   useEffect(() => {
-    if (user) {
-      router.push('/home');
-    }
-  }, [user, router]);
-
+    if (!isLoading && user) router.replace('/home');
+  }, [user, isLoading, router]);
   return <LandingPage />;
 }
