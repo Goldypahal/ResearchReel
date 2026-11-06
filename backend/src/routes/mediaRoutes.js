@@ -2,43 +2,33 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const router = express.Router();
 const mediaController = require('../controllers/mediaController');
 const { authMiddleware } = require('../middleware/authMiddleware');
-const virusScanMiddleware = require('../middleware/virusScan');
+const rateLimiter = require('../middleware/rateLimiter');
+const { UPLOAD_DIR } = require('../services/storageService');
 
-// Ensure staging directory exists
-const stagingDir = path.join(__dirname, '../../public/uploads/staging');
-if (!fs.existsSync(stagingDir)) {
-  fs.mkdirSync(stagingDir, { recursive: true });
-}
+// Staging lives on the same disk the worker reads from (the API process runs the worker by default).
+const stagingDir = path.join(UPLOAD_DIR, '.staging');
+fs.mkdirSync(stagingDir, { recursive: true });
 
-// Multer storage configuration
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, stagingDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `staging-${uniqueSuffix}${path.extname(file.originalname)}`);
-  }
-});
-
-// Multer upload setup
 const upload = multer({
-  storage: storage,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB limit
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, stagingDir),
+    filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}${path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '')}`)
+  }),
+  limits: { fileSize: Number(process.env.MAX_VIDEO_MB || 200) * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.mp4' || ext === '.mov') {
-      return cb(null, true);
-    }
-    return cb(new Error('Only MP4 and MOV video formats are supported.'));
+    const ok = ['video/mp4', 'video/quicktime', 'video/webm'].includes(file.mimetype)
+      && ['.mp4', '.mov', '.webm', '.m4v'].includes(path.extname(file.originalname).toLowerCase());
+    if (ok) return cb(null, true);
+    const err = new Error('Only MP4, MOV and WebM videos are supported.');
+    err.statusCode = 400; err.code = 'VALIDATION_ERROR';
+    return cb(err);
   }
 });
 
-// Route for video upload
-router.post('/upload', authMiddleware, upload.single('video'), virusScanMiddleware, mediaController.uploadVideo);
-router.get('/health', mediaController.healthCheck);
+router.post('/upload', authMiddleware, rateLimiter(20, 3600), upload.single('video'), mediaController.uploadVideo);
 
 module.exports = router;

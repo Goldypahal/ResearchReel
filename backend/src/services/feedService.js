@@ -1,118 +1,75 @@
 const db = require('../config/db');
-const searchService = require('./searchService');
-const aiService = require('./aiService');
 
-const getFeed = async (cursor, limit = 20) => {
-  let query = `
-    SELECT 
-      p.*, 
-      u.username, u.full_name, u.profile_picture_url, u.verification_status,
-      d.file_name, d.summary_text,
-      (SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id) as reaction_count
+/**
+ * Builds the SELECT for posts with author info, counts and viewer state.
+ * $1 is always the viewer id (nullable).
+ */
+const POST_SELECT = `
+  SELECT p.id, p.author_id, p.content_type, p.caption, p.media_urls, p.document_id, p.tags,
+         p.publication_status, p.doi, p.created_at, p.updated_at,
+         u.username, u.full_name, u.profile_picture_url AS avatar_url, u.verification_status,
+         d.id AS doc_id, COALESCE(d.title, d.file_name) AS document_title, d.file_url AS document_url,
+         d.abstract AS document_abstract, d.page_count AS document_pages,
+         (SELECT COUNT(*)::int FROM reactions r WHERE r.post_id = p.id) AS like_count,
+         (SELECT COUNT(*)::int FROM post_comments c WHERE c.post_id = p.id AND c.deleted_at IS NULL) AS comment_count,
+         CASE WHEN $1::uuid IS NULL THEN FALSE
+              ELSE EXISTS (SELECT 1 FROM reactions r WHERE r.post_id = p.id AND r.user_id = $1::uuid) END AS is_liked,
+         CASE WHEN $1::uuid IS NULL THEN FALSE
+              ELSE EXISTS (SELECT 1 FROM bookmarks b WHERE b.post_id = p.id AND b.user_id = $1::uuid) END AS is_bookmarked
     FROM posts p
-    JOIN users u ON p.author_id = u.id
-    LEFT JOIN documents d ON p.document_id = d.id
-  `;
-  const params = [];
+    JOIN users u ON u.id = p.author_id AND u.is_deleted IS NOT TRUE
+    LEFT JOIN documents d ON d.id = p.document_id AND d.deleted_at IS NULL
+`;
 
-  if (cursor) {
-    query += ` WHERE p.created_at < $1`;
-    params.push(cursor);
+/**
+ * @param {{ viewerId?: string, scope?: 'all'|'following', author?: string, tag?: string, cursor?: string, limit: number }} opts
+ */
+const getFeed = async ({ viewerId = null, scope = 'all', author = null, tag = null, cursor = null, limit = 20 }) => {
+  const params = [viewerId];
+  const where = ['p.deleted_at IS NULL'];
+
+  if (scope === 'following' && viewerId) {
+    where.push('(p.author_id = $1::uuid OR p.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1::uuid))');
   }
-
-  query += ` ORDER BY p.created_at DESC LIMIT $${cursor ? 2 : 1}`;
+  if (author) {
+    params.push(author);
+    where.push(`LOWER(u.username) = LOWER($${params.length})`);
+  }
+  if (tag) {
+    params.push(String(tag).replace(/^#/, '').toLowerCase());
+    where.push(`EXISTS (SELECT 1 FROM unnest(p.tags) t WHERE lower(t) = $${params.length})`);
+  }
+  if (cursor) {
+    params.push(cursor);
+    where.push(`p.created_at < $${params.length}`);
+  }
   params.push(limit);
 
-  const posts = await db.query(query, params);
-
-  let nextCursor = null;
-  if (posts.rows.length > 0) {
-    nextCursor = posts.rows[posts.rows.length - 1].created_at.toISOString();
-  }
-
-  return { posts: posts.rows, nextCursor };
-};
-
-const createPost = async ({ author_id, content_type, caption, media_urls, document_id, tags, publication_status, doi }) => {
-  const newPost = await db.query(
-    `INSERT INTO posts (author_id, content_type, caption, media_urls, document_id, tags, publication_status, doi) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-    [author_id, content_type, caption, media_urls, document_id, tags, publication_status, doi]
+  const r = await db.query(
+    `${POST_SELECT} WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${params.length}`,
+    params
   );
-  const post = newPost.rows[0];
-
-  try {
-    await searchService.indexEntity('posts', post.id, {
-      id: post.id,
-      author_id: post.author_id,
-      caption: post.caption,
-      tags: post.tags,
-      publication_status: post.publication_status,
-      content_type: post.content_type
-    });
-  } catch (err) {
-    console.error('Failed to index post in search:', err.message);
-  }
-
-  return post;
+  return r.rows;
 };
 
-const reactToPost = async ({ post_id, user_id, reaction_type }) => {
-  await db.query(
-    'INSERT INTO reactions (post_id, user_id, reaction_type) VALUES ($1, $2, $3) ON CONFLICT ON CONSTRAINT reactions_pkey DO UPDATE SET reaction_type = $3',
-    [post_id, user_id, reaction_type]
+const getPost = async (postId, viewerId = null) => {
+  const r = await db.query(`${POST_SELECT} WHERE p.id = $2 AND p.deleted_at IS NULL`, [viewerId, postId]);
+  return r.rows[0] || null;
+};
+
+const createPost = async ({ authorId, contentType, caption, mediaUrls, documentId, tags, publicationStatus, doi }) => {
+  const r = await db.query(
+    `INSERT INTO posts (author_id, content_type, caption, media_urls, document_id, tags, publication_status, doi)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [authorId, contentType, caption || '', mediaUrls || [], documentId || null, tags || [], publicationStatus || null, doi || null]
   );
-  return true;
+  return getPost(r.rows[0].id, authorId);
 };
 
-const uploadDocument = async ({ uploader_id, file_name, file_type, file_url }) => {
-  let newDoc = await db.query(
-    `INSERT INTO documents (uploader_id, file_name, file_type, file_url) 
-     VALUES ($1, $2, $3, $4) RETURNING *`,
-    [uploader_id, file_name, file_type, file_url]
-  );
-  let doc = newDoc.rows[0];
-
-  try {
-    const aiSummary = await aiService.summarizeDocument(doc.id);
-    const updatedDoc = await db.query(
-      `UPDATE documents SET summary_text = $1, key_points = $2 WHERE id = $3 RETURNING *`,
-      [aiSummary.abstract, aiSummary.key_points, doc.id]
-    );
-    doc = updatedDoc.rows[0];
-  } catch (err) {
-    console.error('Failed to generate AI summary:', err.message);
-    doc.summary_text = `Fallback Summary: Unable to generate AI insights for ${file_name}.`;
-  }
-
-  try {
-    await searchService.indexEntity('documents', doc.id, {
-      id: doc.id,
-      file_name: doc.file_name,
-      summary_text: doc.summary_text,
-      uploader_id: doc.uploader_id
-    });
-  } catch (err) {
-    console.error('Failed to index document in search:', err.message);
-  }
-
-  // Trigger auto-generator hook for reels
-  try {
-    const reelGeneratorService = require('./reelGeneratorService');
-    reelGeneratorService.handleNewPaperUpload(doc.id, uploader_id).catch(err => {
-      console.error('[Feed Service] Error during reel auto-generation hook:', err.message);
-    });
-  } catch (err) {
-    console.error('[Feed Service] Failed to call reel auto-generation hook:', err.message);
-  }
-
-  return doc;
+/** Extracts #hashtags from a caption, merged with explicit tags. */
+const collectTags = (caption, tags = []) => {
+  const fromCaption = (String(caption || '').match(/#[\p{L}\p{N}_]{2,50}/gu) || []).map((t) => t.slice(1));
+  return [...new Set([...tags, ...fromCaption].map((t) => t.trim().replace(/^#/, '')).filter(Boolean))].slice(0, 20);
 };
 
-module.exports = {
-  getFeed,
-  createPost,
-  reactToPost,
-  uploadDocument
-};
-
+module.exports = { POST_SELECT, getFeed, getPost, createPost, collectTags };

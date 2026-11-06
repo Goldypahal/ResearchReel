@@ -1,64 +1,53 @@
 const chatService = require('../services/chatService');
+const { moderateText } = require('../utils/moderator');
 const { sendSuccess, sendError } = require('../utils/response');
+const { isUuid, parsePage } = require('../utils/pagination');
 
-// List All Conversations (Section 26 / 27)
-exports.getConversations = async (req, res, next) => {
+const handle = (fn) => async (req, res, next) => {
   try {
-    const list = await chatService.getConversations(req.user.id);
-    return sendSuccess(res, list, 'Conversations retrieved.');
+    await fn(req, res, next);
   } catch (error) {
+    if (error instanceof chatService.ChatError) return sendError(res, error.message, error.statusCode, error.code, req);
     next(error);
   }
 };
 
-// Get Single Conversation Messages (Section 26 / 29)
-exports.getMessages = async (req, res, next) => {
-  try {
-    const conversationId = req.params.conversationId || req.params.conversation_id;
-    const { cursor, limit } = req.query;
+exports.getConversations = handle(async (req, res) => sendSuccess(res, await chatService.getConversations(req.user.id), 'Conversations.'));
 
-    const result = await chatService.getMessages(conversationId, req.user.id, cursor, parseInt(limit) || 50);
-    return sendSuccess(res, { messages: result.messages, nextCursor: result.nextCursor }, 'Messages retrieved.');
-  } catch (error) {
-    next(error);
-  }
-};
+exports.getConversation = handle(async (req, res) => {
+  if (!isUuid(req.params.conversation_id)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+  return sendSuccess(res, await chatService.getConversation(req.params.conversation_id, req.user.id), 'Conversation.');
+});
 
-// Send Message (Section 28 / 29 - sender_id ALWAYS derived from req.user.id)
-exports.sendMessage = async (req, res, next) => {
-  try {
-    const { conversation_id, conversationId, content, message_type, file_url } = req.body;
-    const targetConversationId = conversationId || conversation_id;
-    const sender_id = req.user.id; // Enforce server-side sender identity
+exports.startConversation = handle(async (req, res) => {
+  const username = String(req.body.username || '').trim();
+  if (!username) return sendError(res, 'Choose someone to message.', 400, 'VALIDATION_ERROR', req);
+  return sendSuccess(res, await chatService.startDirectConversation(req.user.id, username), 'Conversation ready.');
+});
 
-    if (!targetConversationId || !content) {
-      return sendError(res, 'conversationId and content are required.', 400, 'VALIDATION_ERROR', req);
-    }
+exports.getMessages = handle(async (req, res) => {
+  const id = req.params.conversation_id;
+  if (!isUuid(id)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+  const { limit, cursor } = parsePage(req.query, 50, 100);
+  return sendSuccess(res, await chatService.getMessages(id, req.user.id, cursor, limit), 'Messages.');
+});
 
-    const message = await chatService.sendMessage({
-      conversation_id: targetConversationId,
-      sender_id,
-      content: content || '',
-      message_type: message_type || 'text',
-      file_url: file_url || null
-    });
+exports.sendMessage = handle(async (req, res) => {
+  const conversationId = req.body.conversation_id || req.body.conversationId;
+  const content = String(req.body.content || '').trim();
+  if (!isUuid(conversationId)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+  if (!content) return sendError(res, 'Message cannot be empty.', 400, 'VALIDATION_ERROR', req);
+  if (content.length > 5000) return sendError(res, 'Message is too long (max 5000 characters).', 400, 'VALIDATION_ERROR', req);
+  if (!moderateText(content).clean) return sendError(res, 'Your message was blocked by our spam filter.', 400, 'CONTENT_REJECTED', req);
+  const message = await chatService.sendMessage({ conversation_id: conversationId, sender_id: req.user.id, content, message_type: 'text' });
+  return sendSuccess(res, message, 'Sent.', 201);
+});
 
-    return sendSuccess(res, message, 'Message sent successfully.', 201);
-  } catch (error) {
-    next(error);
-  }
-};
+exports.markAsRead = handle(async (req, res) => {
+  const conversationId = req.body.conversation_id || req.body.conversationId;
+  if (!isUuid(conversationId)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+  await chatService.markAsRead({ conversation_id: conversationId, user_id: req.user.id });
+  return sendSuccess(res, {}, 'Marked as read.');
+});
 
-// Mark Conversation Messages as Read
-exports.markAsRead = async (req, res, next) => {
-  try {
-    const { conversation_id, conversationId } = req.body;
-    const targetConversationId = conversationId || conversation_id;
-    const user_id = req.user.id;
-
-    await chatService.markAsRead({ conversation_id: targetConversationId, user_id });
-    return sendSuccess(res, {}, 'Messages marked as read.');
-  } catch (error) {
-    next(error);
-  }
-};
+exports.unreadCount = handle(async (req, res) => sendSuccess(res, { count: await chatService.unreadTotal(req.user.id) }, 'Unread count.'));

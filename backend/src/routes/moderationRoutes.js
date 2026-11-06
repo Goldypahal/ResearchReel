@@ -1,15 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const moderationController = require('../controllers/moderationController');
+const c = require('../controllers/moderationController');
 const { authMiddleware, checkRole } = require('../middleware/authMiddleware');
+const rateLimiter = require('../middleware/rateLimiter');
 
-// Report a Post (Available to any authenticated user)
-router.post('/report', authMiddleware, moderationController.createReport);
+const staff = [authMiddleware, checkRole(['admin', 'moderator'])];
 
-// Admin / Moderator Only routes
-router.get('/reports', authMiddleware, checkRole(['admin', 'moderator']), moderationController.listReports);
-router.post('/reports/:id/resolve', authMiddleware, checkRole(['admin', 'moderator']), moderationController.resolveReport);
-router.get('/users', authMiddleware, checkRole(['admin', 'moderator']), moderationController.listUsers);
-router.post('/users/:id/verify', authMiddleware, checkRole(['admin', 'moderator']), moderationController.verifyUser);
+router.post('/report', authMiddleware, rateLimiter(20, 3600), c.createReport);
+router.get('/stats', ...staff, c.stats);
+router.get('/reports', ...staff, c.listReports);
+router.post('/reports/:id/resolve', ...staff, c.resolveReport);
+router.get('/users', ...staff, c.listUsers);
+router.post('/users/:id/verify', ...staff, c.verifyUser);
+router.post('/users/:id/suspend', ...staff, c.setSuspended);
+router.get('/audit-log', authMiddleware, checkRole(['admin']), c.auditLog);
 
 module.exports = router;

@@ -1,23 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const aiController = require('../controllers/aiController');
-const { authMiddleware } = require('../middleware/authMiddleware');
+const { authMiddleware, optionalAuth } = require('../middleware/authMiddleware');
 const rateLimiter = require('../middleware/rateLimiter');
 
-// AI specific strict limit (cost control)
-const aiLimiter = rateLimiter(20, 3600); // 20 per hour
+const aiLimiter = rateLimiter(20, 60);
 
-// Summarization & Scripting
+router.get('/status', aiController.status);
 router.post('/summarize', authMiddleware, aiLimiter, aiController.summarizeDocument);
-
-// RAG Q&A (Section 4.2.2)
-router.post('/ask-gemini', authMiddleware, aiLimiter, aiController.askGemini);
-
-// Personalization & Recommendations (Section 3.5.1 / 4.2.3)
-router.get('/recommendations', authMiddleware, aiController.getRecommendations);
-
-// Video Editor AI Pipelines (Phase 11)
-router.post('/script', authMiddleware, aiLimiter, aiController.generateScript);
-router.post('/voice', authMiddleware, aiLimiter, aiController.generateVoice);
+router.post('/ask', authMiddleware, aiLimiter, aiController.ask);
+router.post('/ask-gemini', authMiddleware, aiLimiter, aiController.ask);
+router.get('/conversations', authMiddleware, aiController.listConversations);
+router.get('/conversations/:id', authMiddleware, aiController.getConversation);
+router.delete('/conversations/:id', authMiddleware, aiController.deleteConversation);
+router.get('/recommendations', optionalAuth, aiController.getRecommendations);
 
 module.exports = router;

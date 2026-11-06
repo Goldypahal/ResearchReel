@@ -1,87 +1,48 @@
-const mediaService = require('../services/mediaService');
-const { addVideoJob } = require('../queues/videoQueue');
 const fs = require('fs');
+const db = require('../config/db');
+const { addJob, QUEUES } = require('../queues');
+const { moderateText } = require('../utils/moderator');
+const { sendSuccess, sendError } = require('../utils/response');
+const { isUuid } = require('../utils/pagination');
 
-exports.uploadVideo = async (req, res) => {
+const discard = (req) => { if (req.file?.path) fs.unlink(req.file.path, () => {}); };
+
+exports.uploadVideo = async (req, res, next) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'No video file provided' });
+    if (!req.file) return sendError(res, 'Choose a video to upload.', 400, 'VALIDATION_ERROR', req);
+
+    const title = String(req.body.title || '').trim().slice(0, 200);
+    const description = String(req.body.description || '').trim().slice(0, 2000);
+    if (!title) { discard(req); return sendError(res, 'Give your reel a title.', 400, 'VALIDATION_ERROR', req); }
+
+    for (const text of [title, description]) {
+      const mod = moderateText(text);
+      if (!mod.clean) { discard(req); return sendError(res, 'Your reel was blocked by our spam filter.', 400, 'CONTENT_REJECTED', req); }
     }
 
-    const { title, description, linked_paper_id, tags, timestamps } = req.body;
-    if (!title) {
-      // Clean up uploaded staging file
-      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ success: false, message: 'Title is required' });
-    }
-
-    const { moderateText } = require('../utils/moderator');
-    const titleMod = moderateText(title);
-    const descMod = moderateText(description);
-    if (!titleMod.clean || !descMod.clean) {
-      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-      const violator = !titleMod.clean ? titleMod.matchedKeyword : descMod.matchedKeyword;
-      return res.status(400).json({
-        success: false,
-        message: `Content violates community guidelines (detected prohibited keyword: "${violator}").`
-      });
-    }
-
-    // Validate video duration before adding to task queue
-    const duration = await mediaService.getVideoDuration(req.file.path);
-    if (duration < 30 || duration > 60) {
-      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ 
-        success: false, 
-        message: `Video duration of ${Math.round(duration)}s is invalid. Video must be between 30 and 60 seconds.` 
-      });
-    }
-
-    // Parse tags and timestamps
-    let parsedTags = [];
-    if (tags) {
-      if (typeof tags === 'string') {
-        parsedTags = tags.split(',').map(t => t.trim());
-      } else if (Array.isArray(tags)) {
-        parsedTags = tags;
+    let linkedPaperId = req.body.linked_paper_id || null;
+    if (linkedPaperId) {
+      if (!isUuid(linkedPaperId)) linkedPaperId = null;
+      else {
+        const doc = await db.query(`SELECT 1 FROM documents WHERE id = $1 AND deleted_at IS NULL AND (visibility = 'public' OR uploader_id = $2)`, [linkedPaperId, req.user.id]);
+        if (!doc.rows.length) linkedPaperId = null;
       }
     }
 
-    let parsedTimestamps = [];
-    if (timestamps) {
-      try {
-        parsedTimestamps = typeof timestamps === 'string' ? JSON.parse(timestamps) : timestamps;
-      } catch (e) {
-        console.warn('Failed to parse timestamps JSON, using empty array');
-      }
-    }
+    const tags = String(req.body.tags || '').split(',').map((t) => t.trim().replace(/^#/, '')).filter(Boolean).slice(0, 20);
 
-    const job = await addVideoJob({
+    const job = await addJob(QUEUES.MEDIA, {
       author_id: req.user.id,
       title,
-      description: description || '',
+      description,
       stagingFilePath: req.file.path,
-      filename: req.file.filename,
-      linked_paper_id,
-      tags: parsedTags,
-      timestamps: parsedTimestamps
-    });
+      linked_paper_id: linkedPaperId,
+      tags
+    }, { attempts: 1 });
 
-    res.status(202).json({ 
-      success: true, 
-      message: 'Video uploaded successfully. Transcoding and indexing started in the background.', 
-      jobId: job.id
-    });
+    return sendSuccess(res, { jobId: job.id }, 'Upload received. Your reel will appear once processing finishes.', 202);
   } catch (error) {
-    console.error('Video upload controller error:', error);
-    // Ensure file is deleted if processing failed
-    if (req.file && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch (e) {}
-    }
-    res.status(500).json({ success: false, message: error.message || 'Video processing failed' });
+    discard(req);
+    next(error);
   }
-};
-
-exports.healthCheck = (req, res) => {
-  res.status(200).json({ success: true, message: 'Media service ready' });
 };

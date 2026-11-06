@@ -1,169 +1,135 @@
-const aiService = require('../services/aiService');
 const db = require('../config/db');
 const redisClient = require('../config/redisClient');
-const crypto = require('crypto');
+const aiService = require('../services/aiService');
 const { canAccessDocument } = require('../authorization/documentAuthorization');
 const { sendSuccess, sendError } = require('../utils/response');
+const { isUuid } = require('../utils/pagination');
 
-const DAILY_AI_CAP = 50;
+const DAILY_AI_CAP = Number(process.env.AI_DAILY_LIMIT || 100);
 
-const checkDailyAiCap = async (userId) => {
-  const today = new Date().toISOString().split('T')[0];
-  const redisKey = `ai_cap:${userId}:${today}`;
-  
-  try {
-    const currentCount = await redisClient.get(redisKey);
-    if (currentCount && parseInt(currentCount) >= DAILY_AI_CAP) {
-      return false;
-    }
-    if (!currentCount) {
-      await redisClient.set(redisKey, '1', { EX: 86400 });
-    } else {
-      await redisClient.incr(redisKey);
-    }
-    return true;
-  } catch (err) {
-    console.error('Failed checking AI daily cap in Redis:', err.message);
-    return true;
-  }
+const consumeDailyQuota = async (userId) => {
+  const key = `ai_cap:${userId}:${new Date().toISOString().slice(0, 10)}`;
+  const count = await redisClient.incr(key);
+  if (count === 1) await redisClient.expire(key, 86400);
+  return count === null || count <= DAILY_AI_CAP;
 };
 
-// Document Summarization (Section 16 / 17)
+const ensureAi = (req, res) => {
+  if (!aiService.isConfigured()) {
+    sendError(res, 'AI features are not enabled on this server yet.', 503, 'AI_UNAVAILABLE', req);
+    return false;
+  }
+  return true;
+};
+
+exports.status = (req, res) => sendSuccess(res, { configured: aiService.isConfigured(), daily_limit: DAILY_AI_CAP }, 'AI status.');
+
 exports.summarizeDocument = async (req, res, next) => {
-  const { document_id } = req.body;
-  const userId = req.user.id;
-
   try {
-    if (!document_id) {
-      return sendError(res, 'document_id is required.', 400, 'VALIDATION_ERROR', req);
-    }
+    const { document_id: documentId, force } = req.body;
+    if (!isUuid(documentId)) return sendError(res, 'document_id is required.', 400, 'VALIDATION_ERROR', req);
 
-    // Document Authorization Check (Section 16)
-    const { allowed } = await canAccessDocument(userId, document_id);
-    if (!allowed) {
-      return sendError(res, 'Forbidden: You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
-    }
+    const { allowed } = await canAccessDocument(req.user.id, documentId);
+    if (!allowed) return sendError(res, 'You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
 
-    const withinLimit = await checkDailyAiCap(userId);
-    if (!withinLimit) {
-      return sendError(res, `Daily limit of ${DAILY_AI_CAP} AI queries reached.`, 429, 'RATE_LIMIT_EXCEEDED', req);
-    }
-
-    const cacheKey = `doc_summary:${document_id}`;
-    const cachedSummary = await redisClient.get(cacheKey);
-    if (cachedSummary) {
-      return sendSuccess(res, JSON.parse(cachedSummary), 'Summary retrieved from cache.');
-    }
-
-    const aiResponse = await aiService.summarizeDocument(document_id);
-    await db.query(
-      'UPDATE documents SET summary_text = $1, key_points = $2 WHERE id = $3',
-      [aiResponse.abstract, JSON.stringify(aiResponse.key_points || []), document_id]
-    );
-
-    await redisClient.set(cacheKey, JSON.stringify(aiResponse), { EX: 86400 });
-    return sendSuccess(res, aiResponse, 'Document summary generated.');
-  } catch (error) {
-    next(error);
-  }
-};
-
-// RAG-based Document Q&A
-exports.askGemini = async (req, res, next) => {
-  const { document_id, question } = req.body;
-  const userId = req.user.id;
-
-  try {
-    if (!question) {
-      return sendError(res, 'question parameter is required.', 400, 'VALIDATION_ERROR', req);
-    }
-
-    if (document_id && document_id !== 'global') {
-      const { allowed } = await canAccessDocument(userId, document_id);
-      if (!allowed) {
-        return sendError(res, 'Forbidden: You do not have access to this research document.', 403, 'AUTHORIZATION_ERROR', req);
+    if (!force) {
+      const existing = await db.query('SELECT summary_text, key_points FROM documents WHERE id = $1', [documentId]);
+      const row = existing.rows[0];
+      if (row?.summary_text && row.key_points?.length) {
+        return sendSuccess(res, { abstract: row.summary_text, key_points: row.key_points }, 'Summary retrieved.');
       }
     }
 
-    const withinLimit = await checkDailyAiCap(userId);
-    if (!withinLimit) {
-      return sendError(res, `Daily limit of ${DAILY_AI_CAP} AI queries reached.`, 429, 'RATE_LIMIT_EXCEEDED', req);
+    if (!ensureAi(req, res)) return;
+    if (!(await consumeDailyQuota(req.user.id))) {
+      return sendError(res, `You have reached today's limit of ${DAILY_AI_CAP} AI requests.`, 429, 'RATE_LIMIT_EXCEEDED', req);
     }
-
-    const questionHash = crypto.createHash('md5').update(question || '').digest('hex');
-    const cacheKey = `doc_qa:${document_id || 'global'}:${questionHash}`;
-    const cachedAnswer = await redisClient.get(cacheKey);
-    if (cachedAnswer) {
-      return sendSuccess(res, JSON.parse(cachedAnswer), 'Answer retrieved from cache.');
-    }
-
-    const response = await aiService.askGemini(req.body);
-    await redisClient.set(cacheKey, JSON.stringify(response), { EX: 86400 });
-
-    return sendSuccess(res, response, 'AI answer generated.');
+    const summary = await aiService.summarizeDocument(documentId);
+    return sendSuccess(res, summary, 'Summary generated.');
   } catch (error) {
     next(error);
   }
 };
 
-// Related Paper Recommendations (Section 62)
-exports.getRecommendations = async (req, res, next) => {
+exports.ask = async (req, res, next) => {
   try {
-    const recommendations = await aiService.getRecommendations(req.query);
-    return sendSuccess(res, recommendations, 'Research recommendations retrieved.');
-  } catch (error) {
-    next(error);
-  }
-};
+    const question = String(req.body.question || '').trim();
+    let documentId = req.body.document_id || req.body.documentId || null;
+    const conversationId = req.body.conversation_id || null;
+    if (documentId === 'global') documentId = null;
 
-// Script Generation
-exports.generateScript = async (req, res, next) => {
-  try {
-    const { documentId, query } = req.body;
+    if (!question) return sendError(res, 'Please enter a question.', 400, 'VALIDATION_ERROR', req);
+    if (question.length > 4000) return sendError(res, 'Question is too long (max 4000 characters).', 400, 'VALIDATION_ERROR', req);
+    if (documentId && !isUuid(documentId)) return sendError(res, 'Invalid document.', 400, 'VALIDATION_ERROR', req);
+    if (conversationId && !isUuid(conversationId)) return sendError(res, 'Invalid conversation.', 400, 'VALIDATION_ERROR', req);
 
     if (documentId) {
       const { allowed } = await canAccessDocument(req.user.id, documentId);
-      if (!allowed) {
-        return sendError(res, 'Forbidden: You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
-      }
+      if (!allowed) return sendError(res, 'You do not have access to this document.', 403, 'AUTHORIZATION_ERROR', req);
     }
 
-    const mockScript = {
-      title: "Generated Research Script",
-      scenes: [
-        {
-          scene_number: 1,
-          narration: "Recent advancements in quantum entanglement have paved the way for robust cryptographic protocols.",
-          caption: "Quantum Cryptography 101",
-          visual_prompt: "Abstract visualization of glowing connected quantum nodes."
-        },
-        {
-          scene_number: 2,
-          narration: "By utilizing the Bell state, scientists proved that information transfer exceeds classical bounds.",
-          caption: "Breaking Classical Bounds",
-          visual_prompt: "Data stream accelerating beyond light speed graphics."
-        }
-      ]
-    };
+    if (!ensureAi(req, res)) return;
+    if (!(await consumeDailyQuota(req.user.id))) {
+      return sendError(res, `You have reached today's limit of ${DAILY_AI_CAP} AI requests.`, 429, 'RATE_LIMIT_EXCEEDED', req);
+    }
 
-    return sendSuccess(res, { script: mockScript }, 'AI video script generated.');
+    const result = await aiService.ask({ userId: req.user.id, question, documentId, conversationId });
+    return sendSuccess(res, result, 'Answer generated.');
   } catch (error) {
     next(error);
   }
 };
 
-// Voice Audio Synthesis
-exports.generateVoice = async (req, res, next) => {
+exports.listConversations = async (req, res, next) => {
   try {
-    const { text } = req.body;
-    if (!text) {
-      return sendError(res, 'text content is required for voice generation.', 400, 'VALIDATION_ERROR', req);
-    }
+    const r = await db.query(
+      `SELECT c.id, c.title, c.document_id, c.created_at, c.updated_at, COALESCE(d.title, d.file_name) AS document_title
+         FROM ai_conversations c LEFT JOIN documents d ON d.id = c.document_id
+        WHERE c.user_id = $1 ORDER BY c.updated_at DESC LIMIT 50`,
+      [req.user.id]
+    );
+    return sendSuccess(res, r.rows, 'Conversations.');
+  } catch (error) {
+    next(error);
+  }
+};
 
-    return sendSuccess(res, {
-      audioUrl: 'https://mock-s3.local/temp/voice_output_abc123.mp3',
-      durationSeconds: 4.5
-    }, 'Voice synthesis completed.');
+exports.getConversation = async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+    const c = await db.query(
+      `SELECT c.*, COALESCE(d.title, d.file_name) AS document_title
+         FROM ai_conversations c LEFT JOIN documents d ON d.id = c.document_id
+        WHERE c.id = $1 AND c.user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (!c.rows[0]) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+    const m = await db.query('SELECT id, role, content, sources, created_at FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC', [req.params.id]);
+    return sendSuccess(res, { ...c.rows[0], messages: m.rows }, 'Conversation.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deleteConversation = async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+    const r = await db.query('DELETE FROM ai_conversations WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.id, req.user.id]);
+    if (!r.rows.length) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+    return sendSuccess(res, { id: req.params.id }, 'Conversation deleted.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getRecommendations = async (req, res, next) => {
+  try {
+    const recs = await aiService.getRecommendations({
+      userId: req.user?.id,
+      query: req.query.q ? String(req.query.q).slice(0, 200) : null,
+      limit: Math.min(parseInt(req.query.limit, 10) || 10, 30)
+    });
+    return sendSuccess(res, recs, 'Recommended papers.');
   } catch (error) {
     next(error);
   }

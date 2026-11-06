@@ -1,115 +1,67 @@
 const db = require('../config/db');
+const redisClient = require('../config/redisClient');
 const reelGeneratorService = require('./reelGeneratorService');
 
-let schedulerInterval = null;
+let timer = null;
+const LOCK_KEY = 'lock:reel-scheduler';
 
 /**
- * Checks for users with pending auto-uploads and processes them.
+ * For users with auto-upload on: when their interval elapses, publish the oldest pending
+ * draft, or generate one from their newest paper that has no reel yet.
+ * A Redis lock ensures only one instance runs a cycle at a time.
  */
-const checkAndProcessAutoUploads = async () => {
-  console.log('[Reel Scheduler] Running checks for scheduled auto-uploads...');
+const runCycle = async () => {
+  const gotLock = await redisClient.client.set(LOCK_KEY, String(process.pid), { NX: true, EX: 240 }).catch(() => null);
+  if (!gotLock) return;
   try {
-    // 1. Get users whose next_upload_at time has arrived/passed and auto_upload is enabled
-    const pendingResult = await db.query(
-      `SELECT * FROM reel_automation_settings 
-       WHERE auto_upload = true AND next_upload_at <= NOW()`
+    const due = await db.query(
+      `SELECT user_id, upload_interval_hours FROM reel_automation_settings
+        WHERE auto_upload = TRUE AND next_upload_at IS NOT NULL AND next_upload_at <= NOW() LIMIT 20`
     );
-
-    const pendingSettings = pendingResult.rows;
-    if (pendingSettings.length === 0) {
-      return;
-    }
-
-    console.log(`[Reel Scheduler] Found ${pendingSettings.length} user(s) with pending auto-uploads.`);
-
-    for (const setting of pendingSettings) {
-      const { user_id, upload_interval_hours } = setting;
-      console.log(`[Reel Scheduler] Processing auto-upload for user: ${user_id}`);
-
+    for (const s of due.rows) {
       try {
-        // Find if there's any pending draft (status = 'draft') for this user
-        const draftResult = await db.query(
-          `SELECT * FROM reel_drafts 
-           WHERE author_id = $1 AND status = 'draft' 
-           ORDER BY created_at ASC LIMIT 1`,
-          [user_id]
+        let draftId = null;
+        const pending = await db.query(
+          `SELECT id FROM reel_drafts WHERE author_id = $1 AND status = 'draft' ORDER BY created_at ASC LIMIT 1`,
+          [s.user_id]
         );
-
-        let draft = draftResult.rows[0];
-
-        // If no draft exists, check if there's any uploaded document to create a draft from
-        if (!draft) {
-          console.log(`[Reel Scheduler] No draft found for user ${user_id}. Checking for documents...`);
-          const docResult = await db.query(
-            `SELECT * FROM documents 
-             WHERE uploader_id = $1 
-             ORDER BY created_at DESC LIMIT 1`,
-            [user_id]
+        if (pending.rows[0]) draftId = pending.rows[0].id;
+        else {
+          const doc = await db.query(
+            `SELECT d.id FROM documents d
+              WHERE d.uploader_id = $1 AND d.deleted_at IS NULL
+                AND NOT EXISTS (SELECT 1 FROM reel_drafts rd WHERE rd.linked_paper_id = d.id)
+              ORDER BY d.created_at DESC LIMIT 1`,
+            [s.user_id]
           );
-
-          const doc = docResult.rows[0];
-          if (doc) {
-            console.log(`[Reel Scheduler] Auto-generating draft from latest document: ${doc.id}`);
-            draft = await reelGeneratorService.generateDraftFromPaper(doc.id, user_id);
-          } else {
-            console.log(`[Reel Scheduler] No documents or drafts found for user ${user_id}. Skipping.`);
+          if (doc.rows[0]) {
+            const draft = await reelGeneratorService.generateDraftFromPaper(doc.rows[0].id, s.user_id);
+            draftId = draft?.id || null;
           }
         }
-
-        // If we have a draft now, compile and publish it!
-        if (draft) {
-          console.log(`[Reel Scheduler] Compiling and publishing draft: ${draft.id}`);
-          await reelGeneratorService.publishDraft(draft.id, user_id);
-        }
-
-        // Update the next upload schedule time
-        const intervalHours = upload_interval_hours || 24;
-        await db.query(
-          `UPDATE reel_automation_settings 
-           SET next_upload_at = NOW() + ($1 || ' hours')::INTERVAL, updated_at = NOW()
-           WHERE user_id = $2`,
-          [intervalHours.toString(), user_id]
-        );
-        console.log(`[Reel Scheduler] Updated next_upload_at for user ${user_id} by +${intervalHours} hours.`);
-
+        if (draftId) await reelGeneratorService.publishDraft(draftId, s.user_id);
       } catch (err) {
-        console.error(`[Reel Scheduler] Error processing upload for user ${user_id}:`, err.message);
+        console.error(`[reel-scheduler] user ${s.user_id}: ${err.message}`);
+      } finally {
+        await db.query(
+          `UPDATE reel_automation_settings SET next_upload_at = NOW() + make_interval(hours => $1), updated_at = NOW() WHERE user_id = $2`,
+          [s.upload_interval_hours || 24, s.user_id]
+        );
       }
     }
   } catch (error) {
-    console.error('[Reel Scheduler] Error running scheduler checks:', error.message);
+    console.error('[reel-scheduler] cycle failed:', error.message);
+  } finally {
+    await redisClient.del(LOCK_KEY);
   }
 };
 
-/**
- * Starts the background interval for the reel scheduler.
- * Runs every 30 seconds.
- */
-const start = () => {
-  if (schedulerInterval) {
-    console.warn('[Reel Scheduler] Scheduler is already running.');
-    return;
-  }
-
-  console.log('[Reel Scheduler] Starting background Reel Auto-Upload Scheduler (30s interval)...');
-  // Check immediately, then every 30 seconds
-  checkAndProcessAutoUploads();
-  schedulerInterval = setInterval(checkAndProcessAutoUploads, 30 * 1000);
+const start = (intervalMs = 5 * 60 * 1000) => {
+  if (timer) return;
+  timer = setInterval(() => runCycle().catch(() => {}), intervalMs);
+  if (timer.unref) timer.unref();
 };
 
-/**
- * Stops the background scheduler.
- */
-const stop = () => {
-  if (schedulerInterval) {
-    clearInterval(schedulerInterval);
-    schedulerInterval = null;
-    console.log('[Reel Scheduler] Stopped background Reel Auto-Upload Scheduler.');
-  }
-};
+const stop = () => { if (timer) clearInterval(timer); timer = null; };
 
-module.exports = {
-  start,
-  stop,
-  checkAndProcessAutoUploads
-};
+module.exports = { start, stop, runCycle };

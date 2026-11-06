@@ -10,6 +10,9 @@ exports.shorthands = undefined;
  */
 exports.up = (pgm) => {
   pgm.sql(`
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- Users Table
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

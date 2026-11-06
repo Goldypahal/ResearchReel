@@ -1,37 +1,29 @@
 const { Worker } = require('bullmq');
+const { buildConnection } = require('../queues/connection');
+const { QUEUES } = require('../queues');
 const mediaService = require('../services/mediaService');
-const { connection } = require('../queues/videoQueue');
+const reelGeneratorService = require('../services/reelGeneratorService');
 
-console.log('Initializing Video Transcoding Worker...');
+/**
+ * Background worker for media jobs. Started in the API process unless START_WORKER=false,
+ * or standalone via `npm run worker`.
+ */
+const concurrency = Number(process.env.WORKER_CONCURRENCY || 1);
 
-const worker = new Worker('video-transcoding', async (job) => {
-  const { filename } = job.data;
-
-  console.log(`[Worker] Processing job ${job.id} for video: ${filename}`);
-
-  try {
-    const result = await mediaService.processVideo(job.data);
-    console.log(`[Worker] Successfully processed video job ${job.id}: ${result.video_url}`);
-    return result;
-  } catch (error) {
-    console.error(`[Worker] Failed video job ${job.id}: ${error.message}`);
-    throw error;
-  }
-}, { 
-  connection, 
-  concurrency: 1 // limit concurrent FFmpeg transcoding tasks per worker process
+const mediaWorker = new Worker(QUEUES.MEDIA, (job) => mediaService.processVideo(job.data), {
+  connection: buildConnection(), concurrency
 });
 
-worker.on('completed', (job) => {
-  console.log(`[Worker] Job ${job.id} completed successfully.`);
+const reelWorker = new Worker(QUEUES.REEL_RENDER, (job) => reelGeneratorService.compileVideo(job.data.draftId), {
+  connection: buildConnection(), concurrency, lockDuration: 10 * 60 * 1000
 });
 
-worker.on('error', (err) => {
-  console.error('[BullMQ Worker Error]', err);
-});
+for (const [name, w] of [['media', mediaWorker], ['reel-render', reelWorker]]) {
+  w.on('completed', (job) => console.log(`[worker:${name}] job ${job.id} completed`));
+  w.on('failed', (job, err) => console.error(`[worker:${name}] job ${job?.id} failed: ${err.message}`));
+  w.on('error', (err) => console.error(`[worker:${name}]`, err.message));
+}
 
-worker.on('failed', (job, err) => {
-  console.error(`[Worker] Job ${job.id} failed: ${err.message}`);
-});
+console.log(`[worker] Media workers started (concurrency ${concurrency}).`);
 
-module.exports = worker;
+module.exports = { mediaWorker, reelWorker, close: () => Promise.all([mediaWorker.close(), reelWorker.close()]) };

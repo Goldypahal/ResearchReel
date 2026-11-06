@@ -68,12 +68,12 @@ exports.up = (pgm) => {
     -- 5. Add deleted_at columns for soft deletion across key models
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL;
     ALTER TABLE posts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL;
-    ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL;
-    ALTER TABLE reels ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL;
+    ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL;
+    ALTER TABLE videos ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL;
     ALTER TABLE projects ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL;
 
     -- 6. Essential Performance & Foreign Key Indexes
-    CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(uploader_id);
     CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at);
     CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
     CREATE INDEX IF NOT EXISTS idx_projects_creator ON projects(creator_id);
@@ -82,7 +82,7 @@ exports.up = (pgm) => {
     CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);
-    CREATE INDEX IF NOT EXISTS idx_reels_author ON reels(author_id);
+    CREATE INDEX IF NOT EXISTS idx_reels_author ON videos(author_id);
   `);
 };
 
@@ -105,8 +105,8 @@ exports.down = (pgm) => {
     DROP INDEX IF EXISTS idx_documents_owner;
 
     ALTER TABLE projects DROP COLUMN IF EXISTS deleted_at;
-    ALTER TABLE reels DROP COLUMN IF EXISTS deleted_at;
-    ALTER TABLE comments DROP COLUMN IF EXISTS deleted_at;
+    ALTER TABLE videos DROP COLUMN IF EXISTS deleted_at;
+    ALTER TABLE post_comments DROP COLUMN IF EXISTS deleted_at;
     ALTER TABLE posts DROP COLUMN IF EXISTS deleted_at;
     ALTER TABLE documents DROP COLUMN IF EXISTS deleted_at;
 

@@ -32,3 +32,6 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Uploaded media (local disk storage)
+backend/public/uploads/

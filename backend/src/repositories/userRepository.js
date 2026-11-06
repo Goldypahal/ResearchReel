@@ -1,66 +1,41 @@
-const pool = require('../config/db');
+const db = require('../config/db');
+
+/** Public-safe user columns (never includes email or password hash). */
+const PUBLIC_USER = `
+  u.id, u.username, u.full_name, u.bio, u.profile_picture_url AS avatar_url,
+  u.verification_status, u.role, u.institution, u.website, u.research_interests,
+  u.orcid_id, u.created_at
+`;
 
 class UserRepository {
-  /**
-   * Safely retrieves public profile by username
-   * Explicitly avoids SELECT u.* to prevent leaking passwords, tokens, or security metadata.
-   */
-  async findByUsername(username) {
-    const query = `
-      SELECT
-        id,
-        username,
-        full_name,
-        avatar_url,
-        bio,
-        institution,
-        research_interests,
-        created_at
-      FROM users
-      WHERE username = $1 AND (is_deleted IS FALSE OR is_deleted IS NULL);
-    `;
-    const result = await pool.query(query, [username]);
+  async findByUsername(username, viewerId = null) {
+    const result = await db.query(
+      `SELECT ${PUBLIC_USER},
+        (SELECT COUNT(*)::int FROM follows f WHERE f.following_id = u.id) AS followers_count,
+        (SELECT COUNT(*)::int FROM follows f WHERE f.follower_id = u.id) AS following_count,
+        (SELECT COUNT(*)::int FROM posts p WHERE p.author_id = u.id AND p.deleted_at IS NULL) AS post_count,
+        (SELECT COUNT(*)::int FROM videos v WHERE v.author_id = u.id AND v.deleted_at IS NULL) AS reel_count,
+        (SELECT COUNT(*)::int FROM documents d WHERE d.uploader_id = u.id AND d.deleted_at IS NULL AND d.visibility = 'public') AS paper_count,
+        CASE WHEN $2::uuid IS NULL THEN FALSE
+             ELSE EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $2::uuid AND f.following_id = u.id) END AS is_following,
+        CASE WHEN $2::uuid IS NULL THEN FALSE
+             ELSE EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = u.id AND f.following_id = $2::uuid) END AS follows_you
+       FROM users u
+       WHERE LOWER(u.username) = LOWER($1) AND u.is_deleted IS NOT TRUE`,
+      [username, viewerId]
+    );
     return result.rows[0] || null;
   }
 
-  /**
-   * Finds full user by ID (for internal auth middleware and profile management)
-   */
   async findById(userId) {
-    const query = `
-      SELECT id, full_name, username, email, role, avatar_url, bio, institution, research_interests, created_at
-      FROM users
-      WHERE id = $1 AND (is_deleted IS FALSE OR is_deleted IS NULL);
-    `;
-    const result = await pool.query(query, [userId]);
+    const result = await db.query(
+      `SELECT ${PUBLIC_USER}, u.email, u.email_verified, u.subscription_tier
+         FROM users u WHERE u.id = $1 AND u.is_deleted IS NOT TRUE`,
+      [userId]
+    );
     return result.rows[0] || null;
-  }
-
-  /**
-   * Finds auth user including password hash (for authentication flows)
-   */
-  async findByEmailForAuth(email) {
-    const query = `
-      SELECT id, full_name, username, email, password_hash, role
-      FROM users
-      WHERE email = $1 AND (is_deleted IS FALSE OR is_deleted IS NULL);
-    `;
-    const result = await pool.query(query, [email]);
-    return result.rows[0] || null;
-  }
-
-  /**
-   * Creates a new user record
-   */
-  async createUser({ fullName, username, email, passwordHash, role = 'user' }) {
-    const query = `
-      INSERT INTO users (full_name, username, email, password_hash, role)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, full_name, username, email, role, created_at;
-    `;
-    const result = await pool.query(query, [fullName, username, email, passwordHash, role]);
-    return result.rows[0];
   }
 }
 
 module.exports = new UserRepository();
+module.exports.PUBLIC_USER = PUBLIC_USER;

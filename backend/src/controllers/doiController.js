@@ -1,173 +1,105 @@
 const axios = require('axios');
+const db = require('../config/db');
+const { sendSuccess, sendError } = require('../utils/response');
 
-/**
- * Fetch papers by a single DOI - returns full metadata for one paper.
- * GET /api/doi/paper?doi=10.xxxx/xxxxx
- */
-exports.getPaperByDOI = async (req, res) => {
-  const { doi } = req.query;
+const crossrefHeaders = () => ({
+  'User-Agent': `ResearchReel/1.0 (${process.env.CROSSREF_MAILTO ? `mailto:${process.env.CROSSREF_MAILTO}` : 'https://github.com/Goldypahal/ResearchReel'})`
+});
 
-  if (!doi) {
-    return res.status(400).json({ success: false, message: 'DOI is required.' });
-  }
+const cleanDoi = (doi) => String(doi || '').trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').replace(/^doi:\s*/i, '');
+const cleanOrcid = (o) => String(o || '').trim().replace(/^https?:\/\/orcid\.org\//i, '');
 
-  try {
-    const cleanDOI = doi.replace(/^https?:\/\/doi\.org\//i, '');
-    const response = await axios.get(
-      `https://api.crossref.org/works/${encodeURIComponent(cleanDOI)}`,
-      { timeout: 10000, headers: { 'User-Agent': 'ResearchReel/1.0 (mailto:admin@researchreel.io)' } }
-    );
-
-    const work = response.data.message;
-    const paper = normalizeCrossrefWork(work);
-    return res.status(200).json({ success: true, data: paper });
-  } catch (error) {
-    if (error.response?.status === 404) {
-      return res.status(404).json({ success: false, message: 'DOI not found on Crossref.' });
-    }
-    console.error('DOI fetch error:', error.message);
-    return res.status(500).json({ success: false, message: 'Failed to fetch paper from Crossref.' });
-  }
-};
-
-/**
- * Fetch ALL papers by an author's ORCID.
- * GET /api/doi/author?orcid=0000-0001-2345-6789
- */
-exports.getPapersByORCID = async (req, res) => {
-  const { orcid } = req.query;
-
-  if (!orcid) {
-    return res.status(400).json({ success: false, message: 'ORCID is required.' });
-  }
-
-  try {
-    const cleanORCID = orcid.trim().replace(/^https?:\/\/orcid\.org\//i, '');
-    const response = await axios.get(
-      `https://api.crossref.org/works?filter=orcid:${cleanORCID}&rows=50&sort=published&order=desc`,
-      { timeout: 15000, headers: { 'User-Agent': 'ResearchReel/1.0 (mailto:admin@researchreel.io)' } }
-    );
-
-    const items = response.data.message.items || [];
-    const papers = items.map(normalizeCrossrefWork);
-
-    return res.status(200).json({
-      success: true,
-      count: papers.length,
-      data: papers,
-    });
-  } catch (error) {
-    console.error('ORCID fetch error:', error.message);
-    return res.status(500).json({ success: false, message: 'Failed to fetch papers from Crossref via ORCID.' });
-  }
-};
-
-/**
- * Import papers by a list of DOIs (batch).
- * POST /api/doi/import
- * Body: { dois: ["10.xxxx/xxx", ...] }
- */
-exports.importByDOIs = async (req, res) => {
-  const { dois } = req.body;
-
-  if (!Array.isArray(dois) || dois.length === 0) {
-    return res.status(400).json({ success: false, message: 'dois array is required.' });
-  }
-
-  try {
-    const results = await Promise.allSettled(
-      dois.slice(0, 20).map(async (doi) => {
-        const cleanDOI = doi.replace(/^https?:\/\/doi\.org\//i, '');
-        const r = await axios.get(
-          `https://api.crossref.org/works/${encodeURIComponent(cleanDOI)}`,
-          { timeout: 10000, headers: { 'User-Agent': 'ResearchReel/1.0 (mailto:admin@researchreel.io)' } }
-        );
-        return normalizeCrossrefWork(r.data.message);
-      })
-    );
-
-    const papers = results
-      .filter(r => r.status === 'fulfilled')
-      .map(r => r.value);
-
-    const failed = results
-      .filter(r => r.status === 'rejected')
-      .map((_, i) => dois[i]);
-
-    return res.status(200).json({ success: true, count: papers.length, data: papers, failed });
-  } catch (error) {
-    console.error('Batch DOI import error:', error.message);
-    return res.status(500).json({ success: false, message: 'Batch import failed.' });
-  }
-};
-
-// ──────────────────────────────────────────────────────────────
-// Helper: normalize a Crossref work object into ResearchReel post format
-// ──────────────────────────────────────────────────────────────
+/** Normalises a Crossref work into the paper shape used across the app. */
 function normalizeCrossrefWork(work) {
-  const title = (work.title?.[0] || work['short-title']?.[0] || 'Untitled Paper').trim();
-  const abstract = (work.abstract || '').replace(/<[^>]+>/g, '').trim();
-
-  // Authors
-  const authors = (work.author || []).map(a => {
-    const name = [a.given, a.family].filter(Boolean).join(' ');
-    const orcid = a.ORCID ? a.ORCID.replace('http://orcid.org/', '').replace('https://orcid.org/', '') : null;
-    return { name, orcid, affiliation: a.affiliation?.[0]?.name || null };
-  });
-  const primaryAuthor = authors[0] || { name: 'Unknown Author', orcid: null };
-
-  // Journal / source
-  const journal = (work['container-title']?.[0] || work.publisher || 'Unknown Journal').trim();
-
-  // Year
-  const year =
-    work.published?.['date-parts']?.[0]?.[0] ||
-    work['published-print']?.['date-parts']?.[0]?.[0] ||
-    work['published-online']?.['date-parts']?.[0]?.[0] ||
-    null;
-
-  // DOI & links
+  const title = (work.title?.[0] || work['short-title']?.[0] || 'Untitled paper').replace(/\s+/g, ' ').trim();
+  const abstract = (work.abstract || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const authors = (work.author || []).map((a) => ({
+    name: [a.given, a.family].filter(Boolean).join(' ') || a.name || 'Unknown',
+    orcid: a.ORCID ? cleanOrcid(a.ORCID.replace('http://', 'https://')) : null,
+    affiliation: a.affiliation?.[0]?.name || null
+  }));
+  const year = work.published?.['date-parts']?.[0]?.[0]
+    || work['published-print']?.['date-parts']?.[0]?.[0]
+    || work['published-online']?.['date-parts']?.[0]?.[0]
+    || null;
   const doi = work.DOI || null;
-  const doiUrl = doi ? `https://doi.org/${doi}` : null;
-  const pdfUrl = (work.link || []).find(l => l['content-type'] === 'application/pdf')?.URL || null;
-  const landingUrl = work.URL || doiUrl;
-
-  // Subject tags
-  const subjects = (work.subject || []).slice(0, 5).map(s => s.replace(/\s+/g, ''));
-
-  // Citations
-  const citedByCount = work['is-referenced-by-count'] || 0;
-
-  // Build a concise summary / objective snippet
-  const summarySnippet = abstract
-    ? abstract.length > 600
-      ? abstract.slice(0, 600) + '…'
-      : abstract
-    : `${title}. Published in ${journal}${year ? ` (${year})` : ''}. By ${authors.map(a => a.name).join(', ')}.`;
-
   return {
-    id: `doi-${doi?.replace(/\//g, '-') || Date.now()}`,
     doi,
-    doi_url: doiUrl,
-    pdf_url: pdfUrl,
-    landing_url: landingUrl,
+    doi_url: doi ? `https://doi.org/${doi}` : null,
+    pdf_url: (work.link || []).find((l) => l['content-type'] === 'application/pdf')?.URL || null,
+    landing_url: work.URL || (doi ? `https://doi.org/${doi}` : null),
     title,
     abstract,
-    summary_text: summarySnippet,
     authors,
-    primary_author: primaryAuthor,
-    journal,
+    journal: (work['container-title']?.[0] || work.publisher || '').trim() || null,
     year,
-    cited_by_count: citedByCount,
-    tags: subjects,
-    content_type: 'document',
-    // Feed-compatible fields
-    author_name: primaryAuthor.name,
-    author_username: `@${primaryAuthor.name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')}`,
-    verification_status: 'scholar',
-    caption: summarySnippet.slice(0, 200),
-    document_name: `${title.slice(0, 60)}.pdf`,
-    reaction_count: Math.floor(citedByCount / 2) + Math.floor(Math.random() * 50),
-    source: 'crossref',
+    cited_by_count: work['is-referenced-by-count'] || 0,
+    tags: (work.subject || []).slice(0, 5),
+    type: work.type || null
   };
 }
+
+const fetchDoi = async (doi) => {
+  const r = await axios.get(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi(doi))}`, { timeout: 10000, headers: crossrefHeaders() });
+  return normalizeCrossrefWork(r.data.message);
+};
+
+exports.normalizeCrossrefWork = normalizeCrossrefWork;
+
+exports.getPaperByDOI = async (req, res, next) => {
+  const doi = cleanDoi(req.query.doi);
+  if (!/^10\.\d{4,9}\/\S+$/.test(doi)) return sendError(res, 'Enter a valid DOI (e.g. 10.1038/nature12373).', 400, 'VALIDATION_ERROR', req);
+  try {
+    return sendSuccess(res, await fetchDoi(doi), 'Paper found.');
+  } catch (error) {
+    if (error.response?.status === 404) return sendError(res, 'No paper found for that DOI.', 404, 'NOT_FOUND', req);
+    return sendError(res, 'Could not reach Crossref. Please try again.', 502, 'EXTERNAL_SERVICE_ERROR', req);
+  }
+};
+
+exports.getPapersByORCID = async (req, res) => {
+  const orcid = cleanOrcid(req.query.orcid);
+  if (!/^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/i.test(orcid)) return sendError(res, 'Enter a valid ORCID iD (e.g. 0000-0002-1825-0097).', 400, 'VALIDATION_ERROR', req);
+  try {
+    const r = await axios.get(
+      `https://api.crossref.org/works?filter=orcid:${encodeURIComponent(orcid)}&rows=50&sort=published&order=desc`,
+      { timeout: 15000, headers: crossrefHeaders() }
+    );
+    const papers = (r.data.message.items || []).map(normalizeCrossrefWork);
+    return sendSuccess(res, papers, `${papers.length} papers found.`);
+  } catch (error) {
+    return sendError(res, 'Could not reach Crossref. Please try again.', 502, 'EXTERNAL_SERVICE_ERROR', req);
+  }
+};
+
+/**
+ * POST /doi/import { dois: [...] } — looks up each DOI on Crossref and adds it to the
+ * signed-in user's publications (metadata only). Already-imported DOIs are skipped.
+ */
+exports.importByDOIs = async (req, res, next) => {
+  const dois = Array.isArray(req.body?.dois) ? [...new Set(req.body.dois.map(cleanDoi).filter(Boolean))].slice(0, 50) : [];
+  if (!dois.length) return sendError(res, 'Provide at least one DOI.', 400, 'VALIDATION_ERROR', req);
+  try {
+    const results = await Promise.allSettled(dois.map(fetchDoi));
+    const imported = [];
+    const failed = [];
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status !== 'fulfilled') { failed.push(dois[i]); continue; }
+      const p = r.value;
+      const ins = await db.query(
+        `INSERT INTO documents (uploader_id, file_name, file_type, file_url, title, abstract, authors, doi, publication_year,
+                                journal, tags, visibility, status, source, external_url, citation_count)
+         VALUES ($1, $2, 'doi', NULL, $3, $4, $5, $6, $7, $8, $9, 'public', 'ready', 'doi', $10, $11)
+         ON CONFLICT (uploader_id, lower(doi)) WHERE doi IS NOT NULL AND deleted_at IS NULL DO NOTHING
+         RETURNING id`,
+        [req.user.id, p.title.slice(0, 255), p.title, p.abstract || null, p.authors.map((a) => a.name).slice(0, 50), p.doi,
+          p.year, p.journal, p.tags, p.landing_url, p.cited_by_count]
+      );
+      imported.push({ ...p, id: ins.rows[0]?.id || null, already_imported: !ins.rows.length });
+    }
+    return sendSuccess(res, { imported, failed }, `${imported.filter((p) => !p.already_imported).length} papers added to your profile.`);
+  } catch (error) {
+    next(error);
+  }
+};

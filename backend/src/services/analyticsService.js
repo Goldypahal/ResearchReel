@@ -1,251 +1,93 @@
 const db = require('../config/db');
-const { EventEmitter } = require('events');
 
-// Analytics event emitter to support extension (e.g. Kafka or SSE)
-class AnalyticsEmitter extends EventEmitter {}
-const analyticsEmitter = new AnalyticsEmitter();
-
-// Batch config
+/**
+ * View/interaction tracking. Events are buffered in memory and inserted in batches.
+ */
 const BATCH_SIZE = 50;
 const BATCH_INTERVAL_MS = 5000;
-let eventQueue = [];
-let batchTimeout = null;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let queue = [];
+let timer = null;
 
-/**
- * Ensures the analytics_events table exists in the database
- */
-const initDatabase = async () => {
-  try {
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS analytics_events (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID REFERENCES users(id),
-        event_type VARCHAR(50) NOT NULL,
-        entity_id UUID,
-        entity_type VARCHAR(50),
-        metadata JSONB,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events(event_type);
-      CREATE INDEX IF NOT EXISTS idx_analytics_events_entity ON analytics_events(entity_id, entity_type);
-    `);
-    console.log('Analytics database schema initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize analytics database schema:', error.message);
-  }
-};
-
-// Run initialization
-initDatabase();
-
-/**
- * Flush event queue to database
- */
 const flushQueue = async () => {
-  if (eventQueue.length === 0) return;
-
-  const batchToProcess = [...eventQueue];
-  eventQueue = [];
-  if (batchTimeout) {
-    clearTimeout(batchTimeout);
-    batchTimeout = null;
-  }
-
+  if (timer) { clearTimeout(timer); timer = null; }
+  if (!queue.length) return;
+  const batch = queue;
+  queue = [];
+  const values = [];
+  const rows = batch.map((e, i) => {
+    values.push(e.user_id, e.event_type, e.entity_id, e.entity_type, e.metadata ? JSON.stringify(e.metadata) : null);
+    const o = i * 5;
+    return `($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5})`;
+  });
   try {
-    // Perform a bulk insertion using parameterized queries
-    const values = [];
-    const valuePlaceholders = batchToProcess.map((event, idx) => {
-      const offset = idx * 5;
-      values.push(
-        event.user_id || null,
-        event.event_type,
-        event.entity_id || null,
-        event.entity_type || null,
-        event.metadata ? JSON.stringify(event.metadata) : null
-      );
-      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`;
-    }).join(', ');
-
-    await db.query(`
-      INSERT INTO analytics_events (user_id, event_type, entity_id, entity_type, metadata)
-      VALUES ${valuePlaceholders}
-    `, values);
-
-    console.log(`Successfully flushed ${batchToProcess.length} analytics events to database`);
+    await db.query(`INSERT INTO analytics_events (user_id, event_type, entity_id, entity_type, metadata) VALUES ${rows.join(', ')}`, values);
   } catch (error) {
-    console.error('Failed to flush analytics events batch to database:', error);
+    console.error('[analytics] Failed to write events:', error.message);
   }
 };
 
-/**
- * Ingest / track a new analytics event
- */
-const trackEvent = async ({ user_id, event_type, entity_id, entity_type, metadata = {} }) => {
-  const event = {
-    user_id,
-    event_type,
-    entity_id,
-    entity_type,
-    metadata,
-    created_at: new Date()
-  };
-
-  // Emit event locally for any real-time subscribers
-  analyticsEmitter.emit('event', event);
-
-  // Check if Kafka configuration exists
-  if (process.env.KAFKA_BROKERS) {
-    try {
-      // KafkaJS could be dynamically loaded here if installed
-      // const { Kafka } = require('kafkajs');
-      // ... kafka.producer.send(...)
-    } catch (e) {
-      console.warn('Kafka publishing failed, defaulting to batch queue:', e.message);
-    }
-  }
-
-  // Push to local memory queue for batch processing
-  eventQueue.push(event);
-
-  if (eventQueue.length >= BATCH_SIZE) {
-    await flushQueue();
-  } else if (!batchTimeout) {
-    batchTimeout = setTimeout(flushQueue, BATCH_INTERVAL_MS);
-    if (batchTimeout && typeof batchTimeout.unref === 'function') {
-      batchTimeout.unref();
-    }
+const trackEvent = async ({ user_id: userId, event_type: eventType, entity_id: entityId, entity_type: entityType, metadata = null }) => {
+  if (!eventType) return;
+  queue.push({
+    user_id: userId && UUID_RE.test(String(userId)) ? userId : null,
+    event_type: String(eventType).slice(0, 60),
+    entity_id: entityId && UUID_RE.test(String(entityId)) ? entityId : null,
+    entity_type: entityType ? String(entityType).slice(0, 40) : null,
+    metadata
+  });
+  if (process.env.NODE_ENV === 'test' || queue.length >= BATCH_SIZE) return flushQueue();
+  if (!timer) {
+    timer = setTimeout(flushQueue, BATCH_INTERVAL_MS);
+    if (timer.unref) timer.unref();
   }
 };
 
-/**
- * Computes high-fidelity metrics for a user
- */
+/** Creator analytics for the profile dashboard (last 30 days + totals). */
 const getProfileAnalytics = async (userId) => {
-  try {
-    // 1. Follower growth over last 7 days
-    const followerQuery = await db.query(`
-      SELECT DATE(created_at) as date_val, COUNT(*) as count_val
-      FROM follows
-      WHERE following_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-      GROUP BY DATE(created_at)
-      ORDER BY DATE(created_at) ASC
-    `, [userId]);
-
-    const followerGrowth = followerQuery.rows.map(r => Number(r.count_val));
-    // Ensure we have 7 days of data for the chart representation
-    while (followerGrowth.length < 7) {
-      followerGrowth.unshift(0);
-    }
-
-    // 2. Fetch Posts view counts and interaction counts
-    const postQuery = await db.query(`
-      SELECT 
-        p.id, 
-        p.caption as title, 
-        p.content_type as type,
-        (SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id) as interactions,
-        (SELECT COUNT(*) FROM analytics_events ae WHERE ae.entity_id = p.id AND ae.event_type = 'view_post') as views
-      FROM posts p
-      WHERE p.author_id = $1
-      ORDER BY views DESC
-      LIMIT 5
-    `, [userId]);
-
-    // 3. Fetch Videos view counts and interaction counts
-    const videoQuery = await db.query(`
-      SELECT 
-        v.id, 
-        v.title, 
-        'video' as type,
-        (SELECT COUNT(*) FROM reactions r WHERE r.post_id = v.id) as interactions,
-        (SELECT COUNT(*) FROM analytics_events ae WHERE ae.entity_id = v.id AND ae.event_type = 'view_video') as views
-      FROM videos v
-      WHERE v.author_id = $1
-      ORDER BY views DESC
-      LIMIT 5
-    `, [userId]);
-
-    const postPerformance = [
-      ...postQuery.rows.map(r => ({
-        id: r.id,
-        title: r.title || 'Untitled Post',
-        type: r.type,
-        views: Number(r.views) || 0,
-        interactions: Number(r.interactions) || 0
-      })),
-      ...videoQuery.rows.map(r => ({
-        id: r.id,
-        title: r.title || 'Untitled Reel',
-        type: r.type,
-        views: Number(r.views) || 0,
-        interactions: Number(r.interactions) || 0
-      }))
-    ].sort((a, b) => b.views - a.views).slice(0, 5);
-
-    // 4. Calculate total views and total interactions for engagement rate
-    let totalViews = postPerformance.reduce((sum, item) => sum + item.views, 0);
-    let totalInteractions = postPerformance.reduce((sum, item) => sum + item.interactions, 0);
-
-    // Engagement rate percentage
-    const engagementRate = totalViews > 0 
-      ? ((totalInteractions / totalViews) * 100).toFixed(1) + '%'
-      : '0.0%';
-
-    // 5. Total citations metric based on uploaded papers and views on papers
-    const docQuery = await db.query(`
-      SELECT COUNT(*) as doc_count FROM documents WHERE uploader_id = $1
-    `, [userId]);
-    const docCount = Number(docQuery.rows[0].doc_count) || 0;
-
-    const docViewsQuery = await db.query(`
-      SELECT COUNT(*) as view_count 
-      FROM analytics_events ae
-      JOIN documents d ON ae.entity_id = d.id
-      WHERE d.uploader_id = $1 AND ae.event_type = 'read_document'
-    `, [userId]);
-    const docViews = Number(docViewsQuery.rows[0].view_count) || 0;
-
-    const totalCitations = (docCount * 15) + (docViews * 2);
-
-    // 6. Collaboration impact score
-    const followerCountQuery = await db.query(`
-      SELECT COUNT(*) as f_count FROM follows WHERE following_id = $1
-    `, [userId]);
-    const followers = Number(followerCountQuery.rows[0].f_count) || 0;
-
-    const chatQuery = await db.query(`
-      SELECT COUNT(*) as msg_count 
-      FROM messages m
-      JOIN conversations c ON m.conversation_id = c.id
-      WHERE m.sender_id = $1
-    `, [userId]);
-    const messagesSent = Number(chatQuery.rows[0].msg_count) || 0;
-
-    const score = (followers * 5) + (messagesSent * 2);
-    let collaborationImpact = 'Established Researcher';
-    if (score > 100) collaborationImpact = 'Top 1% in Research field';
-    else if (score > 50) collaborationImpact = 'Top 5% in Research field';
-    else if (score > 20) collaborationImpact = 'Top 15% in Research field';
-
-    return {
-      engagement_rate: engagementRate,
-      total_citations: totalCitations,
-      follower_growth: followerGrowth,
-      post_performance: postPerformance.length > 0 ? postPerformance : [
-        { id: "mock_p1", title: "Introduction to RAG in Social Research", views: 120, interactions: 15, type: "document" },
-        { id: "mock_p2", title: "ResearchReel System Architecture", views: 95, interactions: 8, type: "video" }
-      ],
-      collaboration_impact: collaborationImpact
-    };
-
-  } catch (error) {
-    console.error('Error computing profile analytics:', error);
-    throw error;
-  }
+  const growth = await db.query(
+    `SELECT to_char(d::date, 'YYYY-MM-DD') AS day,
+            (SELECT COUNT(*)::int FROM follows f WHERE f.following_id = $1 AND f.created_at::date = d::date) AS new_followers
+       FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day') d
+      ORDER BY d`,
+    [userId]
+  );
+  const top = await db.query(
+    `SELECT * FROM (
+       SELECT p.id, COALESCE(NULLIF(left(p.caption, 80), ''), 'Untitled post') AS title, p.content_type AS type, p.created_at,
+              (SELECT COUNT(*)::int FROM analytics_events e WHERE e.entity_id = p.id AND e.event_type = 'view_post') AS views,
+              ((SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id)
+               + (SELECT COUNT(*) FROM post_comments c WHERE c.post_id = p.id AND c.deleted_at IS NULL))::int AS interactions
+         FROM posts p WHERE p.author_id = $1 AND p.deleted_at IS NULL AND p.content_type <> 'video'
+       UNION ALL
+       SELECT v.id, v.title, 'reel', v.created_at,
+              (SELECT COUNT(*)::int FROM analytics_events e WHERE e.entity_id = v.id AND e.event_type = 'view_video'),
+              ((SELECT COUNT(*) FROM video_likes l WHERE l.video_id = v.id)
+               + (SELECT COUNT(*) FROM video_comments c WHERE c.video_id = v.id AND c.deleted_at IS NULL))::int
+         FROM videos v WHERE v.author_id = $1 AND v.deleted_at IS NULL
+     ) x ORDER BY interactions DESC, views DESC, created_at DESC LIMIT 5`,
+    [userId]
+  );
+  const totals = await db.query(
+    `SELECT (SELECT COUNT(*)::int FROM follows WHERE following_id = $1) AS followers,
+            (SELECT COUNT(*)::int FROM analytics_events e JOIN posts p ON p.id = e.entity_id WHERE p.author_id = $1 AND e.event_type = 'view_post'
+               AND e.created_at > NOW() - INTERVAL '30 days')
+            + (SELECT COUNT(*)::int FROM analytics_events e JOIN videos v ON v.id = e.entity_id WHERE v.author_id = $1 AND e.event_type = 'view_video'
+               AND e.created_at > NOW() - INTERVAL '30 days') AS views_30d,
+            (SELECT COUNT(*)::int FROM reactions r JOIN posts p ON p.id = r.post_id WHERE p.author_id = $1 AND r.created_at > NOW() - INTERVAL '30 days')
+            + (SELECT COUNT(*)::int FROM video_likes l JOIN videos v ON v.id = l.video_id WHERE v.author_id = $1 AND l.created_at > NOW() - INTERVAL '30 days') AS likes_30d,
+            (SELECT COUNT(*)::int FROM post_comments c JOIN posts p ON p.id = c.post_id WHERE p.author_id = $1 AND c.deleted_at IS NULL AND c.created_at > NOW() - INTERVAL '30 days') AS comments_30d,
+            (SELECT COUNT(*)::int FROM documents WHERE uploader_id = $1 AND deleted_at IS NULL) AS papers`,
+    [userId]
+  );
+  const t = totals.rows[0];
+  const engagement = t.views_30d > 0 ? Math.min(100, ((t.likes_30d + t.comments_30d) / t.views_30d) * 100) : 0;
+  return {
+    totals: t,
+    engagement_rate: `${engagement.toFixed(1)}%`,
+    follower_growth: growth.rows,
+    top_content: top.rows
+  };
 };
 
-module.exports = {
-  trackEvent,
-  getProfileAnalytics,
-  emitter: analyticsEmitter
-};
+module.exports = { trackEvent, getProfileAnalytics, flushQueue };

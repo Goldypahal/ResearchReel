@@ -1,25 +1,19 @@
-const BANNED_KEYWORDS = [
-  'spam', 'buy bitcoin', 'make money fast', 'earn cash', 'cheap pills',
-  'viagra', 'cialis', 'free followers', 'follow back', 'like for like'
+/**
+ * Lightweight automated text moderation for obvious spam. Human moderation
+ * (reports queue) handles everything else.
+ */
+const BANNED_PATTERNS = [
+  /\bbuy bitcoin\b/i, /\bmake money fast\b/i, /\bearn cash\b/i, /\bcheap pills\b/i,
+  /\bviagra\b/i, /\bcialis\b/i, /\bfree followers\b/i, /\blike for like\b/i
 ];
 
-/**
- * Validates text content against standard moderation guidelines.
- * Returns { clean: boolean, matchedKeyword: string | null }
- */
 const moderateText = (text) => {
   if (!text) return { clean: true, matchedKeyword: null };
-  
-  const lowerText = text.toLowerCase();
-  for (const keyword of BANNED_KEYWORDS) {
-    if (lowerText.includes(keyword)) {
-      return { clean: false, matchedKeyword: keyword };
-    }
+  for (const re of BANNED_PATTERNS) {
+    const m = String(text).match(re);
+    if (m) return { clean: false, matchedKeyword: m[0].toLowerCase() };
   }
-  
   return { clean: true, matchedKeyword: null };
 };
 
-module.exports = {
-  moderateText
-};
+module.exports = { moderateText };

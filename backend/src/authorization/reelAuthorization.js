@@ -8,9 +8,9 @@ async function canAccessReel(userId, reelId) {
   if (!reelId) return { allowed: false, isAuthor: false };
 
   const query = `
-    SELECT id, author_id, visibility, status 
-    FROM reels 
-    WHERE id = $1 AND (deleted_at IS NULL);
+    SELECT id, author_id, 'private' AS visibility, status
+    FROM reel_drafts
+    WHERE id = $1;
   `;
   const result = await pool.query(query, [reelId]);
   if (result.rows.length === 0) {

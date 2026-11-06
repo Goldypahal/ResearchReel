@@ -11,7 +11,7 @@ async function canAccessDocument(userId, documentId) {
   const query = `
     SELECT 
       d.id, 
-      d.owner_id, 
+      d.uploader_id AS owner_id, 
       d.visibility,
       pd.project_id,
       pm.role as project_role

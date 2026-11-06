@@ -6,30 +6,24 @@ dotenv.config();
 const client = createClient({ 
   url: process.env.REDIS_URL,
   socket: {
-    reconnectStrategy: (retries) => {
-      console.log(`[Redis] Reconnecting attempt #${retries}...`);
-      return Math.min(retries * 100, 3000); // reconnect with exponential backoff up to 3s
-    }
+    reconnectStrategy: (retries) => Math.min(retries * 200, 5000)
   }
 });
 
+let lastErrorLog = 0;
 client.on('error', (err) => {
-  console.error('[Redis Client Error]', err);
-});
-
-client.on('connect', () => {
-  console.log('[Redis] Client connected successfully');
+  // Avoid flooding logs while Redis is unreachable.
+  if (Date.now() - lastErrorLog > 30000) {
+    lastErrorLog = Date.now();
+    console.error('[redis] error:', err.message);
+  }
 });
 
 client.on('ready', () => {
-  console.log('[Redis] Client ready for commands');
+  if (process.env.NODE_ENV !== 'test') console.log('[redis] connected');
 });
 
-client.on('end', () => {
-  console.warn('[Redis] Connection closed');
-});
-
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.REDIS_DISABLED !== 'true') {
   client.connect().catch((err) => {
     console.error('[Redis] Failed to connect during startup, retrying in background...', err.message);
   });

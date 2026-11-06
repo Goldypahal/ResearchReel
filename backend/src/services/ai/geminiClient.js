@@ -1,247 +1,130 @@
-const axios = require('axios');
-const dotenv = require('dotenv');
+const { generate, isConfigured } = require('./llm');
 
-dotenv.config();
+/**
+ * Reel script generation. With an API key, Gemini writes the script from the paper's
+ * real content. Without one, an extractive script is built from the paper's own
+ * abstract/text so nothing is invented.
+ */
+const STYLES = ['indigo-dark', 'slate-gradient', 'emerald-glow', 'crimson-deep', 'violet-pulsar'];
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const clamp = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-const generateReelScript = async (paperTitle, summaryText, keyPoints, userApiKey = null) => {
-  const apiKeyToUse = userApiKey || GEMINI_API_KEY;
-  if (!apiKeyToUse || apiKeyToUse.includes('YOUR_GEMINI_API_KEY')) {
-    console.warn('[Gemini Client] API Key is not configured. Using fallback script generator.');
-    return getFallbackScript(paperTitle, summaryText);
+const normaliseScenes = (scenes) => (Array.isArray(scenes) ? scenes : [])
+  .filter((s) => s && (s.title || s.dialogue))
+  .slice(0, 8)
+  .map((s, i) => ({
+    title: clamp(s.title, 60) || `Scene ${i + 1}`,
+    visualDescription: clamp(s.visualDescription, 200),
+    dialogue: clamp(s.dialogue, 300),
+    duration: Math.min(Math.max(parseInt(s.duration, 10) || 8, 3), 20),
+    backgroundStyle: STYLES.includes(s.backgroundStyle) ? s.backgroundStyle : STYLES[i % STYLES.length]
+  }));
+
+const splitSentences = (text) => (text || '')
+  .replace(/\s+/g, ' ')
+  .split(/(?<=[.!?])\s+(?=[A-Z])/)
+  .map((s) => s.trim())
+  .filter((s) => s.length > 40 && s.length < 300);
+
+const extractiveScenes = (paperTitle, sourceText, offset = 0, count = 4) => {
+  const sentences = splitSentences(sourceText);
+  const scenes = [{
+    title: clamp(paperTitle, 60),
+    visualDescription: 'Title card',
+    dialogue: clamp(`A quick look at the paper "${paperTitle}".`, 300),
+    duration: 6,
+    backgroundStyle: STYLES[0]
+  }];
+  const picked = sentences.slice(offset, offset + count);
+  const labels = ['Background', 'Approach', 'Findings', 'Implications', 'Details', 'Takeaway'];
+  picked.forEach((sentence, i) => scenes.push({
+    title: labels[i % labels.length],
+    visualDescription: 'Key sentence from the paper',
+    dialogue: clamp(sentence, 300),
+    duration: Math.min(Math.max(Math.round(sentence.split(' ').length / 2.6), 5), 15),
+    backgroundStyle: STYLES[(i + 1) % STYLES.length]
+  }));
+  scenes.push({
+    title: 'Read the full paper',
+    visualDescription: 'Closing card',
+    dialogue: 'Read the full paper on ResearchReel.',
+    duration: 4,
+    backgroundStyle: STYLES[4]
+  });
+  return scenes;
+};
+
+const sourceBlock = (paperTitle, summaryText, keyPoints, fullText) => `
+Paper title: ${paperTitle}
+Summary/abstract: ${summaryText || '(none)'}
+Key points: ${JSON.stringify(keyPoints || [])}
+Paper text (may be truncated):
+"""
+${(fullText || '').slice(0, 60000)}
+"""`;
+
+const SCENE_SPEC = `Each scene object has: "title" (on-screen text, max 40 chars), "visualDescription" (what to show),
+"dialogue" (voiceover, max 200 chars), "duration" (integer seconds, 5-12), "backgroundStyle" (one of ${STYLES.map((s) => `"${s}"`).join(', ')}).
+Only state things supported by the paper text. Do not invent results or numbers.`;
+
+const generateReelScript = async (paperTitle, summaryText, keyPoints, userApiKey = null, fullText = '') => {
+  if (!isConfigured(userApiKey)) return extractiveScenes(paperTitle, summaryText || fullText);
+  try {
+    const scenes = await generate(
+      `Write a 30-60 second short-form video script explaining this research paper to a curious, educated audience.
+Return a JSON array of 4-6 scene objects. ${SCENE_SPEC}
+${sourceBlock(paperTitle, summaryText, keyPoints, fullText)}`,
+      { json: true, apiKey: userApiKey || undefined }
+    );
+    const out = normaliseScenes(scenes);
+    return out.length ? out : extractiveScenes(paperTitle, summaryText || fullText);
+  } catch (err) {
+    console.error('[Reel AI] Script generation failed, using extractive script:', err.message);
+    return extractiveScenes(paperTitle, summaryText || fullText);
   }
+};
 
-  const prompt = `
-We want to generate an engaging, 30-60 second academic video reel/shorts script for a research paper.
-Paper Title: "${paperTitle}"
-Abstract/Summary: "${summaryText}"
-Key Highlights: ${JSON.stringify(keyPoints || [])}
+const generateReelSeries = async (paperTitle, summaryText, keyPoints, userApiKey = null, options = {}, fullText = '') => {
+  const { parts_mode = 'auto' } = options;
+  const requested = Math.min(Math.max(parseInt(options.parts_count, 10) || 3, 2), 6);
 
-Please structure this into exactly 4 to 6 video scenes. For each scene, provide:
-1. title: A short punchy screen overlay text (max 40 chars).
-2. visualDescription: A description of what should be displayed on screen.
-3. dialogue: The spoken script for the voiceover (max 200 chars).
-4. duration: The duration in seconds (integer, e.g., 5-10 seconds, total duration of all scenes must be between 30 and 60 seconds).
-5. backgroundStyle: Color theme style description (choose from: 'indigo-dark', 'slate-gradient', 'emerald-glow', 'crimson-deep', 'violet-pulsar').
+  const fallback = () => {
+    const n = parts_mode === 'auto' ? 3 : requested;
+    return Array.from({ length: n }, (_, i) => ({
+      part_number: i + 1,
+      total_parts: n,
+      title: clamp(`Part ${i + 1}: ${paperTitle}`, 80),
+      description: `Part ${i + 1} of ${n}`,
+      scenes: extractiveScenes(paperTitle, summaryText ? `${summaryText} ${fullText}` : fullText, i * 3, 3)
+    }));
+  };
 
-You MUST respond with a valid JSON array only, containing no extra text or markdown formatting blocks.
-Example format:
-[
-  {
-    "title": "Unlocking AI Reasoning",
-    "visualDescription": "Futuristic abstract brain grid glowing in blue",
-    "dialogue": "Have you ever wondered how artificial intelligence can reason logically like humans do? Let's check out a new framework.",
-    "duration": 9,
-    "backgroundStyle": "indigo-dark"
-  }
-]
-`;
+  if (!isConfigured(userApiKey)) return fallback();
 
   try {
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyToUse}`,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 10000
-      }
+    const instruction = parts_mode === 'auto'
+      ? 'Split the paper into 2-4 parts depending on its depth.'
+      : `Split the paper into exactly ${requested} parts.`;
+    const series = await generate(
+      `Create a multi-part short-form video series explaining this research paper. ${instruction}
+Return a JSON array of part objects: { "part_number", "total_parts", "title" (max 50 chars), "description" (max 150 chars), "scenes": [4-5 scene objects] }.
+${SCENE_SPEC}
+${sourceBlock(paperTitle, summaryText, keyPoints, fullText)}`,
+      { json: true, apiKey: userApiKey || undefined }
     );
-
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
-      throw new Error('Empty response from Gemini API');
-    }
-
-    const scenes = JSON.parse(text);
-    if (!Array.isArray(scenes)) {
-      throw new Error('Response is not a valid JSON array');
-    }
-
-    return scenes;
-  } catch (error) {
-    console.error('[Gemini Client] API error:', error.message);
-    return getFallbackScript(paperTitle, summaryText);
+    if (!Array.isArray(series) || !series.length) return fallback();
+    const total = series.length;
+    return series.slice(0, 6).map((p, i) => ({
+      part_number: i + 1,
+      total_parts: total,
+      title: clamp(p.title, 80) || `Part ${i + 1}`,
+      description: clamp(p.description, 200),
+      scenes: normaliseScenes(p.scenes)
+    })).filter((p) => p.scenes.length);
+  } catch (err) {
+    console.error('[Reel AI] Series generation failed, using extractive series:', err.message);
+    return fallback();
   }
 };
 
-const getFallbackScript = (paperTitle, summaryText) => {
-  return [
-    {
-      title: "Breakthrough Discovery",
-      visualDescription: "A clean dark indigo background with subtle particles",
-      dialogue: `Hey science fans! Today we're diving into a new paper: ${paperTitle.substring(0, 80)}. Let's look at what makes it special.`,
-      duration: 10,
-      backgroundStyle: "indigo-dark"
-    },
-    {
-      title: "The Core Problem",
-      visualDescription: "Visual representation of data networks connected together",
-      dialogue: "Current models struggle to solve these challenges efficiently. That is where this new research steps in with a unique method.",
-      duration: 10,
-      backgroundStyle: "slate-gradient"
-    },
-    {
-      title: "Key Insights & Results",
-      visualDescription: "Glow effect showing rising charts and research metrics",
-      dialogue: "By implementing their framework, the researchers achieved significantly higher performance compared to existing baselines.",
-      duration: 10,
-      backgroundStyle: "emerald-glow"
-    },
-    {
-      title: "What's Next?",
-      visualDescription: "Clean dark background with the paper title highlighted",
-      dialogue: "This opens new doors for scientific discovery. You can read the full publication on ResearchReel. Follow for more insights!",
-      duration: 10,
-      backgroundStyle: "violet-pulsar"
-    }
-  ];
-};
-
-const generateReelSeries = async (paperTitle, summaryText, keyPoints, userApiKey = null, options = {}) => {
-  const apiKeyToUse = userApiKey || GEMINI_API_KEY;
-  const { parts_mode = 'auto', parts_count = 3 } = options;
-
-  if (!apiKeyToUse || apiKeyToUse.includes('YOUR_GEMINI_API_KEY')) {
-    console.warn('[Gemini Client] API Key is not configured. Using fallback series generator.');
-    return getFallbackSeries(paperTitle, summaryText, parts_mode === 'auto' ? 3 : parts_count);
-  }
-
-  // Build the prompt instruction
-  let partsInstruction = '';
-  if (parts_mode === 'auto') {
-    partsInstruction = `Please analyze the paper and automatically split it into an appropriate number of parts (typically between 2 and 4 parts) depending on the complexity, depth, and detail of the research. Each part will represent a single short-form video reel.`;
-  } else {
-    partsInstruction = `Please split the research paper into exactly ${parts_count} distinct parts (each part represents a single short-form video reel).`;
-  }
-
-  const prompt = `
-We want to generate an engaging multi-part academic video reel series (shorts/reels) summarizing a research paper.
-Paper Title: "${paperTitle}"
-Abstract/Summary: "${summaryText}"
-Key Highlights: ${JSON.stringify(keyPoints || [])}
-
-${partsInstruction}
-
-For each part in the series, generate:
-1. part_number: The sequential number of the part (starting at 1).
-2. total_parts: The total number of parts in the series.
-3. title: A title for this part (e.g., "Part 1: The Core Breakthrough", max 50 chars).
-4. description: A short description summarizing this part (max 150 chars).
-5. scenes: An array of exactly 4 to 5 video scenes for this part.
-   For each scene inside the scenes array, provide:
-   - title: Short screen overlay text (max 40 chars).
-   - visualDescription: A description of what should be displayed.
-   - dialogue: Spoken voiceover dialogue script (max 200 chars).
-   - duration: Duration in seconds (integer, e.g., 5-10 seconds).
-   - backgroundStyle: Color theme style (choose from: 'indigo-dark', 'slate-gradient', 'emerald-glow', 'crimson-deep', 'violet-pulsar').
-
-You MUST respond with a valid JSON array only, containing no extra text or markdown formatting blocks.
-Example format:
-[
-  {
-    "part_number": 1,
-    "total_parts": 3,
-    "title": "Part 1: The Challenge",
-    "description": "Introduction to the core problem of AI reasoning.",
-    "scenes": [
-      {
-        "title": "Unlocking AI Reasoning",
-        "visualDescription": "Futuristic abstract brain grid glowing in blue",
-        "dialogue": "Let's explore how AI is beginning to reason like humans. Here's the first part of a breakthrough study.",
-        "duration": 8,
-        "backgroundStyle": "indigo-dark"
-      }
-    ]
-  }
-]
-`;
-
-  try {
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyToUse}`,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 20000
-      }
-    );
-
-    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
-      throw new Error('Empty response from Gemini API');
-    }
-
-    const series = JSON.parse(text);
-    if (!Array.isArray(series)) {
-      throw new Error('Response is not a valid JSON array');
-    }
-
-    return series;
-  } catch (error) {
-    console.error('[Gemini Client] API error in series generation:', error.message);
-    return getFallbackSeries(paperTitle, summaryText, parts_mode === 'auto' ? 3 : parts_count);
-  }
-};
-
-const getFallbackSeries = (paperTitle, summaryText, partsCount) => {
-  const series = [];
-  const actualParts = partsCount || 3;
-  for (let i = 1; i <= actualParts; i++) {
-    series.push({
-      part_number: i,
-      total_parts: actualParts,
-      title: `Part ${i}: Key Insights from ${paperTitle.substring(0, 30)}`,
-      description: `Analysis part ${i} covering key themes of ${paperTitle.substring(0, 30)}.`,
-      scenes: [
-        {
-          title: `Part ${i}: Introduction`,
-          visualDescription: "A clean dark background with title slide",
-          dialogue: `Welcome to part ${i} of our breakdown of the paper: ${paperTitle.substring(0, 60)}.`,
-          duration: 9,
-          backgroundStyle: "indigo-dark"
-        },
-        {
-          title: "Core Mechanics",
-          visualDescription: "A clean slate grid background",
-          dialogue: `In this segment, we focus on the core mechanisms and parameters discovered in section ${i} of the research.`,
-          duration: 9,
-          backgroundStyle: "slate-gradient"
-        },
-        {
-          title: "The Results",
-          visualDescription: "A glowing emerald chart",
-          dialogue: "The experiments yielded significant improvements, setting a new benchmark.",
-          duration: 9,
-          backgroundStyle: "emerald-glow"
-        },
-        {
-          title: "Follow for Part " + (i < actualParts ? (i + 1) : "Finished"),
-          visualDescription: "A clean purple background",
-          dialogue: i < actualParts 
-            ? "Stay tuned for the next part where we explore the practical applications!" 
-            : "That wraps up our series on this paper! Subscribe for more research breakdowns.",
-          duration: 9,
-          backgroundStyle: "violet-pulsar"
-        }
-      ]
-    });
-  }
-  return series;
-};
-
-module.exports = {
-  generateReelScript,
-  generateReelSeries
-};
-
+module.exports = { generateReelScript, generateReelSeries, extractiveScenes };

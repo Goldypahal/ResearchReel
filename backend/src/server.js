@@ -1,45 +1,49 @@
 const http = require('http');
-const https = require('https');
-const fs = require('fs');
-const path = require('path');
-const app = require('./app');
-const socketService = require('./services/socketService');
+const dotenv = require('dotenv');
 
-const PORT = process.env.PORT || 5000;
-let server;
+dotenv.config();
 
-if (process.env.HTTPS_KEY_PATH && process.env.HTTPS_CERT_PATH) {
-  const keyPath = path.resolve(process.env.HTTPS_KEY_PATH);
-  const certPath = path.resolve(process.env.HTTPS_CERT_PATH);
-
-  try {
-    const key = fs.readFileSync(keyPath, 'utf8');
-    const cert = fs.readFileSync(certPath, 'utf8');
-    server = https.createServer({ key, cert }, app);
-    console.log('Starting HTTPS server using configured certificate files');
-  } catch (error) {
-    console.error('Unable to read HTTPS certificate files:', error);
-    process.exit(1);
-  }
-} else {
-  server = http.createServer(app);
+// Fail fast on missing critical configuration in production.
+const required = ['DATABASE_URL', 'REDIS_URL', 'JWT_SECRET'];
+const missing = required.filter((k) => !process.env[k]);
+if (missing.length) {
+  console.error(`Missing required environment variables: ${missing.join(', ')}`);
+  if (process.env.NODE_ENV === 'production') process.exit(1);
+}
+if (process.env.NODE_ENV === 'production' && (process.env.JWT_SECRET || '').length < 32) {
+  console.error('JWT_SECRET must be at least 32 characters in production.');
+  process.exit(1);
 }
 
-const io = socketService.init(server);
+const app = require('./app');
+const socketService = require('./services/socketService');
+const db = require('./config/db');
 
+const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
+socketService.init(server);
+
+let worker = null;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT} with Real-time Support`);
-  if (server instanceof https.Server) {
-    console.log('HTTPS enabled');
-  }
-
-  // Load background task queue worker
+  console.log(`ResearchReel API listening on port ${PORT}`);
   if (process.env.START_WORKER !== 'false') {
-    require('./workers/videoWorker');
+    worker = require('./workers/videoWorker');
+    require('./services/reelScheduler').start();
   }
-
-  // Start Reel Auto-Upload Scheduler
-  const reelScheduler = require('./services/reelScheduler');
-  reelScheduler.start();
 });
 
+const shutdown = (signal) => {
+  console.log(`${signal} received, shutting down...`);
+  server.close(async () => {
+    try {
+      if (worker) await worker.close();
+      await db.pool.end();
+    } finally {
+      process.exit(0);
+    }
+  });
+  setTimeout(() => process.exit(1), 15000).unref();
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('unhandledRejection', (reason) => console.error('Unhandled rejection:', reason));
