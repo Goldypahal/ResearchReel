@@ -35,3 +35,4 @@ Thumbs.db
 
 # Uploaded media (local disk storage)
 backend/public/uploads/
+dump.rdb
