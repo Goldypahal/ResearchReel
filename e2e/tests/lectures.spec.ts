@@ -9,6 +9,7 @@ test('host schedules a lecture, an attendee registers and downloads a calendar f
 
   const h = await hostCtx.newPage();
   await h.goto('/lectures/host');
+  await h.mouse.move(900, 500);
   await h.fill('input[placeholder=Title]', 'Intro to Bayesian Statistics');
   const start = new Date(Date.now() + 3 * 24 * 3600 * 1000);
   const local = new Date(start.getTime() - start.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -19,6 +20,8 @@ test('host schedules a lecture, an attendee registers and downloads a calendar f
 
   const g = await guestCtx.newPage();
   await g.goto(lectureUrl);
+  // A new page's pointer starts at the top-left, over the sidebar, which expands on hover.
+  await g.mouse.move(900, 500);
   await g.getByRole('button', { name: 'Register' }).click();
   await expect(g.getByText(/You.re registered/)).toBeVisible();
   const [download] = await Promise.all([g.waitForEvent('download'), g.getByRole('link', { name: 'Add to calendar' }).click()]);
