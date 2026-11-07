@@ -2,7 +2,6 @@
 -- GENERATED from backend/migrations with pg_dump --schema-only; do not edit by hand.
 -- The migrations are the source of truth: cd backend && npm run migrate -- up -m migrations
 
-\restrict 4ybu6Eq725yCNezGRa3GzsKYXniv0zQmvW9XiEAcAgBouUTuZfa19xltf7JQzj4
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
 COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
 CREATE TABLE public.ai_conversations (
@@ -52,7 +51,12 @@ CREATE TABLE public.billing_invoices (
 CREATE TABLE public.bookmarks (
     user_id uuid NOT NULL,
     post_id uuid NOT NULL,
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now()
+);
+CREATE TABLE public.comment_likes (
+    comment_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 CREATE TABLE public.comments (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
@@ -61,7 +65,9 @@ CREATE TABLE public.comments (
     parent_id uuid,
     content text NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    reply_to_user_id uuid,
+    edited_at timestamp with time zone
 );
 CREATE TABLE public.content_reports (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -70,13 +76,13 @@ CREATE TABLE public.content_reports (
     reason character varying(255) NOT NULL,
     details text,
     status character varying(20) DEFAULT 'pending'::character varying,
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now()
 );
 CREATE TABLE public.conversation_participants (
     conversation_id uuid NOT NULL,
     user_id uuid NOT NULL,
     role character varying(20) DEFAULT 'member'::character varying,
-    joined_at timestamp without time zone DEFAULT now(),
+    joined_at timestamp with time zone DEFAULT now(),
     last_read_at timestamp with time zone
 );
 CREATE TABLE public.conversations (
@@ -84,7 +90,7 @@ CREATE TABLE public.conversations (
     is_group boolean DEFAULT false,
     group_name character varying(100),
     group_picture_url text,
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now()
 );
 CREATE TABLE public.document_versions (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
@@ -107,7 +113,7 @@ CREATE TABLE public.documents (
     summary_text text,
     key_points text[],
     embeddings_metadata jsonb,
-    created_at timestamp without time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
     title character varying(300),
     abstract text,
     doi character varying(255),
@@ -128,14 +134,14 @@ CREATE TABLE public.documents (
 CREATE TABLE public.follows (
     follower_id uuid NOT NULL,
     following_id uuid NOT NULL,
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now()
 );
 CREATE TABLE public.institutions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name character varying(255) NOT NULL,
     domain character varying(255),
     logo_url text,
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now()
 );
 CREATE TABLE public.lecture_questions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -150,6 +156,12 @@ CREATE TABLE public.lecture_registrations (
     lecture_id uuid NOT NULL,
     user_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE TABLE public.lecture_reminders (
+    lecture_id uuid NOT NULL,
+    kind character varying(10) NOT NULL,
+    sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT lecture_reminders_kind_check CHECK (((kind)::text = ANY ((ARRAY['24h'::character varying, '1h'::character varying])::text[])))
 );
 CREATE TABLE public.lectures (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -194,8 +206,8 @@ CREATE TABLE public.messages (
     content text,
     message_type character varying(20) DEFAULT 'text'::character varying,
     file_url text,
-    sent_at timestamp without time zone DEFAULT now(),
-    read_at timestamp without time zone
+    sent_at timestamp with time zone DEFAULT now(),
+    read_at timestamp with time zone
 );
 CREATE TABLE public.notifications (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
@@ -206,7 +218,8 @@ CREATE TABLE public.notifications (
     entity_id uuid,
     message text,
     is_read boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    emailed_at timestamp with time zone
 );
 CREATE TABLE public.organizations (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
@@ -243,8 +256,8 @@ CREATE TABLE public.posts (
     tags text[],
     publication_status character varying(20),
     doi character varying(255),
-    created_at timestamp without time zone DEFAULT now(),
-    updated_at timestamp without time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
     deleted_at timestamp with time zone
 );
 CREATE TABLE public.project_documents (
@@ -275,16 +288,16 @@ CREATE TABLE public.reactions (
     post_id uuid,
     user_id uuid,
     reaction_type character varying(20),
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now()
 );
 CREATE TABLE public.reel_automation_settings (
     user_id uuid NOT NULL,
     auto_generate boolean DEFAULT false,
     auto_upload boolean DEFAULT false,
     upload_interval_hours integer DEFAULT 24,
-    next_upload_at timestamp without time zone DEFAULT (now() + '24:00:00'::interval),
-    created_at timestamp without time zone DEFAULT now(),
-    updated_at timestamp without time zone DEFAULT now(),
+    next_upload_at timestamp with time zone DEFAULT (now() + '24:00:00'::interval),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
     encrypted_gemini_api_key text
 );
 CREATE TABLE public.reel_drafts (
@@ -296,8 +309,8 @@ CREATE TABLE public.reel_drafts (
     scenes jsonb NOT NULL,
     status character varying(20) DEFAULT 'draft'::character varying,
     video_url text,
-    created_at timestamp without time zone DEFAULT now(),
-    updated_at timestamp without time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
     part_number integer,
     total_parts integer,
     error_message text,
@@ -355,8 +368,8 @@ CREATE TABLE public.users (
     orcid_id character varying(19),
     institution_id uuid,
     research_interests text[],
-    created_at timestamp without time zone DEFAULT now(),
-    last_active timestamp without time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    last_active timestamp with time zone,
     role character varying(20) DEFAULT 'user'::character varying,
     organization_id uuid,
     stripe_customer_id character varying(100),
@@ -365,7 +378,9 @@ CREATE TABLE public.users (
     deleted_at timestamp with time zone,
     institution character varying(200),
     avatar_url text,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    email_preferences jsonb DEFAULT '{}'::jsonb NOT NULL,
+    timezone character varying(64)
 );
 CREATE TABLE public.videos (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -378,7 +393,7 @@ CREATE TABLE public.videos (
     linked_paper_id uuid,
     timestamps jsonb,
     tags text[],
-    created_at timestamp without time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
     deleted_at timestamp with time zone,
     view_count integer DEFAULT 0,
     hls_playlist_url text,
@@ -412,6 +427,8 @@ ALTER TABLE ONLY public.billing_invoices
     ADD CONSTRAINT billing_invoices_stripe_invoice_id_key UNIQUE (stripe_invoice_id);
 ALTER TABLE ONLY public.bookmarks
     ADD CONSTRAINT bookmarks_pkey PRIMARY KEY (user_id, post_id);
+ALTER TABLE ONLY public.comment_likes
+    ADD CONSTRAINT comment_likes_pkey PRIMARY KEY (comment_id, user_id);
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.content_reports
@@ -432,6 +449,8 @@ ALTER TABLE ONLY public.lecture_questions
     ADD CONSTRAINT lecture_questions_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.lecture_registrations
     ADD CONSTRAINT lecture_registrations_pkey PRIMARY KEY (lecture_id, user_id);
+ALTER TABLE ONLY public.lecture_reminders
+    ADD CONSTRAINT lecture_reminders_pkey PRIMARY KEY (lecture_id, kind);
 ALTER TABLE ONLY public.lectures
     ADD CONSTRAINT lectures_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.media_assets
@@ -487,6 +506,7 @@ ALTER TABLE ONLY public.workspaces
 CREATE INDEX idx_analytics_events_entity ON public.analytics_events USING btree (entity_id, entity_type);
 CREATE INDEX idx_analytics_events_type ON public.analytics_events USING btree (event_type);
 CREATE INDEX idx_bookmarks_user ON public.bookmarks USING btree (user_id, created_at DESC);
+CREATE INDEX idx_comments_parent ON public.comments USING btree (parent_id, created_at) WHERE (parent_id IS NOT NULL);
 CREATE INDEX idx_comments_post ON public.comments USING btree (post_id, created_at);
 CREATE INDEX idx_documents_created ON public.documents USING btree (created_at);
 CREATE INDEX idx_documents_owner ON public.documents USING btree (uploader_id);
@@ -536,12 +556,18 @@ ALTER TABLE ONLY public.bookmarks
     ADD CONSTRAINT bookmarks_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id);
 ALTER TABLE ONLY public.bookmarks
     ADD CONSTRAINT bookmarks_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+ALTER TABLE ONLY public.comment_likes
+    ADD CONSTRAINT comment_likes_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comments(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comment_likes
+    ADD CONSTRAINT comment_likes_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.users(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.comments(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comments
+    ADD CONSTRAINT comments_reply_to_user_id_fkey FOREIGN KEY (reply_to_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.content_reports
     ADD CONSTRAINT content_reports_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.content_reports
@@ -570,6 +596,8 @@ ALTER TABLE ONLY public.lecture_registrations
     ADD CONSTRAINT lecture_registrations_lecture_id_fkey FOREIGN KEY (lecture_id) REFERENCES public.lectures(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.lecture_registrations
     ADD CONSTRAINT lecture_registrations_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lecture_reminders
+    ADD CONSTRAINT lecture_reminders_lecture_id_fkey FOREIGN KEY (lecture_id) REFERENCES public.lectures(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.lectures
     ADD CONSTRAINT lectures_host_id_fkey FOREIGN KEY (host_id) REFERENCES public.users(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.media_assets
@@ -634,4 +662,3 @@ ALTER TABLE ONLY public.workspace_members
     ADD CONSTRAINT workspace_members_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.users(id) ON DELETE CASCADE;
-\unrestrict 4ybu6Eq725yCNezGRa3GzsKYXniv0zQmvW9XiEAcAgBouUTuZfa19xltf7JQzj4

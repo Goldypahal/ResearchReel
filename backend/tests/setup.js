@@ -1,4 +1,5 @@
 process.env.NODE_ENV = 'test';
+process.env.DISABLE_RATE_LIMITS = 'true';
 process.env.JWT_SECRET = 'test-jwt-secret-key-that-is-long-enough';
 process.env.ENCRYPTION_KEY = '12345678901234567890123456789012'; // 32 bytes for AES
 process.env.ELASTICSEARCH_URL = 'http://localhost:9200';

@@ -8,10 +8,16 @@ const pool = new Pool({
   max: process.env.DB_POOL_MAX || 20, // max number of clients in the pool
   idleTimeoutMillis: 30000, // how long a client is allowed to remain idle before being closed
   connectionTimeoutMillis: 2000, // how long to wait for a connection to become available
+  // Every session runs in UTC so NOW() and date maths don't depend on the server's zone.
+  options: '-c timezone=UTC',
 });
 
+let announced = false;
 pool.on('connect', () => {
-  console.log('PostgreSQL Pool Connected');
+  if (!announced) {
+    announced = true;
+    console.log('PostgreSQL Pool Connected');
+  }
 });
 
 pool.on('error', (err) => {

@@ -18,7 +18,7 @@ env:
 
 jobs:
   backend:
-    name: Backend (audit, migrations, tests)
+    name: Backend (audit, migrations, unit + integration tests)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -30,6 +30,11 @@ jobs:
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -50,8 +55,13 @@ jobs:
           npx node-pg-migrate up -m migrations
           npx node-pg-migrate down -m migrations
           npx node-pg-migrate up -m migrations
-      - name: Tests
+      - name: Unit tests
         run: npm test
+      - name: Integration tests (real Postgres + Redis)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/researchreel_test
+          TEST_REDIS_URL: redis://localhost:6379/15
+        run: npm run test:db
 
   frontend:
     name: Frontend (audit, lint, types, build)
@@ -74,9 +84,104 @@ jobs:
         run: npx tsc --noEmit
       - run: npm run build
 
+  e2e:
+    name: Browser tests (full stack + Mailpit)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: researchreel_e2e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.21
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: 1
+          MP_SMTP_AUTH_ALLOW_INSECURE: 1
+        ports: ['1025:1025', '8025:8025']
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/researchreel_e2e
+      REDIS_URL: redis://localhost:6379
+      NEXT_PUBLIC_API_URL: http://localhost:5000/api/v1
+      NEXT_PUBLIC_WSS_URL: http://localhost:5000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+            e2e/package-lock.json
+      - name: Start API (with worker) against Postgres, Redis and Mailpit
+        working-directory: backend
+        env:
+          NODE_ENV: development
+          PORT: 5000
+          JWT_SECRET: e2e-jwt-secret-0123456789abcdef0123456789
+          ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          FRONTEND_URL: http://localhost:3000
+          PUBLIC_API_ORIGIN: http://localhost:5000
+          SMTP_HOST: localhost
+          SMTP_PORT: 1025
+          SMTP_USER: e2e
+          SMTP_PASS: e2e
+          EMAIL_FROM: ResearchReel <no-reply@researchreel.test>
+          # The browser tests create many accounts from one IP.
+          RATE_LIMIT_ALLOWLIST: 127.0.0.1,::1,::ffff:127.0.0.1
+        run: |
+          npm install
+          npx node-pg-migrate up -m migrations
+          nohup node src/server.js > ../api.log 2>&1 &
+      - name: Build and start the web app
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+          nohup npx next start -p 3000 > ../web.log 2>&1 &
+      - name: Wait for both servers
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:5000/api/v1/health >/dev/null && curl -sf http://localhost:3000/support >/dev/null && exit 0
+            sleep 2
+          done
+          echo "servers did not start"; tail -50 api.log web.log; exit 1
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+      - name: Run browser tests
+        working-directory: e2e
+        env:
+          CI: 'true'
+        run: npx playwright test
+      - name: Upload report and server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+            api.log
+            web.log
+          retention-days: 7
+
   images:
     name: Build and push images
-    needs: [backend, frontend]
+    needs: [backend, frontend, e2e]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -111,6 +216,7 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ vars.PUBLIC_URL || 'http://localhost:8080' }}/api/v1
             NEXT_PUBLIC_WSS_URL=${{ vars.PUBLIC_URL || 'http://localhost:8080' }}
             NEXT_PUBLIC_SUPPORT_EMAIL=${{ vars.SUPPORT_EMAIL }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.PUBLIC_URL || 'http://localhost:8080' }}
             NEXT_PUBLIC_SENTRY_DSN=${{ vars.SENTRY_DSN }}
             NEXT_PUBLIC_POSTHOG_KEY=${{ vars.POSTHOG_KEY }}
             NEXT_PUBLIC_POSTHOG_HOST=${{ vars.POSTHOG_HOST }}

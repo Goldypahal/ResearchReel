@@ -3,6 +3,7 @@ const router = express.Router();
 const projectController = require('../controllers/projectController');
 const collab = require('../controllers/projectCollabController');
 const { authMiddleware } = require('../middleware/authMiddleware');
+const rateLimiter = require('../middleware/rateLimiter');
 
 // Projects APIs (Section 21)
 router.get('/', authMiddleware, projectController.getProjects);
@@ -12,7 +13,7 @@ router.patch('/:id', authMiddleware, collab.updateProject);
 router.delete('/:id', authMiddleware, projectController.deleteProject);
 
 // Members & papers
-router.post('/:id/members', authMiddleware, collab.addMember);
+router.post('/:id/members', authMiddleware, rateLimiter.action('project-invite', { ip: 60, user: 30, window: 3600 }), collab.addMember);
 router.patch('/:id/members/:userId', authMiddleware, collab.updateMember);
 router.delete('/:id/members/:userId', authMiddleware, collab.removeMember);
 router.post('/:id/papers', authMiddleware, collab.addPaper);

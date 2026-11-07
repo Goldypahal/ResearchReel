@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const { addJob } = require('../queues/queueManager');
+const { CATEGORY_FOR_TYPE } = require('./emailPreferences');
 
 /**
  * Creates an in-app notification. Never throws: a failed notification must not
@@ -7,12 +9,25 @@ const db = require('../config/db');
 const notify = async ({ userId, actorId, type, entityType = null, entityId = null, message = null }) => {
   if (!userId || userId === actorId) return null;
   try {
+    // Nobody hears from an account they blocked, or that blocked them.
+    if (actorId) {
+      const { isBlockedEitherWay } = require('./blockService');
+      if (await isBlockedEitherWay(userId, actorId)) return null;
+    }
     const result = await db.query(
       `INSERT INTO notifications (user_id, actor_id, type, entity_type, entity_id, message)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
       [userId, actorId || null, type, entityType, entityId, message]
     );
-    return result.rows[0];
+    const created = result.rows[0];
+    // Types with an email category are handed to the worker, which checks the
+    // recipient's preferences and throttling before sending.
+    if (created && CATEGORY_FOR_TYPE[type] && process.env.NODE_ENV !== 'test') {
+      addJob('email', { kind: 'notification', notificationId: created.id }, {
+        jobId: `notification-${created.id}`, removeOnComplete: 1000, removeOnFail: 5000,
+      }).catch(() => {});
+    }
+    return created;
   } catch (err) {
     console.error('[notifications] failed to create notification:', err.message);
     return null;

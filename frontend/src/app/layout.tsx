@@ -9,10 +9,16 @@ const geistMono = {
   variable: "font-mono",
 };
 
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
+const DESCRIPTION = "Share research, read papers with AI, and turn findings into short explainer reels.";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: { default: "ResearchReel", template: "%s · ResearchReel" },
-  description: "Share research, read papers with AI, and turn findings into short explainer reels.",
+  description: DESCRIPTION,
   applicationName: "ResearchReel",
+  openGraph: { type: "website", siteName: "ResearchReel", title: "ResearchReel", description: DESCRIPTION, url: "/", locale: "en_US" },
+  twitter: { card: "summary_large_image", title: "ResearchReel", description: DESCRIPTION },
 };
 
 export const viewport: Viewport = {

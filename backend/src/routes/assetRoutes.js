@@ -7,6 +7,7 @@ const router = express.Router();
 const assetController = require('../controllers/assetController');
 const virusScan = require('../middleware/virusScan');
 const { authMiddleware } = require('../middleware/authMiddleware');
+const rateLimiter = require('../middleware/rateLimiter');
 
 const upload = multer({
   dest: path.join(os.tmpdir(), 'researchreel-uploads'),
@@ -35,7 +36,7 @@ const handleUpload = (req, res, next) => upload.single('file')(req, res, (err) =
 
 router.use(authMiddleware);
 
-router.post('/upload', handleUpload, virusScan, assetController.uploadDocument);
+router.post('/upload', rateLimiter.action('upload-paper', { ip: 40, user: 20, window: 3600 }), handleUpload, virusScan, assetController.uploadDocument);
 router.get('/', assetController.getUserAssets);
 router.get('/:id', assetController.getAsset);
 router.patch('/:id', assetController.updateAsset);

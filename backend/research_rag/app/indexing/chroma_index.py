@@ -44,9 +44,23 @@ class ChromaIndex:
         self._add_texts_with_retry(texts, metadatas, ids)
 
     @retry_api_call(max_attempts=5, min_wait=1, max_wait=10)
+    @staticmethod
+    def to_where(filters: Optional[dict]) -> Optional[dict]:
+        """Chroma needs operator syntax: a list of paper ids becomes {"paper_id": {"$in": [...]}}."""
+        if not filters:
+            return None
+        where = {}
+        for key, value in filters.items():
+            if isinstance(value, (list, tuple, set)):
+                values = [str(v) for v in value]
+                where[key] = values[0] if len(values) == 1 else {"$in": values}
+            else:
+                where[key] = value
+        return where
+
     def query(self, query: str, k: int = 20, filters: Optional[dict] = None):
         try:
-            return self.vector_store.similarity_search_with_score(query, k=k, filter=filters)
+            return self.vector_store.similarity_search_with_score(query, k=k, filter=self.to_where(filters))
         except Exception as exc:
             msg = str(exc).lower()
             if "timeout" in msg:

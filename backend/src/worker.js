@@ -6,6 +6,7 @@
 require('dotenv').config();
 
 require('./workers/videoWorker');
+require('./workers/emailWorker');
 const reelScheduler = require('./services/reelScheduler');
 
 reelScheduler.start();

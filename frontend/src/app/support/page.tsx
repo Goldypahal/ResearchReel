@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { LifeBuoy, ShieldCheck, FileText, Lock, Mail, ChevronDown } from 'lucide-react';
 
 export const metadata: Metadata = {
-  title: 'Help & policies · ResearchReel',
+  title: 'Help & policies',
   description: 'Answers to common questions, community guidelines, terms of service and privacy policy.',
 };
 

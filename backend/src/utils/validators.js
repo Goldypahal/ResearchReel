@@ -1,28 +1,31 @@
 const { z } = require('zod');
 
+/** Emails are case-insensitive: one account per address however it's typed. */
+const email = () => z.string().trim().toLowerCase().pipe(z.string().email('Invalid email format').max(254));
+
 const registerSchema = z.object({
-  email: z.string().email('Invalid email format'),
-  username: z.string().regex(/^[A-Za-z0-9_.]{3,30}$/, 'Username must be 3-30 characters: letters, numbers, dots or underscores'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  email: email(),
+  username: z.string().trim().regex(/^[A-Za-z0-9_.]{3,30}$/, 'Username must be 3-30 characters: letters, numbers, dots or underscores'),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(200),
   full_name: z.string().min(1, 'Full name is required')
 });
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email format'),
+  email: email(),
   password: z.string().min(1, 'Password is required')
 });
 
 const otpSchema = z.object({
-  email: z.string().email('Invalid email format'),
+  email: email(),
   otp: z.string().length(6, 'OTP must be exactly 6 characters')
 });
 
 const emailOnlySchema = z.object({
-  email: z.string().email('Invalid email format')
+  email: email()
 });
 
 const resetPasswordSchema = z.object({
-  email: z.string().email('Invalid email format'),
+  email: email(),
   code: z.string().length(6, 'The reset code is 6 digits'),
   new_password: z.string().min(8, 'Password must be at least 8 characters').max(200)
 });

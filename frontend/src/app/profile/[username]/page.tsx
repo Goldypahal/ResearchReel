@@ -136,6 +136,14 @@ export default function ProfilePage() {
           setProfile((p) => (p ? { ...p, is_following: following, follower_count: p.follower_count + (following ? 1 : -1) } : p))
         }
         onImportPapers={profile.is_self ? () => setImportOpen(true) : undefined}
+        onProfileChange={(patch) =>
+          setProfile((p) => {
+            if (!p) return p;
+            // Blocking also ends the follow, so the follower count drops by one.
+            const droppedFollow = patch.is_blocked && p.is_following;
+            return { ...p, ...patch, follower_count: p.follower_count - (droppedFollow ? 1 : 0) };
+          })
+        }
       />
 
       <div role="tablist" className="flex items-center justify-center gap-8 md:gap-12">
@@ -156,7 +164,14 @@ export default function ProfilePage() {
       </div>
 
       <section>
-        {tab === 'posts' && (
+        {profile.is_blocked ? (
+          <EmptyState
+            className="mt-6"
+            icon={<UserX size={20} />}
+            title={`You blocked @${profile.username}`}
+            description="You won't see their posts or reels, and they can't find your profile or message you. Unblock them from the ⋯ menu."
+          />
+        ) : tab === 'posts' && (
           <PostsList
             fetcher={postsFetcher}
             empty={
@@ -170,7 +185,7 @@ export default function ProfilePage() {
             }
           />
         )}
-        {tab === 'reels' && <ReelsGrid username={profile.username} isOwn={profile.is_self} />}
+        {!profile.is_blocked && tab === 'reels' && <ReelsGrid username={profile.username} isOwn={profile.is_self} />}
         {tab === 'saved' && profile.is_self && (
           <PostsList
             fetcher={savedFetcher}

@@ -37,14 +37,16 @@ app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody =
 app.use(express.urlencoded({ extended: true }));
 
 // Apply rate limiting to all API routes
-app.use('/api', rateLimiter(150, 60));
+// Backstop across the whole API; individual actions have tighter named limits.
+app.use('/api', rateLimiter.global(600, 60));
 
 const path = require('path');
+const { requireSignedLink } = require('./utils/fileAccess');
 // Uploaded papers/media are embedded by the web app, which runs on another origin.
 app.use('/uploads', (req, res, next) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
-}, express.static(path.join(__dirname, '../public/uploads'), { dotfiles: 'deny', index: false }));
+}, requireSignedLink, express.static(path.join(__dirname, '../public/uploads'), { dotfiles: 'deny', index: false }));
 
 // Swagger Documentation setup
 const swaggerUi = require('swagger-ui-express');
@@ -134,6 +136,10 @@ app.use((req, res, next) => {
 app.use((err, req, res, next) => {
   if (err.stack) {
     logger.error(err.stack);
+  }
+  // Malformed ids/values that reach Postgres (e.g. "abc" for a uuid column) are client errors.
+  if (!Number.isInteger(err.statusCode) && ['22P02', '22007', '22008'].includes(err.code)) {
+    return sendError(res, 'Invalid identifier or value in the request.', 400, 'VALIDATION_ERROR', req);
   }
   const statusCode = Number.isInteger(err.statusCode) ? err.statusCode : 500;
   // Never leak SQL/driver details (pg error codes, column names) for server errors in production.

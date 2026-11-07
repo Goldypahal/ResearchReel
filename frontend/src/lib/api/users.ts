@@ -1,5 +1,5 @@
 import { fetchApi, fetchPage, qs } from './client';
-import type { AchievementSummary, CurrentUser, LeaderboardEntry, Post, Profile, ProfileAnalytics, UserCard } from './types';
+import type { AchievementSummary, BlockedAccount, CurrentUser, LeaderboardEntry, Post, Profile, ProfileAnalytics, UserCard } from './types';
 
 export interface UpdateProfilePayload {
   full_name?: string;
@@ -36,4 +36,10 @@ export const usersApi = {
   getFollowing: (username: string): Promise<UserCard[]> => fetchApi(`/users/${encodeURIComponent(username)}/following`),
   follow: (username: string) => fetchApi(`/users/${encodeURIComponent(username)}/follow`, { method: 'POST' }),
   unfollow: (username: string) => fetchApi(`/users/${encodeURIComponent(username)}/follow`, { method: 'DELETE' }),
+
+  block: (username: string) => fetchApi(`/users/${encodeURIComponent(username)}/block`, { method: 'POST' }),
+  unblock: (username: string) => fetchApi(`/users/${encodeURIComponent(username)}/block`, { method: 'DELETE' }),
+  mute: (username: string) => fetchApi(`/users/${encodeURIComponent(username)}/mute`, { method: 'POST' }),
+  unmute: (username: string) => fetchApi(`/users/${encodeURIComponent(username)}/mute`, { method: 'DELETE' }),
+  getBlocked: (): Promise<{ blocked: BlockedAccount[]; muted: BlockedAccount[] }> => fetchApi('/users/me/blocked'),
 };
