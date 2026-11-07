@@ -1,27 +1,27 @@
 const pool = require('../config/db');
 const { AuthorizationError, NotFoundError } = require('../utils/errors');
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Validates document access permission for a given user
  * Checks: 1. Owner, 2. Project Member via project_documents junction, 3. Public visibility
  */
 async function canAccessDocument(userId, documentId) {
-  if (!documentId) return { allowed: false, permission: null };
+  if (!documentId || !UUID_RE.test(String(documentId))) return { allowed: false, permission: null };
 
+  // A paper can be shared to several projects; the user may belong to any of them.
   const query = `
-    SELECT 
-      d.id, 
-      d.uploader_id AS owner_id, 
-      d.visibility,
-      pd.project_id,
-      pm.role as project_role
-    FROM documents d
-    LEFT JOIN project_documents pd ON pd.document_id = d.id
-    LEFT JOIN project_members pm ON pm.project_id = pd.project_id AND pm.user_id = $2
-    WHERE d.id = $1 AND (d.deleted_at IS NULL);
+    SELECT d.id, d.uploader_id AS owner_id, d.visibility,
+           (SELECT CASE WHEN bool_or(pm.role <> 'viewer') THEN 'editor' WHEN count(pm.role) > 0 THEN 'viewer' END
+              FROM project_documents pd
+              JOIN project_members pm ON pm.project_id = pd.project_id AND pm.user_id = $2
+             WHERE pd.document_id = d.id) AS project_permission
+      FROM documents d
+     WHERE d.id = $1 AND d.deleted_at IS NULL
   `;
 
-  const result = await pool.query(query, [documentId, userId]);
+  const result = await pool.query(query, [documentId, userId || null]);
   if (result.rows.length === 0) {
     return { allowed: false, permission: null };
   }
@@ -34,8 +34,8 @@ async function canAccessDocument(userId, documentId) {
   }
 
   // Project member access
-  if (row.project_role) {
-    return { allowed: true, permission: row.project_role === 'viewer' ? 'viewer' : 'editor' };
+  if (row.project_permission) {
+    return { allowed: true, permission: row.project_permission };
   }
 
   // Public document view permission

@@ -1,46 +1,128 @@
-from rank_bm25 import BM25Okapi
-import pickle
+from __future__ import annotations
+
+import logging
 import os
-from typing import List, Optional, Dict
-from ..models.chunk import Chunk
+import pickle
+import re
+import threading
+from typing import List, Optional
+
+from rank_bm25 import BM25Okapi
+
 from ..core.settings import settings
+from ..models.chunk import Chunk
+
+logger = logging.getLogger(__name__)
+
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def tokenize(text: str) -> List[str]:
+    return _TOKEN_RE.findall(text.lower())
+
 
 class BM25Index:
-    def __init__(self):
+    """
+    Keyword index over all chunks. Reads and writes are guarded by a lock because
+    ingestion runs in worker threads while queries are being answered.
+    """
+
+    def __init__(self, path: Optional[str] = None):
+        self.path = path or settings.BM25_INDEX_PATH
         self.chunks: List[Chunk] = []
-        self.bm25 = None
-        if os.path.exists(settings.BM25_INDEX_PATH):
-            self.load()
+        self.bm25: Optional[BM25Okapi] = None
+        self._lock = threading.RLock()
+        if os.path.exists(self.path):
+            try:
+                self.load()
+            except Exception as exc:  # corrupt or from an incompatible version
+                logger.error("Could not load BM25 index (%s); starting empty.", exc)
+                self.chunks, self.bm25 = [], None
+
+    def _rebuild(self) -> None:
+        self.bm25 = BM25Okapi([tokenize(c.text) for c in self.chunks]) if self.chunks else None
 
     def add_chunks(self, chunks: List[Chunk]):
-        self.chunks.extend(chunks)
-        tokenized_corpus = [c.text.split() for c in self.chunks]
-        self.bm25 = BM25Okapi(tokenized_corpus)
-        self.save()
+        with self._lock:
+            self.chunks = self.chunks + list(chunks)
+            self._rebuild()
+            self.save()
+
+    def delete_paper(self, paper_id: str) -> int:
+        with self._lock:
+            before = len(self.chunks)
+            self.chunks = [c for c in self.chunks if c.paper_id != paper_id]
+            removed = before - len(self.chunks)
+            if removed:
+                self._rebuild()
+                self.save()
+            return removed
+
+    def update_paper_metadata(self, paper_id: str, title=None, authors=None, year=None) -> None:
+        with self._lock:
+            changed = False
+            for c in self.chunks:
+                if c.paper_id != paper_id:
+                    continue
+                if title:
+                    c.title = title
+                if authors is not None:
+                    c.authors = list(authors)
+                if year:
+                    c.year = year
+                changed = True
+            if changed:
+                self.save()
+
+    def chunks_for_paper(self, paper_id: str) -> List[Chunk]:
+        with self._lock:
+            return [c for c in self.chunks if c.paper_id == paper_id]
+
+    def paper_ids(self) -> List[str]:
+        with self._lock:
+            return sorted({c.paper_id for c in self.chunks})
 
     def query(self, query: str, k: int = 20, filters: Optional[dict] = None):
-        if not self.bm25:
-            return []
-        tokenized_query = query.split()
-        doc_scores = self.bm25.get_scores(tokenized_query)
-        
-        # Apply filters if provided (basic implementation for paper_id)
-        candidate_indices = range(len(self.chunks))
-        if filters and "paper_id" in filters:
-            allowed_ids = filters["paper_id"]
-            if isinstance(allowed_ids, str): allowed_ids = [allowed_ids]
-            candidate_indices = [i for i in candidate_indices if self.chunks[i].paper_id in allowed_ids]
+        with self._lock:
+            if not self.bm25 or not self.chunks:
+                return []
+            doc_scores = self.bm25.get_scores(tokenize(query))
+            chunks = self.chunks
 
-        if not candidate_indices:
-            return []
+        candidate_indices = list(range(len(chunks)))
+        if filters:
+            for key, val in filters.items():
+                if val is None:
+                    continue
+                if key == "paper_id":
+                    allowed = {val} if isinstance(val, str) else set(val)
+                    candidate_indices = [i for i in candidate_indices if chunks[i].paper_id in allowed]
+                elif key == "year":
+                    if isinstance(val, dict):
+                        for op, op_val in val.items():
+                            if op_val is None:
+                                continue
+                            cmp = {"$gte": lambda a, b: a >= b, "$lte": lambda a, b: a <= b,
+                                   "$gt": lambda a, b: a > b, "$lt": lambda a, b: a < b}.get(op)
+                            if cmp:
+                                candidate_indices = [i for i in candidate_indices if chunks[i].year is not None and cmp(chunks[i].year, op_val)]
+                    else:
+                        candidate_indices = [i for i in candidate_indices if chunks[i].year == val]
+                elif key == "chunk_level":
+                    levels = set(val) if isinstance(val, list) else {val}
+                    candidate_indices = [i for i in candidate_indices if chunks[i].chunk_level in levels]
 
-        top_indices = sorted(candidate_indices, key=lambda i: doc_scores[i], reverse=True)[:k]
-        return [(self.chunks[i], doc_scores[i]) for i in top_indices]
+        top = sorted(candidate_indices, key=lambda i: doc_scores[i], reverse=True)[:k]
+        return [(chunks[i], doc_scores[i]) for i in top]
 
     def save(self):
-        with open(settings.BM25_INDEX_PATH, 'wb') as f:
-            pickle.dump((self.chunks, self.bm25), f)
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump((self.chunks, None), f)
+        os.replace(tmp, self.path)
 
     def load(self):
-        with open(settings.BM25_INDEX_PATH, 'rb') as f:
-            self.chunks, self.bm25 = pickle.load(f)
+        with open(self.path, "rb") as f:
+            self.chunks, _ = pickle.load(f)
+        self._rebuild()

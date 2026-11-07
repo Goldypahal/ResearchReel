@@ -11,7 +11,8 @@
     "migrate": "node-pg-migrate up",
     "migrate:create": "node-pg-migrate create",
     "seed": "node src/scripts/seed.js",
-    "lint": "node --check src/server.js"
+    "lint": "node --check src/server.js",
+    "rag:reindex": "node src/scripts/ragReindex.js"
   },
   "keywords": [],
   "author": "",

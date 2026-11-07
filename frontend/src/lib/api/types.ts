@@ -147,6 +147,8 @@ export interface Paper {
   source?: 'upload' | 'doi';
   external_url?: string | null;
   citation_count?: number | null;
+  /** State in the multi-paper search index: null when search is disabled or the paper has no PDF. */
+  rag_status?: RagStatus | null;
   created_at: string;
   uploader_username?: string;
   uploader_name?: string;
@@ -363,12 +365,46 @@ export interface CrossrefPaper {
   already_imported?: boolean;
 }
 
+export type RagStatus = 'pending' | 'indexing' | 'ready' | 'failed' | 'unsupported';
+
+export interface AiSource {
+  documentId: string;
+  title: string;
+  /** Citation number used in the answer text, e.g. [1]. */
+  number?: number;
+  page?: number | null;
+  section?: string | null;
+  quote?: string | null;
+}
+
 export interface AiMessage {
   id?: string;
   role: 'user' | 'assistant';
   content: string;
-  sources?: { documentId: string; title: string }[];
+  sources?: AiSource[];
+  notice?: string | null;
   created_at?: string;
 }
+
+export interface AiStatus {
+  configured: boolean;
+  general_chat: boolean;
+  paper_search: boolean;
+  research_tools: ResearchTool[];
+  max_papers: number;
+  daily_limit: number;
+}
+
+export type ResearchTool = 'compare' | 'review' | 'gaps' | 'contradictions' | 'timeline';
+
+export interface ResearchResult {
+  tool: ResearchTool;
+  title: string;
+  result: string;
+  papers: { id: string; title: string }[];
+  skipped: { id: string; title: string }[];
+}
+
+export interface AiPaperRef { id: string; title: string; rag_status?: RagStatus | null }
 
 export interface Paged<T> { items: T[]; nextCursor: string | null }

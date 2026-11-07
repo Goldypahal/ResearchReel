@@ -45,6 +45,8 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      RAG_SERVICE_URL: http://rag:8000
+      RAG_API_KEY: ${RAG_API_KEY:-local-rag-key}
     volumes:
       - uploads:/app/public/uploads
     ports:
@@ -54,6 +56,18 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # Multi-paper search (needs GEMINI_API_KEY to index and answer).
+  rag:
+    build: ./backend/research_rag
+    environment:
+      PORT: 8000
+      RAG_API_KEY: ${RAG_API_KEY:-local-rag-key}
+      LLM_PROVIDER: gemini
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+    volumes:
+      - rag_data:/app/data
 
   web:
     build:
@@ -71,3 +85,4 @@ volumes:
   postgres_data:
   redis_data:
   uploads:
+  rag_data:

@@ -34,3 +34,7 @@ def retry_api_call(max_attempts: int = 5, min_wait: int = 1, max_wait: int = 20)
         reraise=True,
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
+
+
+class LLMUnavailableError(Exception):
+    """The language model provider failed after retries."""

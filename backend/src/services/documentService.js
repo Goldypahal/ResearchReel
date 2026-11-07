@@ -33,7 +33,7 @@ const guessAbstract = (text) => {
 const DOC_COLUMNS = `
   d.id, d.uploader_id, COALESCE(d.title, d.file_name) AS title, d.file_name, d.file_url, d.file_type, d.mime_type,
   d.file_size, d.page_count, d.abstract, d.summary_text, d.key_points, d.authors, d.doi, d.publication_year,
-  d.journal, d.tags, d.visibility, d.status, d.source, d.external_url, d.citation_count, d.created_at, d.updated_at,
+  d.journal, d.tags, d.visibility, d.status, d.source, d.external_url, d.citation_count, d.rag_status, d.created_at, d.updated_at,
   u.username AS uploader_username, u.full_name AS uploader_name, u.profile_picture_url AS uploader_avatar_url
 `;
 

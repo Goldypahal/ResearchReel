@@ -1,84 +1,53 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from .api import routes_ingest, routes_query, routes_eval, routes_feedback
-import uvicorn
-import time
-import logging
+import os
 
-from .core.init_system import ensure_directories
+# Keep native thread pools small; this service runs in modest containers.
+for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
 
-logger = logging.getLogger("main")
+import logging  # noqa: E402
+import threading  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+
+from fastapi import Depends, FastAPI  # noqa: E402
+
+from .api import routes_feedback, routes_ingest, routes_intel, routes_query  # noqa: E402
+from .api.security import require_api_key  # noqa: E402
+from .core.init_system import ensure_directories  # noqa: E402
+from .core.settings import settings  # noqa: E402
+
+logger = logging.getLogger("research_rag")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
+async def lifespan(_app: FastAPI):
     ensure_directories()
+    from .core.indexes import bm25, chroma
+
+    logger.info("Research RAG ready: provider=%s, papers=%d", settings.provider, len(bm25.paper_ids()))
+    if settings.AUTO_INGEST:
+        from .core.auto_ingest import run_auto_ingest_background
+
+        threading.Thread(target=run_auto_ingest_background, args=(chroma, bm25), daemon=True).start()
     yield
-    # Shutdown (cleanup can be added here)
 
 
-app = FastAPI(title="Research RAG Pipeline", lifespan=lifespan)
+app = FastAPI(title="ResearchReel Research RAG", lifespan=lifespan, docs_url=None, redoc_url=None)
 
-app.include_router(routes_ingest.router, prefix="/api/v1")
-app.include_router(routes_query.router, prefix="/api/v1")
-app.include_router(routes_eval.router, prefix="/api/v1")
-app.include_router(routes_feedback.router, prefix="/api/v1")
+secured = [Depends(require_api_key)]
+app.include_router(routes_ingest.router, prefix="/api/v1", dependencies=secured)
+app.include_router(routes_query.router, prefix="/api/v1", dependencies=secured)
+app.include_router(routes_intel.router, prefix="/api/v1/intel", dependencies=secured)
+app.include_router(routes_feedback.router, prefix="/api/v1", dependencies=secured)
 
-@app.get("/api/ai/health")
-async def ai_health():
-    return {
-        "status": "UP",
-        "service": "ai-rag-service",
-        "database": "ChromaDB + BM25",
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    }
 
-@app.post("/api/ai/ask-gemini")
-async def ask_gemini_endpoint(payload: dict):
-    question = payload.get("question", "")
-    document_id = payload.get("document_id")
-    # Filters by paper_id if document_id is provided
-    filters = {"paper_id": [document_id]} if document_id else None
-    
-    try:
-        from .api.routes_query import query_service
-        result = query_service.ask(question, filters=filters)
-        
-        citations = []
-        for c in result.get("citations", []):
-            citations.append({
-                "page": c.get("page") or c.get("page_start") or 1,
-                "section": c.get("section") or c.get("label") or "General",
-                "text": c.get("quote") or c.get("text") or "..."
-            })
-            
-        return {
-            "success": True,
-            "data": {
-                "answer": result.get("answer", "No answer found."),
-                "citations": citations,
-                "latency": result.get("latency", 0.0)
-            }
-        }
-    except Exception as e:
-        import traceback
-        logger.error(f"Error in ask-gemini endpoint: {e}\n{traceback.format_exc()}")
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "message": str(e)}
-        )
+@app.get("/health")
+def health():
+    from .core.indexes import bm25
 
-# Serve UI
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+    return {"status": "ok", "provider": settings.provider, "papers": len(bm25.paper_ids())}
 
-@app.get("/")
-async def root():
-    return FileResponse("app/static/index.html")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
 
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

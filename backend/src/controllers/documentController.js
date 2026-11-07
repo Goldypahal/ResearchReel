@@ -2,6 +2,9 @@ const db = require('../config/db');
 const documentService = require('../services/documentService');
 const { DOC_COLUMNS } = require('../services/documentService');
 const storageService = require('../services/storageService');
+const ragIndexer = require('../services/rag/ragIndexer');
+
+const queueRag = (fn, id) => fn(id).catch((err) => console.error(`[rag] could not queue ${id}: ${err.message}`));
 const { canAccessDocument } = require('../authorization/documentAuthorization');
 const { sendSuccess, sendError } = require('../utils/response');
 const { parsePage, nextCursorOf, isUuid } = require('../utils/pagination');
@@ -12,6 +15,8 @@ exports.upload = async (req, res, next) => {
     const doc = await documentService.createFromUpload({ file: req.file, userId: req.user.id, fields: req.body || {} });
     // Optional automation: generate (and maybe publish) a reel for the new paper in the background.
     require('../services/reelGeneratorService').handleNewPaperUpload(doc.id, req.user.id).catch(() => {});
+    // Index it for multi-paper search and cited answers.
+    if (await queueRag(ragIndexer.enqueueIndex, doc.id)) doc.rag_status = 'pending';
     return sendSuccess(res, doc, 'Paper uploaded.', 201);
   } catch (error) {
     next(error);
@@ -95,6 +100,7 @@ exports.update = async (req, res, next) => {
         toArr(b.tags, 20) || null, ['public', 'private'].includes(b.visibility) ? b.visibility : null,
         Number.isFinite(year) ? year : null, req.params.id]
     );
+    if (b.title || b.authors || b.publication_year !== undefined) await queueRag(ragIndexer.enqueueMetadata, req.params.id);
     return sendSuccess(res, await documentService.getById(req.params.id), 'Paper updated.');
   } catch (error) {
     next(error);
@@ -110,7 +116,29 @@ exports.remove = async (req, res, next) => {
     );
     if (!r.rows.length) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
     await storageService.deleteFile(r.rows[0].storage_key);
+    await queueRag(ragIndexer.enqueueRemove, req.params.id);
     return sendSuccess(res, { id: req.params.id }, 'Paper deleted.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /documents/:id/reindex — the uploader asks for the paper to be indexed again. */
+exports.reindex = async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
+    const own = await db.query(
+      'SELECT storage_key, file_type FROM documents WHERE id = $1 AND uploader_id = $2 AND deleted_at IS NULL',
+      [req.params.id, req.user.id]
+    );
+    if (!own.rows.length) return sendError(res, 'Only the uploader can re-index this paper.', 403, 'AUTHORIZATION_ERROR', req);
+    if (!own.rows[0].storage_key || own.rows[0].file_type !== 'pdf') {
+      return sendError(res, 'Only uploaded PDFs can be indexed.', 400, 'VALIDATION_ERROR', req);
+    }
+    if (!(await ragIndexer.enqueueIndex(req.params.id))) {
+      return sendError(res, 'Paper search is not enabled on this server.', 503, 'RAG_UNAVAILABLE', req);
+    }
+    return sendSuccess(res, { id: req.params.id, rag_status: 'pending' }, 'Paper queued for indexing.');
   } catch (error) {
     next(error);
   }

@@ -1,6 +1,6 @@
 # Architecture (current)
 
-> The documents in `docs/archive/` are the original planning documents. They describe an earlier, larger design (Elasticsearch, Neo4j, Kubernetes, a Python RAG service) that is **not** what the code runs today. This page describes the real system.
+> The documents in `docs/archive/` are the original planning documents. They describe an earlier, larger design (Elasticsearch, Neo4j, Kubernetes) that is **not** what the code runs today. This page describes the real system.
 
 ## Components
 
@@ -21,10 +21,19 @@ Large uploads optionally bypass the proxy: the client fetches a 15-minute *uploa
 | Reels | `controllers/reelController.js` (feed, likes, comments), `services/reelGeneratorService.js` (scripts and rendering), `services/mediaService.js` (uploads) |
 | Media pipeline | `queues/`, `workers/videoWorker.js`, `services/videoRenderer.js`. BullMQ jobs; FFmpeg runs via `execFile` (no shell) and on-screen text is passed through files. |
 | Papers | `services/documentService.js` (PDF text extraction with pdf-parse), `controllers/doiController.js` (Crossref) |
-| AI | `services/ai/llm.js` (Gemini REST), `services/aiService.js`, `services/ai/geminiClient.js` (reel scripts), `services/ai/tts.js` (narration) |
+| AI | `services/ai/llm.js` (Gemini REST), `services/aiService.js` (questions over one or more papers, research tools), `services/rag/` (Research RAG client and indexer), `services/ai/geminiClient.js` (reel scripts), `services/ai/tts.js` (narration) |
 | Realtime | `services/socketService.js`. Socket.io with short-lived socket tokens; rooms per user, conversation and lecture; Redis pub/sub fans out events from the worker and between instances. |
 | Notifications | `services/notificationService.js` |
 | Storage | `services/storageService.js`: local disk (`UPLOAD_DIR`) or any S3-compatible bucket |
+
+**Research RAG service (`backend/research_rag/`)**: Python 3.12 + FastAPI, adapted from the Multi-Paper Research RAG System. It is optional and private (the API is its only client, authenticated with `X-API-Key`).
+
+- *Indexing*: `POST /api/v1/papers` with the PDF and ResearchReel's document ID. PyMuPDF parses it into section-aware, hierarchical chunks (section → subsection → paragraph → sentence); paragraphs are embedded into Chroma (Gemini `gemini-embedding-001`) and added to a BM25 keyword index; an LLM pass extracts methods, datasets and relations into a SQLite knowledge graph. Re-indexing an ID replaces it; `DELETE` removes it everywhere.
+- *Answering*: `POST /api/v1/query` with the question and the paper IDs to search (required). Pipeline: route planning → intent-based retrieval sizes → query decomposition → dense + BM25 retrieval fused with reciprocal rank fusion and section-aware boosts → optional Cohere rerank → grounded answer → citation check that ties each sentence to a passage (numbered `[n]` markers with page and section).
+- *Research tools*: `/api/v1/intel/{compare,review,gaps,contradictions,timeline}` over the selected papers, using the knowledge graph plus opening passages.
+- State (Chroma, BM25 pickle, SQLite graph, PDFs) lives in `/app/data` on a disk; the service runs as one process because the BM25 index is in memory.
+
+On the API side, `services/rag/ragClient.js` talks to the service and `services/rag/ragIndexer.js` + `workers/ragWorker.js` keep it in sync through the `rag-index` BullMQ queue (index on upload, metadata on edit, remove on delete; a backfill on start catches up). `documents.rag_status` tracks each paper (`pending → indexing → ready`, or `failed`/`unsupported`). `aiService.ask` checks access to every selected paper, sends only those IDs, and falls back to full-text prompting with Gemini when the service is down or a paper isn't indexed yet.
 
 **PostgreSQL**: schema in `backend/migrations/` (node-pg-migrate). All timestamps are `TIMESTAMPTZ`; the connection runs in UTC.
 
@@ -41,4 +50,4 @@ Large uploads optionally bypass the proxy: the client fetches a 15-minute *uploa
 
 ## Tests
 
-`backend/tests/` contains integration tests that hit the real HTTP API against Postgres + Redis. They cover auth flows, permissions, uploads, messaging, projects, events and moderation.
+`backend/tests/` contains integration tests that hit the real HTTP API against Postgres + Redis. They cover auth flows, permissions, uploads, messaging, projects, events, moderation and the RAG integration (against a stub service). `backend/research_rag/tests/` covers the Python service, including end-to-end API tests with deterministic test models (`LLM_PROVIDER=test`).

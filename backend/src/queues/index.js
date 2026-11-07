@@ -5,8 +5,9 @@ const { buildConnection } = require('./connection');
  * Background job queues.
  *  - media:      transcode uploaded reel videos
  *  - reel-render: render AI reel drafts into MP4s
+ *  - rag-index:  index papers in (or remove them from) the Research RAG service
  */
-const QUEUES = { MEDIA: 'media', REEL_RENDER: 'reel-render' };
+const QUEUES = { MEDIA: 'media', REEL_RENDER: 'reel-render', RAG: 'rag-index' };
 const instances = {};
 
 const getQueue = (name) => {

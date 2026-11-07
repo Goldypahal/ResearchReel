@@ -10,5 +10,6 @@ router.post('/', uploadAuth, rateLimiter(30, 3600), documentUpload.single('file'
 router.get('/:id', optionalAuth, c.get);
 router.put('/:id', authMiddleware, c.update);
 router.delete('/:id', authMiddleware, c.remove);
+router.post('/:id/reindex', authMiddleware, rateLimiter(10, 3600), c.reindex);
 
 module.exports = router;

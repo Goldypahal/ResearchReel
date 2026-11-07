@@ -1,6 +1,7 @@
 # Render Blueprint — deploy with "New > Blueprint" in the Render dashboard.
 # Creates: PostgreSQL, Key Value (Redis), the API (Docker, with a persistent disk
-# for uploads) and the Next.js web app. Values marked `sync: false` are asked for
+# for uploads), the Research RAG service (private, with a disk for its index)
+# and the Next.js web app. Values marked `sync: false` are asked for
 # when you create the Blueprint. See DEPLOYMENT.md for the step-by-step guide.
 
 databases:
@@ -64,6 +65,44 @@ services:
         sync: false # optional: enables AI answers, summaries, scripts and narration
       - key: CROSSREF_MAILTO
         sync: false # optional: contact email sent to Crossref for DOI lookups
+      # Multi-paper search with cited answers and research tools (see the rag service below).
+      - key: RAG_SERVICE_URL
+        fromService:
+          type: pserv
+          name: researchreel-rag
+          property: hostport
+      - key: RAG_API_KEY
+        fromService:
+          type: pserv
+          name: researchreel-rag
+          envVarKey: RAG_API_KEY
+
+  # Research RAG service (Python/FastAPI): indexes every uploaded PDF and answers
+  # questions across several papers with page citations. Private: only the API can reach it.
+  # Needs a Gemini key; without one it starts but cannot index or answer.
+  - type: pserv
+    name: researchreel-rag
+    runtime: docker
+    dockerContext: ./backend/research_rag
+    dockerfilePath: ./backend/research_rag/Dockerfile
+    plan: standard # 2 GB RAM; the vector index and PDF parsing need more than 512 MB
+    disk:
+      name: rag-data
+      mountPath: /app/data
+      sizeGB: 5
+    envVars:
+      - key: RAG_API_KEY
+        generateValue: true
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false # the same Gemini key as the API
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001 # changing this needs a full re-index (npm run rag:reindex -- --all)
+      - key: COHERE_API_KEY
+        sync: false # optional: better passage ranking
 
   # Next.js web app. Proxies /api, /uploads and websockets to the API over the
   # private network, so the browser only ever talks to this domain.

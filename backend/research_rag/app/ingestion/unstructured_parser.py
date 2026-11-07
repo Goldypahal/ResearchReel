@@ -5,12 +5,12 @@ import hashlib
 from typing import List, Optional
 from unstructured.partition.pdf import partition_pdf
 from .base_parser import BasePaperParser
+from .headings import match_heading
 from .figure_extractor import FigureExtractor
 from ..models.paper import ParsedElement, Paper
 from ..core.logging import logger
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
-HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,5})\s+(.+?)\s*$")
 
 class UnstructuredPaperParser(BasePaperParser):
     def __init__(
@@ -77,10 +77,10 @@ class UnstructuredPaperParser(BasePaperParser):
             page = getattr(metadata, "page_number", None) if metadata else None
 
             # Detect heading
-            m = HEADING_RE.match(text)
+            m = match_heading(text)
             if m:
-                heading_number = m.group(1)
-                heading_title = m.group(2).strip()
+                heading_number = m[0]
+                heading_title = m[1]
                 level = heading_number.count(".") + 1
                 full_heading = f"{heading_number} {heading_title}"
                 

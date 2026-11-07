@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Minimal, safe Markdown renderer for AI answers (no raw HTML is ever injected).
- * Supports headings, bold, italics, inline code, code blocks, bullet/numbered lists and links.
+ * Supports headings, bold, italics, inline code, code blocks, bullet/numbered lists, tables and links.
  */
 const inline = (text: string, keyBase: string): React.ReactNode[] => {
   const out: React.ReactNode[] = [];
@@ -38,6 +38,27 @@ export default function Markdown({ text }: { text: string }) {
       blocks.push(<pre key={key++} className="p-3 rounded-lg bg-black/40 overflow-x-auto text-xs"><code>{code.join('\n')}</code></pre>);
       continue;
     }
+    // GitHub-style table: a header row, a |---|---| separator, then rows.
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+      const cells = (row: string) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+      const header = cells(line);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
+      blocks.push(
+        <div key={key++} className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead><tr>{header.map((c, j) => <th key={j} className="text-left font-semibold px-2 py-1.5 border-b border-[var(--border)] align-top">{inline(c, `th${key}-${j}`)}</th>)}</tr></thead>
+            <tbody>{rows.map((r, ri) => (
+              <tr key={ri} className="border-b border-[var(--border)] last:border-0">
+                {header.map((_, j) => <td key={j} className="px-2 py-1.5 align-top">{inline(r[j] || '', `td${key}-${ri}-${j}`)}</td>)}
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
     const h = /^(#{1,4})\s+(.*)$/.exec(line);
     if (h) { blocks.push(<p key={key++} className="font-bold mt-2">{inline(h[2], `h${key}`)}</p>); i++; continue; }
     if (/^\s*([-*•]|\d+[.)])\s+/.test(line)) {
@@ -50,7 +71,8 @@ export default function Markdown({ text }: { text: string }) {
     }
     if (!line.trim()) { i++; continue; }
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*([-*•]|\d+[.)])\s+)/.test(lines[i])) para.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*\||\s*([-*•]|\d+[.)])\s+)/.test(lines[i])) para.push(lines[i++]);
+    if (!para.length) para.push(lines[i++]);
     blocks.push(<p key={key++}>{inline(para.join(' '), `p${key}`)}</p>);
   }
   return <div className="space-y-2 text-sm leading-relaxed break-words">{blocks}</div>;

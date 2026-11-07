@@ -8,7 +8,8 @@ A social platform for research. People share findings as posts, papers and short
 - **Feed**: posts with text, images or a PDF paper; likes, comments, bookmarks, #tags and @mentions; "Following" and "Everyone" feeds; 24-hour stories
 - **Reels**: vertical video feed; upload your own video, or generate an explainer reel from a paper (script → editable scenes → rendered MP4 with optional AI narration)
 - **Library**: upload PDFs (text is extracted for search and AI), or import publications by DOI or ORCID via Crossref
-- **AI assistant** (optional, Gemini): ask questions grounded in a paper's full text, summaries, conversation history
+- **AI assistant** (optional, Gemini): ask questions about up to ten papers at once, with answers that cite the page each point comes from; summaries; conversation history
+- **Research tools** (with the Research RAG service): compare papers, draft a literature review, find research gaps and contradictions, build a timeline
 - **Messages**: direct messages with live delivery, unread counts and typing indicators
 - **Notifications**: follows, likes, comments, mentions, project invites, lectures, reel processing, all live
 - **Projects**: members and roles, drag-and-drop task boards, shared papers; a "My tasks" board across projects
@@ -24,8 +25,12 @@ Browser ──► Next.js web app (frontend/) ──proxy /api, /uploads, /socke
 Large uploads (optional) ─────────── direct to API with upload token ──────────┤  ├─ Redis (sessions, rate limits, jobs, realtime)
                                                                                │  ├─ BullMQ worker + FFmpeg (reels)
                                                                                │  ├─ Disk or S3-compatible storage (files)
-                                                                               │  └─ Gemini API (optional AI)
+                                                                               │  ├─ Gemini API (optional AI)
+                                                                               │  └─ Research RAG service (backend/research_rag, private)
+                                                                               │       Python/FastAPI · Chroma + BM25 hybrid search · knowledge graph
 ```
+
+Every uploaded PDF is sent to the Research RAG service in the background and indexed under its document ID. Questions about papers are answered from the most relevant passages, with page citations; if the service is unavailable the API falls back to sending the papers' full text to Gemini. Access control stays in the API: the service only ever searches the paper IDs the API passes.
 
 The browser only talks to the web app's domain; the web server proxies API calls, files and websockets to the API. This keeps auth cookies first-party and lets the API run on a private network. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -45,6 +50,15 @@ npm run dev                     # API on http://localhost:5000
 cd frontend
 npm install
 npm run dev                     # web app on http://localhost:3000
+```
+
+Optional: multi-paper search (needs Python 3.12 and a Gemini key):
+
+```bash
+cd backend/research_rag
+pip install -r requirements.txt
+RAG_API_KEY=dev-key GEMINI_API_KEY=... uvicorn app.main:app --port 8000
+# then in backend/.env: RAG_SERVICE_URL=http://localhost:8000 and RAG_API_KEY=dev-key
 ```
 
 Open http://localhost:3000 and create an account. Without SMTP configured, the verification code is printed in the backend console. To skip email verification locally, set `REQUIRE_EMAIL_VERIFICATION=false` in `backend/.env`.
@@ -68,6 +82,8 @@ docker compose up --build
 ```bash
 cd backend && npm test          # integration tests; needs Postgres + Redis
 cd frontend && npm run lint && npm run build
+cd backend/research_rag && pip install -r requirements-dev.txt \
+  && LLM_PROVIDER=test PYTHONPATH=. pytest tests/unit tests/integration && PYTHONPATH=. pytest tests/api
 ```
 
 Backend tests create a throwaway `researchreel_test` database. Point them elsewhere with `TEST_DATABASE_URL` and `TEST_REDIS_URL`. CI runs everything on every push (`.github/workflows/ci.yml`).
@@ -86,7 +102,8 @@ All backend settings are documented in [`backend/.env.example`](backend/.env.exa
 | `FRONTEND_URL` | API | Public URL of the web app (CORS, email links) |
 | `SMTP_*`, `EMAIL_FROM` | API | Sending verification codes and reset links |
 | `REQUIRE_EMAIL_VERIFICATION` | API | Set `false` to allow sign-up without email |
-| `GEMINI_API_KEY` | API | Turns on AI features (optional) |
+| `GEMINI_API_KEY` | API, RAG | Turns on AI features (optional) |
+| `RAG_SERVICE_URL`, `RAG_API_KEY` | API | Connects the Research RAG service (optional) |
 | `S3_*` | API | Store files in S3/R2 instead of local disk (optional) |
 | `BACKEND_URL` / `BACKEND_HOSTPORT` | Web (build) | Where the web app proxies the API |
 | `NEXT_PUBLIC_UPLOAD_URL` | Web (build) | Public API URL for direct large uploads (recommended) |
@@ -98,7 +115,7 @@ backend/
   src/            Express app: routes → controllers → services; socket.io; BullMQ worker
   migrations/     node-pg-migrate schema migrations (run automatically in Docker)
   tests/          integration tests (Postgres + Redis)
-  research_rag/   experimental Python RAG service (not used by the app or deployment)
+  research_rag/   Research RAG service (Python/FastAPI): paper indexing, cited answers, research tools
 frontend/
   src/app/        Next.js App Router pages
   src/components/ UI components

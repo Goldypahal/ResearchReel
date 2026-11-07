@@ -10,6 +10,7 @@ router.get('/status', aiController.status);
 router.post('/summarize', authMiddleware, aiLimiter, aiController.summarizeDocument);
 router.post('/ask', authMiddleware, aiLimiter, aiController.ask);
 router.post('/ask-gemini', authMiddleware, aiLimiter, aiController.ask);
+router.post('/research', authMiddleware, rateLimiter(10, 60), aiController.research);
 router.get('/conversations', authMiddleware, aiController.listConversations);
 router.get('/conversations/:id', authMiddleware, aiController.getConversation);
 router.delete('/conversations/:id', authMiddleware, aiController.deleteConversation);

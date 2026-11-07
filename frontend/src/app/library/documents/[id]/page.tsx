@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { Bot, Download, ExternalLink, Sparkles, Trash2, Film, Pencil, Lock, Globe, Loader2, Share2 } from 'lucide-react';
+import { Bot, Download, ExternalLink, Sparkles, Trash2, Film, Pencil, Lock, Globe, Loader2, Share2, RefreshCw } from 'lucide-react';
+import { RagBadge } from '@/components/ai/RagBadge';
 import { aiApi, documentsApi, errorMessage, type Paper } from '@/lib/api';
 import { Spinner, ErrorState, Modal, inputClass, primaryBtn, secondaryBtn, dangerBtn, Avatar } from '@/components/common';
 import { useAuth } from '@/context/AuthContext';
@@ -26,6 +27,17 @@ export default function PaperPage() {
     setForm({ title: p.title, abstract: p.abstract || '', authors: (p.authors || []).join(', '), doi: p.doi || '', journal: p.journal || '', tags: (p.tags || []).join(', '), visibility: p.visibility || 'public' });
   }).catch((e) => setError(errorMessage(e)));
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // While the paper is being indexed for search, refresh its status.
+  const ragStatus = paper?.rag_status;
+  useEffect(() => {
+    if (ragStatus !== 'pending' && ragStatus !== 'indexing') return;
+    const t = setInterval(() => {
+      documentsApi.get(id).then((p) => setPaper((cur) => (cur ? { ...cur, rag_status: p.rag_status } : cur))).catch(() => {});
+    }, 5000);
+    return () => clearInterval(t);
+  }, [id, ragStatus]);
+  const [reindexing, setReindexing] = useState(false);
 
   if (error) return <ErrorState message={error} />;
   if (!paper) return <Spinner />;
@@ -54,6 +66,16 @@ export default function PaperPage() {
       setEditing(false);
       toast({ title: 'Paper updated', variant: 'success' });
     } catch (err) { toast({ title: 'Could not save', description: errorMessage(err), variant: 'destructive' }); }
+  };
+
+  const reindex = async () => {
+    setReindexing(true);
+    try {
+      const r = await documentsApi.reindex(paper.id);
+      setPaper({ ...paper, rag_status: r.rag_status });
+      toast({ title: 'Indexing again', description: 'This usually takes under a minute.' });
+    } catch (err) { toast({ title: 'Could not re-index', description: errorMessage(err), variant: 'destructive' }); }
+    finally { setReindexing(false); }
   };
 
   const remove = async () => {
@@ -88,6 +110,7 @@ export default function PaperPage() {
 
         <div className="flex flex-wrap gap-2">
           <Link href={`/ai/ask?doc=${paper.id}`} className={primaryBtn}><Bot size={15} /> Ask AI about this paper</Link>
+          {paper.rag_status === 'ready' && <Link href={`/ai/research?docs=${paper.id}`} className={secondaryBtn}><Sparkles size={15} /> Research tools</Link>}
           {paper.file_url && <a href={paper.file_url} download className={secondaryBtn}><Download size={15} /> Download PDF</a>}
           {paper.external_url && <a href={paper.external_url} target="_blank" rel="noopener noreferrer" className={secondaryBtn}><ExternalLink size={15} /> Publisher page</a>}
           <button onClick={share} className={secondaryBtn}><Share2 size={15} /> Share</button>
@@ -129,6 +152,26 @@ export default function PaperPage() {
             </button>
           )}
         </section>
+
+        {paper.rag_status && (
+          <section className="rounded-2xl border border-[var(--border)] p-4 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-bold text-sm">Paper search</h2>
+              <RagBadge status={paper.rag_status} />
+            </div>
+            <p className="text-xs text-zinc-500">
+              {paper.rag_status === 'ready' ? 'Answers about this paper cite the page they come from, and it can be used with other papers in the research tools.'
+                : paper.rag_status === 'unsupported' ? 'This PDF has no readable text (it may be scanned images), so answers use the paper’s abstract and metadata only.'
+                  : paper.rag_status === 'failed' ? 'Indexing did not finish. Questions still work using the paper’s full text.'
+                    : 'Indexing the paper for cited answers. You can already ask questions.'}
+            </p>
+            {isOwner && (paper.rag_status === 'failed' || paper.rag_status === 'unsupported') && (
+              <button onClick={reindex} disabled={reindexing} className={`${secondaryBtn} w-full`}>
+                {reindexing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Try indexing again
+              </button>
+            )}
+          </section>
+        )}
 
         {paper.uploader_username && (
           <section className="rounded-2xl border border-[var(--border)] p-4 flex items-center gap-3">

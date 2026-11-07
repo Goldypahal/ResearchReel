@@ -1,0 +1,8 @@
+# Extra packages for fully local mode (LLM_PROVIDER=ollama): local embeddings,
+# cross-encoder reranking, semantic chunking and the Unstructured PDF parser.
+-r requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+langchain-community
+sentence-transformers
+unstructured[pdf]
+pandas

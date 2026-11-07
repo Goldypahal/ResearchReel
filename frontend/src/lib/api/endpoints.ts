@@ -98,6 +98,7 @@ export const documentsApi = {
   upload: (form: FormData, onProgress?: (f: number) => void) => uploadWithProgress<T.Paper>('/documents', form, onProgress),
   update: (id: string, body: Partial<T.Paper>) => fetchApi<T.Paper>(`/documents/${id}`, { method: 'PUT', body }),
   remove: (id: string) => fetchApi(`/documents/${id}`, { method: 'DELETE' }),
+  reindex: (id: string) => fetchApi<{ id: string; rag_status: T.RagStatus }>(`/documents/${id}/reindex`, { method: 'POST' }),
 };
 
 export const doiApi = {
@@ -107,14 +108,16 @@ export const doiApi = {
 };
 
 export const aiApi = {
-  status: () => fetchApi<{ configured: boolean; daily_limit: number }>('/ai/status'),
-  ask: (question: string, opts: { documentId?: string | null; conversationId?: string | null } = {}) =>
-    fetchApi<{ answer: string; sources: { documentId: string; title: string }[]; conversation_id: string }>('/ai/ask', {
-      method: 'POST', body: { question, document_id: opts.documentId || undefined, conversation_id: opts.conversationId || undefined },
+  status: () => fetchApi<T.AiStatus>('/ai/status'),
+  ask: (question: string, opts: { documentIds?: string[]; conversationId?: string | null } = {}) =>
+    fetchApi<{ answer: string; sources: T.AiSource[]; notice?: string | null; mode?: 'rag' | 'full_text' | 'general'; conversation_id: string }>('/ai/ask', {
+      method: 'POST', body: { question, document_ids: opts.documentIds?.length ? opts.documentIds : undefined, conversation_id: opts.conversationId || undefined },
     }),
+  research: (tool: T.ResearchTool, documentIds: string[]) =>
+    fetchApi<T.ResearchResult>('/ai/research', { method: 'POST', body: { tool, document_ids: documentIds } }),
   summarize: (documentId: string, force = false) => fetchApi<{ abstract: string; key_points: string[] }>('/ai/summarize', { method: 'POST', body: { document_id: documentId, force } }),
-  conversations: () => fetchApi<{ id: string; title: string; document_id: string | null; document_title: string | null; updated_at: string }[]>('/ai/conversations'),
-  conversation: (id: string) => fetchApi<{ id: string; title: string; document_id: string | null; document_title: string | null; messages: T.AiMessage[] }>(`/ai/conversations/${id}`),
+  conversations: () => fetchApi<{ id: string; title: string; document_id: string | null; document_ids?: string[]; document_title: string | null; updated_at: string }[]>('/ai/conversations'),
+  conversation: (id: string) => fetchApi<{ id: string; title: string; document_id: string | null; document_title: string | null; papers?: T.AiPaperRef[]; messages: T.AiMessage[] }>(`/ai/conversations/${id}`),
   deleteConversation: (id: string) => fetchApi(`/ai/conversations/${id}`, { method: 'DELETE' }),
   recommendations: (q?: string) => fetchApi<T.Paper[]>(`/ai/recommendations${qs({ q })}`),
 };
