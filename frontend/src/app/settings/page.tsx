@@ -2,7 +2,10 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { User as UserIcon, Shield, Palette, BadgeCheck, Trash2, Loader2, Monitor, Smartphone } from 'lucide-react';
+import { User as UserIcon, Shield, Palette, BadgeCheck, Trash2, Loader2, Monitor, Smartphone, Ban, Bell } from 'lucide-react';
+import NotificationSettings from '@/components/settings/NotificationSettings';
+import { useSearchParams } from 'next/navigation';
+import PrivacySettings from '@/components/settings/PrivacySettings';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { authApi, usersApi, errorMessage } from '@/lib/api';
@@ -10,7 +13,8 @@ import { Modal, inputClass, primaryBtn, secondaryBtn, dangerBtn, VerifiedBadge }
 import { toast } from '@/components/ui/use-toast';
 import { timeAgo } from '@/lib/format';
 
-type Tab = 'account' | 'verification' | 'security' | 'appearance';
+type Tab = 'account' | 'verification' | 'notifications' | 'security' | 'privacy' | 'appearance';
+const TABS: Tab[] = ['account', 'verification', 'notifications', 'security', 'privacy', 'appearance'];
 
 function AccountTab() {
   const { user, updateUser } = useAuth();
@@ -156,11 +160,15 @@ function AppearanceTab() {
   );
 }
 
-export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>('account');
+function SettingsInner() {
+  const params = useSearchParams();
+  const initial = params.get('tab') as Tab | null;
+  const [tab, setTab] = useState<Tab>(initial && TABS.includes(initial) ? initial : 'account');
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: 'account', label: 'Profile', icon: UserIcon }, { id: 'verification', label: 'Verification', icon: BadgeCheck },
-    { id: 'security', label: 'Security', icon: Shield }, { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'security', label: 'Security', icon: Shield }, { id: 'privacy', label: 'Blocked & muted', icon: Ban },
+    { id: 'appearance', label: 'Appearance', icon: Palette },
   ];
   return (
     <div className="max-w-4xl mx-auto grid md:grid-cols-[200px_1fr] gap-8">
@@ -175,8 +183,14 @@ export default function SettingsPage() {
         {tab === 'account' && <AccountTab />}
         {tab === 'verification' && <VerificationTab />}
         {tab === 'security' && <SecurityTab />}
+        {tab === 'notifications' && <NotificationSettings />}
+        {tab === 'privacy' && <PrivacySettings />}
         {tab === 'appearance' && <AppearanceTab />}
       </div>
     </div>
   );
+}
+
+export default function SettingsPage() {
+  return <React.Suspense fallback={null}><SettingsInner /></React.Suspense>;
 }

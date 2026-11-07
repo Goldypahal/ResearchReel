@@ -1,5 +1,7 @@
 const db = require('../config/db');
 const { emitToUser } = require('./socketService');
+const { CATEGORY_FOR_TYPE } = require('./emailPreferences');
+const { QUEUES, addJob } = require('../queues');
 
 /**
  * Creates an in-app notification and pushes it to the recipient in real time.
@@ -9,6 +11,7 @@ const { emitToUser } = require('./socketService');
 const notify = async ({ userId, actorId, type, entityType = null, entityId = null, message = null }) => {
   if (!userId || (actorId && userId === actorId)) return null;
   try {
+    if (actorId && (await require('./blockService').isBlockedEitherWay(userId, actorId))) return null;
     const res = await db.query(
       `INSERT INTO notifications (user_id, actor_id, type, entity_type, entity_id, message)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -27,6 +30,11 @@ const notify = async ({ userId, actorId, type, entityType = null, entityId = nul
       actor_avatar_url: actor?.profile_picture_url || null
     };
     emitToUser(userId, 'notification', payload);
+    // Email (if this kind of notification can be emailed); the worker checks the user's preferences.
+    if (CATEGORY_FOR_TYPE[type]) {
+      addJob(QUEUES.EMAIL, { kind: 'notification', notificationId: row.id }, { attempts: 3, removeOnComplete: true, removeOnFail: 200 })
+        .catch((err) => console.error('[notifications] could not queue email:', err.message));
+    }
     return payload;
   } catch (err) {
     console.error('[notifications] Failed to create notification:', err.message);

@@ -138,6 +138,9 @@ function ChatView({ conversation, onBack, onSent }: { conversation: Conversation
         {typing && <p className="text-xs text-zinc-500 italic">{typing} is typing…</p>}
         <div ref={endRef} />
       </div>
+      {conversation.is_blocked ? (
+        <p className="p-4 border-t border-[var(--border)] text-center text-sm text-zinc-500">You can’t send messages in this conversation.</p>
+      ) : (
       <form onSubmit={send} className="p-3 border-t border-[var(--border)] flex gap-2">
         <input value={text} onChange={(e) => onType(e.target.value)} maxLength={5000} placeholder="Message…" aria-label="Message"
           className="flex-1 px-4 py-2.5 rounded-full bg-[var(--foreground)]/5 border border-[var(--border)] text-sm focus:outline-none focus:border-indigo-500/60" />
@@ -145,6 +148,7 @@ function ChatView({ conversation, onBack, onSent }: { conversation: Conversation
           {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
         </button>
       </form>
+      )}
     </div>
   );
 }

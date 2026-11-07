@@ -8,6 +8,7 @@ const mediaController = require('../controllers/mediaController');
 const { authMiddleware, uploadAuth } = require('../middleware/authMiddleware');
 const rateLimiter = require('../middleware/rateLimiter');
 const { UPLOAD_DIR } = require('../services/storageService');
+const { scanUploads } = require('../middleware/virusScan');
 
 // Staging lives on the same disk the worker reads from (the API process runs the worker by default).
 const stagingDir = path.join(UPLOAD_DIR, '.staging');
@@ -29,6 +30,6 @@ const upload = multer({
   }
 });
 
-router.post('/upload', uploadAuth, rateLimiter(20, 3600), upload.single('video'), mediaController.uploadVideo);
+router.post('/upload', uploadAuth, rateLimiter(20, 3600), upload.single('video'), scanUploads, mediaController.uploadVideo);
 
 module.exports = router;

@@ -46,6 +46,8 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       RAG_SERVICE_URL: http://rag:8000
+      # Malware scanning: run `docker compose --profile scan up` and set CLAMAV_HOST=clamav in .env
+      CLAMAV_HOST: ${CLAMAV_HOST:-}
       RAG_API_KEY: ${RAG_API_KEY:-local-rag-key}
     volumes:
       - uploads:/app/public/uploads
@@ -56,6 +58,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # Optional malware scanning of uploads (about 1.5 GB of RAM for the signature database).
+  clamav:
+    image: clamav/clamav:stable
+    profiles: ["scan"]
+    restart: unless-stopped
 
   # Multi-paper search (needs GEMINI_API_KEY to index and answer).
   rag:

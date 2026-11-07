@@ -44,8 +44,8 @@ function ForgotInner() {
     return (
       <form onSubmit={reset} className="space-y-4">
         <h1 className="text-3xl font-bold">Choose a new password</h1>
-        <input type="password" className={field} placeholder="New password (8+ characters)" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-        <input type="password" className={field} placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
+        <input type="password" aria-label="New password" className={field} placeholder="New password (8+ characters)" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+        <input type="password" aria-label="Confirm new password" className={field} placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
         {error && <p className="text-xs text-red-400" role="alert">{error}</p>}
         <button className={btn} disabled={busy || !password || !confirm}>{busy && <Loader2 size={16} className="animate-spin" />}Update password</button>
       </form>
@@ -60,7 +60,7 @@ function ForgotInner() {
         <p className="text-sm text-emerald-400" role="status">{done}</p>
       ) : (
         <>
-          <input type="email" className={field} placeholder="you@university.edu" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+          <input type="email" aria-label="Email address" className={field} placeholder="you@university.edu" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
           {error && <p className="text-xs text-red-400" role="alert">{error}</p>}
           <button className={btn} disabled={busy || !email}>{busy && <Loader2 size={16} className="animate-spin" />}Send reset link</button>
         </>

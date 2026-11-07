@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { notBlocked, notMuted } = require('../services/blockService');
 const storageService = require('../services/storageService');
 const { moderateText } = require('../utils/moderator');
 const { sendSuccess, sendError } = require('../utils/response');
@@ -20,6 +21,7 @@ exports.list = async (req, res, next) => {
                    ELSE EXISTS (SELECT 1 FROM story_views sv WHERE sv.story_id = s.id AND sv.user_id = $1::uuid) END AS viewed
          FROM stories s JOIN users u ON u.id = s.author_id AND u.is_deleted IS NOT TRUE
         WHERE s.expires_at > NOW()
+          AND ${notBlocked('$1::uuid', 's.author_id')} AND ${notMuted('$1::uuid', 's.author_id')}
           AND ($1::uuid IS NULL OR s.author_id = $1::uuid
                OR s.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1::uuid))
         ORDER BY (s.author_id = $1::uuid) DESC, s.created_at ASC

@@ -22,7 +22,7 @@ class AuthError extends Error {
 const USER_PUBLIC_COLUMNS = `
   id, email, username, full_name, bio, profile_picture_url, verification_status,
   role, subscription_tier, email_verified, institution, website, research_interests,
-  orcid_id, created_at
+  orcid_id, timezone, created_at
 `;
 
 /** Strips secrets and normalises a user row for API responses. */
@@ -44,6 +44,7 @@ const sanitizeUser = (u) => {
     website: u.website || null,
     research_interests: u.research_interests || [],
     orcid_id: u.orcid_id || null,
+    timezone: u.timezone || null,
     created_at: u.created_at
   };
 };
@@ -72,7 +73,7 @@ const createTokenPair = async (userData, reqInfo = {}) => {
     expiresIn: process.env.JWT_REFRESH_TOKEN_EXPIRES_IN || '30d'
   });
 
-  await sessionRepository.createSession({
+  const session = await sessionRepository.createSession({
     userId: userData.id,
     sid,
     refreshToken,
@@ -82,7 +83,7 @@ const createTokenPair = async (userData, reqInfo = {}) => {
     expiresAt
   });
 
-  return { accessToken, refreshToken, sid };
+  return { accessToken, refreshToken, sid, sessionId: session?.id };
 };
 
 const issueOtp = async (email) => {
@@ -221,6 +222,8 @@ const login = async ({ email, password, reqInfo }) => {
   return { user: sanitizeUser(user), accessToken, refreshToken };
 };
 
+const REFRESH_REUSE_GRACE_SECONDS = 30;
+
 const refreshTokens = async (token, reqInfo) => {
   if (!token) throw new AuthError('Refresh token required', 401, 'AUTHENTICATION_ERROR');
 
@@ -237,7 +240,16 @@ const refreshTokens = async (token, reqInfo) => {
   const { id: userId, sid } = decoded;
 
   const dbSession = await sessionRepository.findActiveSession(token);
-  if (!dbSession) throw new AuthError('Session expired. Please sign in again.', 401, 'AUTHENTICATION_ERROR');
+  if (!dbSession) {
+    // A refresh token that was already exchanged is being used again: someone else has a copy.
+    // Two tabs refreshing at the same moment look alike, so allow a short grace window.
+    const rotated = await sessionRepository.findRotatedSession(token);
+    if (rotated && rotated.seconds_since_rotation > REFRESH_REUSE_GRACE_SECONDS) {
+      const revoked = await sessionRepository.revokeSuccessors(rotated.id);
+      if (revoked) console.warn(`[auth] refresh token reuse for user ${rotated.user_id}; ${revoked} session(s) revoked`);
+    }
+    throw new AuthError('Session expired. Please sign in again.', 401, 'AUTHENTICATION_ERROR');
+  }
 
   if (sid) await redisClient.del(`session:${userId}:${sid}`);
 
@@ -248,9 +260,9 @@ const refreshTokens = async (token, reqInfo) => {
     throw new AuthError('Session expired. Please sign in again.', 401, 'AUTHENTICATION_ERROR');
   }
 
-  // Revoke the old DB session row; createTokenPair records the new one.
-  await sessionRepository.revokeSession(dbSession.id);
-  const { accessToken, refreshToken } = await createTokenPair(user, reqInfo);
+  // Retire the old session row and link it to its replacement.
+  const { accessToken, refreshToken, sessionId } = await createTokenPair(user, reqInfo);
+  await sessionRepository.markRotated(dbSession.id, sessionId);
   return { user: sanitizeUser(user), accessToken, refreshToken };
 };
 

@@ -7,12 +7,24 @@ const sessionRepository = require('../repositories/sessionRepository');
 const { notify, retract } = require('../services/notificationService');
 const { sendSuccess, sendError } = require('../utils/response');
 const { parsePage, nextCursorOf } = require('../utils/pagination');
+const blockService = require('../services/blockService');
+const { notBlocked } = blockService;
 
 exports.getProfile = async (req, res, next) => {
   try {
     const profile = await userRepository.findByUsername(req.params.username, req.user?.id || null);
-    if (!profile) return sendError(res, 'User not found.', 404, 'NOT_FOUND', req);
-    return sendSuccess(res, { ...profile, is_self: req.user?.id === profile.id }, 'Profile fetched.');
+    // Someone who blocked you looks like they don't exist.
+    if (!profile || profile.blocked_viewer) return sendError(res, 'User not found.', 404, 'NOT_FOUND', req);
+    const { blocked_viewer, ...rest } = profile;
+    if (rest.is_blocked) {
+      // You blocked them: show only enough to recognise and unblock the account.
+      return sendSuccess(res, {
+        id: rest.id, username: rest.username, full_name: rest.full_name, avatar_url: rest.avatar_url,
+        verification_status: rest.verification_status, is_blocked: true, is_muted: rest.is_muted, is_self: false,
+        followers_count: 0, following_count: 0, post_count: 0, reel_count: 0, paper_count: 0, is_following: false, follows_you: false
+      }, 'Profile fetched.');
+    }
+    return sendSuccess(res, { ...rest, is_self: req.user?.id === rest.id }, 'Profile fetched.');
   } catch (error) {
     next(error);
   }
@@ -123,6 +135,9 @@ exports.follow = async (req, res, next) => {
   try {
     const target = await resolveUser(req.params.username);
     if (!target) return sendError(res, 'User not found.', 404, 'NOT_FOUND', req);
+    if (await blockService.isBlockedEitherWay(req.user.id, target.id)) {
+      return sendError(res, "You can't follow this account.", 403, 'BLOCKED', req);
+    }
     if (target.id === req.user.id) return sendError(res, 'You cannot follow yourself.', 400, 'VALIDATION_ERROR', req);
     const ins = await db.query(
       'INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING 1',
@@ -166,7 +181,7 @@ const listFollows = (direction) => async (req, res, next) => {
               CASE WHEN $2::uuid IS NULL THEN FALSE
                    ELSE EXISTS (SELECT 1 FROM follows x WHERE x.follower_id = $2::uuid AND x.following_id = u.id) END AS is_following
          FROM follows f JOIN users u ON u.id = ${joinCol}
-        WHERE ${whereCol} = $1 AND u.is_deleted IS NOT TRUE ${cursorSql}
+        WHERE ${whereCol} = $1 AND u.is_deleted IS NOT TRUE AND ${notBlocked('$2::uuid', 'u.id')} ${cursorSql}
         ORDER BY f.created_at DESC
         LIMIT $3`,
       params
@@ -177,8 +192,6 @@ const listFollows = (direction) => async (req, res, next) => {
   }
 };
 
-exports.getFollowers = listFollows('followers');
-exports.getFollowing = listFollows('following');
 
 /** People you may know: shared interests and friends-of-friends, excluding people already followed. */
 exports.getSuggestions = async (req, res, next) => {
@@ -199,11 +212,44 @@ exports.getSuggestions = async (req, res, next) => {
         WHERE u.is_deleted IS NOT TRUE AND u.email_verified IS TRUE
           AND ($1::uuid IS NULL OR u.id <> $1::uuid)
           AND ($1::uuid IS NULL OR NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1::uuid AND f.following_id = u.id))
+          AND ${notBlocked('$1::uuid', 'u.id')}
         ORDER BY mutual_count DESC, shared_interests DESC, followers_count DESC, u.created_at DESC
         LIMIT $2`,
       [viewer, limit]
     );
     return sendSuccess(res, r.rows, 'Suggested researchers.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** A profile's follower list hides accounts the viewer is blocked with; the profile itself 404s if they blocked you. */
+const guardBlockedTarget = async (req, res) => {
+  if (!req.user) return true;
+  const target = await resolveUser(req.params.username);
+  if (target && (await blockService.isBlockedEitherWay(req.user.id, target.id))) {
+    const r = await db.query('SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [target.id, req.user.id]);
+    if (r.rows.length) { sendError(res, 'User not found.', 404, 'NOT_FOUND', req); return false; }
+  }
+  return true;
+};
+exports.getFollowers = async (req, res, next) => { try { if (await guardBlockedTarget(req, res)) return listFollows('followers')(req, res, next); } catch (e) { next(e); } };
+exports.getFollowing = async (req, res, next) => { try { if (await guardBlockedTarget(req, res)) return listFollows('following')(req, res, next); } catch (e) { next(e); } };
+
+const blockAction = (fn, message) => async (req, res, next) => {
+  try {
+    return sendSuccess(res, await fn(req.user.id, req.params.username), message);
+  } catch (error) {
+    next(error);
+  }
+};
+exports.block = blockAction(blockService.block, 'Account blocked.');
+exports.unblock = blockAction(blockService.unblock, 'Account unblocked.');
+exports.mute = blockAction(blockService.mute, 'Account muted.');
+exports.unmute = blockAction(blockService.unmute, 'Account unmuted.');
+exports.listBlocks = async (req, res, next) => {
+  try {
+    return sendSuccess(res, await blockService.list(req.user.id), 'Blocked and muted accounts.');
   } catch (error) {
     next(error);
   }

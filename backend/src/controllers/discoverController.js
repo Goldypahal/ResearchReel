@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { notBlocked, notMuted } = require('../services/blockService');
 const { sendSuccess } = require('../utils/response');
 const { POST_SELECT } = require('../services/feedService');
 const { REEL_SELECT } = require('./reelController');
@@ -14,6 +15,7 @@ exports.explore = async (req, res, next) => {
     const posts = await db.query(
       `${POST_SELECT}
         WHERE p.deleted_at IS NULL AND p.content_type IN ('image', 'document') AND p.created_at > NOW() - INTERVAL '90 days'
+          AND ${notBlocked('$1::uuid', 'p.author_id')} AND ${notMuted('$1::uuid', 'p.author_id')}
         ORDER BY ((SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id) * 2
                  + (SELECT COUNT(*) FROM post_comments c WHERE c.post_id = p.id AND c.deleted_at IS NULL) * 3 + 1)
                  / POWER(EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 3600 + 2, 1.2) DESC
@@ -23,6 +25,7 @@ exports.explore = async (req, res, next) => {
     const reels = await db.query(
       `${REEL_SELECT}
         WHERE v.deleted_at IS NULL AND v.status = 'published' AND v.visibility = 'public' AND v.created_at > NOW() - INTERVAL '90 days'
+          AND ${notBlocked('$1::uuid', 'v.author_id')} AND ${notMuted('$1::uuid', 'v.author_id')}
         ORDER BY ((SELECT COUNT(*) FROM video_likes l WHERE l.video_id = v.id) * 2 + 1)
                  / POWER(EXTRACT(EPOCH FROM (NOW() - v.created_at)) / 3600 + 2, 1.2) DESC
         LIMIT $2`,
@@ -53,9 +56,10 @@ exports.discover = async (req, res, next) => {
               (SELECT COUNT(*)::int FROM posts p WHERE p.document_id = d.id AND p.deleted_at IS NULL) AS share_count,
               (SELECT COUNT(*)::int FROM videos v WHERE v.linked_paper_id = d.id AND v.deleted_at IS NULL) AS reel_count
          FROM documents d JOIN users u ON u.id = d.uploader_id AND u.is_deleted IS NOT TRUE
-        WHERE d.deleted_at IS NULL AND d.visibility = 'public'
+        WHERE d.deleted_at IS NULL AND d.visibility = 'public' AND ${notBlocked('$1::uuid', 'd.uploader_id')}
         ORDER BY (SELECT COUNT(*) FROM posts p JOIN reactions r ON r.post_id = p.id WHERE p.document_id = d.id) DESC, d.created_at DESC
-        LIMIT 12`
+        LIMIT 12`,
+      [viewer]
     );
     const researchers = await db.query(
       `SELECT ${PUBLIC_USER},
@@ -65,6 +69,7 @@ exports.discover = async (req, res, next) => {
                    ELSE EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1::uuid AND f.following_id = u.id) END AS is_following
          FROM users u
         WHERE u.is_deleted IS NOT TRUE AND u.email_verified IS TRUE AND ($1::uuid IS NULL OR u.id <> $1::uuid)
+          AND ${notBlocked('$1::uuid', 'u.id')}
         ORDER BY new_followers DESC, followers_count DESC, u.created_at DESC
         LIMIT 12`,
       [viewer]

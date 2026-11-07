@@ -9,7 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { timeAgo, compactNumber } from '@/lib/format';
 import { toast } from '@/components/ui/use-toast';
 import RichText from './RichText';
-import Comments from './Comments';
+import CommentThread from '@/components/comments/CommentThread';
 import ReportDialog from './ReportDialog';
 
 export default function PostCard({ post: initial, onDeleted }: { post: Post; onDeleted?: (id: string) => void }) {
@@ -177,7 +177,7 @@ export default function PostCard({ post: initial, onDeleted }: { post: Post; onD
         </div>
         {showComments && (
           <div className="px-2 pt-3">
-            <Comments kind="post" id={post.id} ownerId={post.author_id} onCountChange={(d) => setPost((p) => ({ ...p, comment_count: p.comment_count + d }))} />
+            <CommentThread postId={post.id} postAuthorId={post.author_id} onCountChange={(d) => setPost((p) => ({ ...p, comment_count: p.comment_count + d }))} />
           </div>
         )}
       </footer>

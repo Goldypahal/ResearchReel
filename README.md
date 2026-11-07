@@ -5,15 +5,18 @@ A social platform for research. People share findings as posts, papers and short
 ## Features
 
 - **Accounts**: email sign-up with a verification code, password reset, session management, ORCID-verified researcher badges
-- **Feed**: posts with text, images or a PDF paper; likes, comments, bookmarks, #tags and @mentions; "Following" and "Everyone" feeds; 24-hour stories
+- **Feed**: posts with text, images or a PDF paper; likes, bookmarks, #tags and @mentions; "Following" and "Everyone" feeds; 24-hour stories
+- **Discussions**: threaded comments with replies, @mention suggestions, likes, edits and Top/Newest sorting
+- **Safety**: block (both accounts disappear for each other) and mute (quietly hide someone from your feeds); ClamAV malware scanning of uploads (optional)
 - **Reels**: vertical video feed; upload your own video, or generate an explainer reel from a paper (script → editable scenes → rendered MP4 with optional AI narration)
 - **Library**: upload PDFs (text is extracted for search and AI), or import publications by DOI or ORCID via Crossref
 - **AI assistant** (optional, Gemini): ask questions about up to ten papers at once, with answers that cite the page each point comes from; summaries; conversation history
 - **Research tools** (with the Research RAG service): compare papers, draft a literature review, find research gaps and contradictions, build a timeline
 - **Messages**: direct messages with live delivery, unread counts and typing indicators
-- **Notifications**: follows, likes, comments, mentions, project invites, lectures, reel processing, all live
+- **Notifications**: follows, likes, comments, replies, mentions, project invites, lectures, reel processing, all live in the app; email for each category the user leaves on, with one-click unsubscribe
 - **Projects**: members and roles, drag-and-drop task boards, shared papers; a "My tasks" board across projects
-- **Lectures**: schedule or go live, registration with a private meeting link, live discussion
+- **Lectures**: schedule or go live, registration with a private meeting link, live discussion, reminders a day and an hour before, add-to-calendar (.ics), cancellation notices
+- **Sharing**: posts, profiles, lectures, Explore and Reels open without signing in, with link-preview images; robots.txt and a sitemap
 - **Discovery**: search (people, papers, posts, reels, tags), discover, explore, conference deadline tracker, leaderboard, achievements
 - **Moderation**: reporting, moderator console (reports, users, suspensions, roles), audit log
 
@@ -82,11 +85,12 @@ docker compose up --build
 ```bash
 cd backend && npm test          # integration tests; needs Postgres + Redis
 cd frontend && npm run lint && npm run build
+cd e2e && npm ci && npx playwright install chromium && npx playwright test   # browser tests; needs the stack + Mailpit running
 cd backend/research_rag && pip install -r requirements-dev.txt \
   && LLM_PROVIDER=test PYTHONPATH=. pytest tests/unit tests/integration && PYTHONPATH=. pytest tests/api
 ```
 
-Backend tests create a throwaway `researchreel_test` database. Point them elsewhere with `TEST_DATABASE_URL` and `TEST_REDIS_URL`. CI runs everything on every push (`.github/workflows/ci.yml`).
+Backend tests create a throwaway `researchreel_test` database. The browser tests (`e2e/`) run against a running stack whose API sends mail to [Mailpit](https://mailpit.axllent.org/) (`SMTP_HOST=localhost SMTP_PORT=1025`), so sign-up codes and notification emails are read from real messages. Point them elsewhere with `TEST_DATABASE_URL` and `TEST_REDIS_URL`. CI runs everything on every push (`.github/workflows/ci.yml`).
 
 ## Deploy
 
@@ -105,6 +109,8 @@ All backend settings are documented in [`backend/.env.example`](backend/.env.exa
 | `GEMINI_API_KEY` | API, RAG | Turns on AI features (optional) |
 | `RAG_SERVICE_URL`, `RAG_API_KEY` | API | Connects the Research RAG service (optional) |
 | `S3_*` | API | Store files in S3/R2 instead of local disk (optional) |
+| `CLAMAV_HOST` | API | Scan uploads with ClamAV (optional; uploads are refused if it's set and unreachable) |
+| `NEXT_PUBLIC_SITE_URL` | Web | Your public domain for link previews and the sitemap (defaults to the Render URL) |
 | `BACKEND_URL` / `BACKEND_HOSTPORT` | Web (build) | Where the web app proxies the API |
 | `NEXT_PUBLIC_UPLOAD_URL` | Web (build) | Public API URL for direct large uploads (recommended) |
 
@@ -120,6 +126,7 @@ frontend/
   src/app/        Next.js App Router pages
   src/components/ UI components
   src/lib/api/    typed API client
+e2e/              Playwright browser tests (sign-up by email, comments, blocking, lectures, sharing, every page on desktop and phone)
 docs/             architecture notes; docs/archive holds the original planning documents
 render.yaml       Render Blueprint
 ```

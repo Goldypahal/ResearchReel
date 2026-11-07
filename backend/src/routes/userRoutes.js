@@ -14,11 +14,16 @@ router.post('/me/avatar', uploadAuth, imageUpload.single('avatar'), verifyFileSi
 router.delete('/me/avatar', authMiddleware, userController.removeAvatar);
 router.delete('/me', authMiddleware, userController.deleteAccount);
 router.get('/suggestions', optionalAuth, userController.getSuggestions);
+router.get('/me/blocks', authMiddleware, userController.listBlocks);
 router.get('/analytics/:user_id', authMiddleware, userController.getAnalytics);
 
 router.get('/:username', optionalAuth, userController.getProfile);
 router.post('/:username/follow', authMiddleware, userController.follow);
 router.delete('/:username/follow', authMiddleware, userController.unfollow);
+router.post('/:username/block', authMiddleware, userController.block);
+router.delete('/:username/block', authMiddleware, userController.unblock);
+router.post('/:username/mute', authMiddleware, userController.mute);
+router.delete('/:username/mute', authMiddleware, userController.unmute);
 router.get('/:username/followers', optionalAuth, userController.getFollowers);
 router.get('/:username/following', optionalAuth, userController.getFollowing);
 

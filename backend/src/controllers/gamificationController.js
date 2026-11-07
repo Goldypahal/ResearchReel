@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { notBlocked } = require('../services/blockService');
 const { sendSuccess, sendError } = require('../utils/response');
 
 /** Activity score weights used for the leaderboard. */
@@ -21,14 +22,14 @@ exports.leaderboard = async (req, res, next) => {
   try {
     const period = ['week', 'month', 'all'].includes(req.query.period) ? req.query.period : 'week';
     const field = req.query.field ? String(req.query.field).slice(0, 50) : null;
-    const params = [];
+    const params = [req.user?.id || null];
     let fieldSql = '';
-    if (field) { params.push(`%${field}%`); fieldSql = `AND array_to_string(u.research_interests, ' ') ILIKE $1`; }
+    if (field) { params.push(`%${field}%`); fieldSql = `AND array_to_string(u.research_interests, ' ') ILIKE $2`; }
     const r = await db.query(
       `SELECT * FROM (
          SELECT u.id, u.username, u.full_name, u.profile_picture_url AS avatar_url, u.verification_status, u.institution,
                 u.research_interests, (${SCORE_SQL(periodFilter(period))})::int AS score
-           FROM users u WHERE u.is_deleted IS NOT TRUE AND u.email_verified IS TRUE ${fieldSql}
+           FROM users u WHERE u.is_deleted IS NOT TRUE AND u.email_verified IS TRUE AND ${notBlocked('$1::uuid', 'u.id')} ${fieldSql}
        ) s WHERE s.score > 0 ORDER BY s.score DESC, s.username ASC LIMIT 50`,
       params
     );

@@ -1,5 +1,7 @@
 const db = require('../config/db');
 const feedService = require('../services/feedService');
+const blockService = require('../services/blockService');
+const commentService = require('../services/commentService');
 const analyticsService = require('../services/analyticsService');
 const storageService = require('../services/storageService');
 const documentService = require('../services/documentService');
@@ -143,16 +145,19 @@ exports.deletePost = async (req, res, next) => {
   }
 };
 
-const loadPostAuthor = async (postId) => {
+/** The post's author, or null when the post is gone or the viewer and author have blocked each other. */
+const loadPostAuthor = async (postId, viewerId = null) => {
   const r = await db.query('SELECT author_id FROM posts WHERE id = $1 AND deleted_at IS NULL', [postId]);
-  return r.rows[0] || null;
+  const post = r.rows[0] || null;
+  if (post && viewerId && (await blockService.isBlockedEitherWay(viewerId, post.author_id))) return null;
+  return post;
 };
 
 exports.like = async (req, res, next) => {
   try {
     const postId = req.params.id || req.body.post_id;
     if (!isUuid(postId)) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
-    const post = await loadPostAuthor(postId);
+    const post = await loadPostAuthor(postId, req.user.id);
     if (!post) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
     const ins = await db.query(
       `INSERT INTO reactions (post_id, user_id, reaction_type) VALUES ($1, $2, $3)
@@ -186,7 +191,7 @@ exports.unlike = async (req, res, next) => {
 
 exports.bookmark = async (req, res, next) => {
   try {
-    if (!isUuid(req.params.id) || !(await loadPostAuthor(req.params.id))) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
+    if (!isUuid(req.params.id) || !(await loadPostAuthor(req.params.id, req.user.id))) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
     await db.query('INSERT INTO bookmarks (user_id, post_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.user.id, req.params.id]);
     return sendSuccess(res, { is_bookmarked: true }, 'Saved.');
   } catch (error) {
@@ -212,7 +217,7 @@ exports.getSaved = async (req, res, next) => {
     if (cursor) { params.push(cursor); cursorSql = 'AND b.created_at < $3'; }
     const r = await db.query(
       `${feedService.POST_SELECT.replace('FROM posts p', 'FROM bookmarks b JOIN posts p ON p.id = b.post_id').replace('SELECT p.id,', 'SELECT b.created_at AS saved_at, p.id,')}
-        WHERE b.user_id = $1 AND p.deleted_at IS NULL ${cursorSql}
+        WHERE b.user_id = $1 AND p.deleted_at IS NULL AND ${blockService.notBlocked('$1::uuid', 'p.author_id')} ${cursorSql}
         ORDER BY b.created_at DESC LIMIT $2`,
       params
     );
@@ -222,18 +227,22 @@ exports.getSaved = async (req, res, next) => {
   }
 };
 
+// ---- Comments: top-level comments with one level of replies ----------------
+
 exports.getComments = async (req, res, next) => {
   try {
-    if (!isUuid(req.params.id)) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
-    const r = await db.query(
-      `SELECT c.id, c.post_id, c.parent_id, c.content, c.created_at, c.author_id,
-              u.username, u.full_name, u.profile_picture_url AS avatar_url, u.verification_status
-         FROM post_comments c JOIN users u ON u.id = c.author_id
-        WHERE c.post_id = $1 AND c.deleted_at IS NULL
-        ORDER BY c.created_at ASC LIMIT 500`,
-      [req.params.id]
-    );
-    return sendSuccess(res, r.rows, 'Comments.');
+    const { sort, cursor, limit } = req.query;
+    const page = await commentService.listTopLevel(req.params.id, { viewerId: req.user?.id, sort, cursor, limit });
+    return sendSuccess(res, { comments: page.items, nextCursor: page.nextCursor }, 'Comments.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getReplies = async (req, res, next) => {
+  try {
+    const page = await commentService.listReplies(req.params.id, req.params.commentId, { viewerId: req.user?.id, cursor: req.query.cursor, limit: req.query.limit });
+    return sendSuccess(res, { comments: page.items, nextCursor: page.nextCursor }, 'Replies.');
   } catch (error) {
     next(error);
   }
@@ -241,25 +250,19 @@ exports.getComments = async (req, res, next) => {
 
 exports.addComment = async (req, res, next) => {
   try {
-    const postId = req.params.id;
-    if (!isUuid(postId)) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
-    const post = await loadPostAuthor(postId);
-    if (!post) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
-    const mod = moderateText(req.body.content);
-    if (!mod.clean) return sendError(res, 'Your comment was blocked by our spam filter.', 400, 'CONTENT_REJECTED', req);
+    const comment = await commentService.create({
+      postId: req.params.id, authorId: req.user.id, content: req.body?.content, parentId: req.body?.parent_id || null
+    });
+    return sendSuccess(res, comment, 'Comment added.', 201);
+  } catch (error) {
+    next(error);
+  }
+};
 
-    const ins = await db.query(
-      `INSERT INTO post_comments (post_id, author_id, content, parent_id) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [postId, req.user.id, req.body.content, req.body.parent_id || null]
-    );
-    const r = await db.query(
-      `SELECT c.id, c.post_id, c.parent_id, c.content, c.created_at, c.author_id,
-              u.username, u.full_name, u.profile_picture_url AS avatar_url, u.verification_status
-         FROM post_comments c JOIN users u ON u.id = c.author_id WHERE c.id = $1`,
-      [ins.rows[0].id]
-    );
-    await notify({ userId: post.author_id, actorId: req.user.id, type: 'comment', entityType: 'post', entityId: postId, message: req.body.content.slice(0, 140) });
-    return sendSuccess(res, r.rows[0], 'Comment added.', 201);
+exports.updateComment = async (req, res, next) => {
+  try {
+    const comment = await commentService.update({ postId: req.params.id, commentId: req.params.commentId, userId: req.user.id, content: req.body?.content });
+    return sendSuccess(res, comment, 'Comment updated.');
   } catch (error) {
     next(error);
   }
@@ -267,18 +270,25 @@ exports.addComment = async (req, res, next) => {
 
 exports.deleteComment = async (req, res, next) => {
   try {
-    if (!isUuid(req.params.commentId)) return sendError(res, 'Comment not found.', 404, 'NOT_FOUND', req);
-    const isStaff = ['admin', 'moderator'].includes(req.user.role);
-    const r = await db.query(
-      `UPDATE post_comments c SET deleted_at = NOW()
-         FROM posts p
-        WHERE c.id = $1 AND p.id = c.post_id AND c.deleted_at IS NULL
-          AND (c.author_id = $2 OR p.author_id = $2 OR $3::boolean)
-        RETURNING c.id`,
-      [req.params.commentId, req.user.id, isStaff]
-    );
-    if (!r.rows.length) return sendError(res, 'Comment not found or you cannot delete it.', 404, 'NOT_FOUND', req);
+    const ok = await commentService.remove({
+      postId: req.params.id || null, commentId: req.params.commentId, userId: req.user.id,
+      isStaff: ['admin', 'moderator'].includes(req.user.role)
+    });
+    if (!ok) return sendError(res, 'Comment not found or you cannot delete it.', 404, 'NOT_FOUND', req);
     return sendSuccess(res, { id: req.params.commentId }, 'Comment deleted.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.likeComment = async (req, res, next) => {
+  try {
+    const liked = req.method === 'POST';
+    const comment = await commentService.getOne(req.params.commentId, req.user.id);
+    if (comment && !comment.is_deleted && (await blockService.isBlockedEitherWay(req.user.id, comment.author_id))) {
+      return sendError(res, 'Comment not found.', 404, 'NOT_FOUND', req);
+    }
+    return sendSuccess(res, await commentService.setLike({ postId: req.params.id, commentId: req.params.commentId, userId: req.user.id, liked }), liked ? 'Liked.' : 'Unliked.');
   } catch (error) {
     next(error);
   }

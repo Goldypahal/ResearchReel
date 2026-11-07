@@ -23,7 +23,10 @@ Large uploads optionally bypass the proxy: the client fetches a 15-minute *uploa
 | Papers | `services/documentService.js` (PDF text extraction with pdf-parse), `controllers/doiController.js` (Crossref) |
 | AI | `services/ai/llm.js` (Gemini REST), `services/aiService.js` (questions over one or more papers, research tools), `services/rag/` (Research RAG client and indexer), `services/ai/geminiClient.js` (reel scripts), `services/ai/tts.js` (narration) |
 | Realtime | `services/socketService.js`. Socket.io with short-lived socket tokens; rooms per user, conversation and lecture; Redis pub/sub fans out events from the worker and between instances. |
-| Notifications | `services/notificationService.js` |
+| Notifications | `services/notificationService.js` (in-app + realtime; queues an email job), `services/notificationEmailService.js` (composition, throttling, lecture-reminder sweep), `services/emailPreferences.js` (categories, signed unsubscribe tokens), `workers/emailWorker.js` |
+| Comments | `services/commentService.js`: two-level threads (`parent_id` points at the top-level comment, `reply_to_user_id` records who was answered), likes, edits, tombstones for deleted comments with replies, one notification per person (mention > reply > comment) |
+| Blocking | `services/blockService.js`: `notBlocked()` / `notMuted()` SQL helpers used by feeds, search, discover, reels, stories, comments and follower lists; `isBlockedEitherWay()` guards follows, likes, comments, messages and notifications |
+| Uploads | `middleware/upload.js` (type + signature checks), `middleware/virusScan.js` (ClamAV INSTREAM, fail-closed when configured) |
 | Storage | `services/storageService.js`: local disk (`UPLOAD_DIR`) or any S3-compatible bucket |
 
 **Research RAG service (`backend/research_rag/`)**: Python 3.12 + FastAPI, adapted from the Multi-Paper Research RAG System. It is optional and private (the API is its only client, authenticated with `X-API-Key`).
@@ -35,6 +38,8 @@ Large uploads optionally bypass the proxy: the client fetches a 15-minute *uploa
 
 On the API side, `services/rag/ragClient.js` talks to the service and `services/rag/ragIndexer.js` + `workers/ragWorker.js` keep it in sync through the `rag-index` BullMQ queue (index on upload, metadata on edit, remove on delete; a backfill on start catches up). `documents.rag_status` tracks each paper (`pending → indexing → ready`, or `failed`/`unsupported`). `aiService.ask` checks access to every selected paper, sends only those IDs, and falls back to full-text prompting with Gemini when the service is down or a paper isn't indexed yet.
 
+**Link previews**: `frontend/src/lib/server-api.ts` reads public data server-side over the same private address the proxy uses; `layout.tsx` files under `post/[id]`, `profile/[username]` and `lectures/[id]` add metadata, and `opengraph-image.tsx` files render 1200×630 cards (`lib/og.tsx`). `app/robots.ts` and `app/sitemap.ts` cover crawlers. Which pages signed-out visitors may open is decided in `lib/routes.ts`.
+
 **PostgreSQL**: schema in `backend/migrations/` (node-pg-migrate). All timestamps are `TIMESTAMPTZ`; the connection runs in UTC.
 
 **Redis**: OTP codes, password-reset tokens, session revocation keys, rate-limit counters, AI daily quotas, the BullMQ queues and socket fan-out.
@@ -42,7 +47,8 @@ On the API side, `services/rag/ragClient.js` talks to the service and `services/
 ## Security notes
 
 - Passwords: argon2. Login and refresh responses never include password hashes.
-- Refresh tokens rotate on every use; access, refresh, socket and upload tokens are typed and not interchangeable.
+- Refresh tokens rotate on every use and each rotated session links to its replacement. Replaying an already-used refresh token more than 30 seconds after rotation (two tabs refreshing together stay safe) revokes the whole chain. In the browser, the Web Locks API makes tabs refresh one at a time. Access, refresh, socket and upload tokens are typed and not interchangeable.
+- Blocks are enforced in the API, not just hidden in the UI; muting only affects the muter's feeds.
 - Uploads are type-checked by MIME *and* file signature; files are served with `nosniff` and a restrictive CSP.
 - Every resource endpoint checks ownership or membership (posts, comments, reels, papers, projects, conversations, lectures). The integration tests cover these checks.
 - Role checks read the current role from the database, so demotions and suspensions apply immediately.

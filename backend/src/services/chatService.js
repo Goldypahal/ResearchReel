@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { isBlockedEitherWay } = require('./blockService');
 const { emitTo, emitToUser } = require('./socketService');
 
 class ChatError extends Error {
@@ -29,7 +30,10 @@ const CONVERSATION_SELECT = `
          (SELECT json_agg(json_build_object('id', u.id, 'username', u.username, 'full_name', u.full_name,
                                              'avatar_url', u.profile_picture_url, 'verification_status', u.verification_status))
             FROM conversation_participants p JOIN users u ON u.id = p.user_id
-           WHERE p.conversation_id = c.id AND p.user_id <> $1) AS participants
+           WHERE p.conversation_id = c.id AND p.user_id <> $1) AS participants,
+         EXISTS (SELECT 1 FROM conversation_participants p JOIN user_blocks ub
+                   ON (ub.blocker_id = $1 AND ub.blocked_id = p.user_id) OR (ub.blocker_id = p.user_id AND ub.blocked_id = $1)
+                  WHERE p.conversation_id = c.id AND p.user_id <> $1) AS is_blocked
     FROM conversations c
     JOIN conversation_participants me ON me.conversation_id = c.id AND me.user_id = $1
     LEFT JOIN LATERAL (
@@ -55,6 +59,7 @@ const startDirectConversation = async (userId, targetUsername) => {
   const target = t.rows[0];
   if (!target) throw new ChatError('User not found.', 404, 'NOT_FOUND');
   if (target.id === userId) throw new ChatError('You cannot message yourself.', 400, 'VALIDATION_ERROR');
+  if (await isBlockedEitherWay(userId, target.id)) throw new ChatError("You can't message this account.", 403, 'BLOCKED');
 
   const existing = await db.query(
     `SELECT c.id FROM conversations c
@@ -105,6 +110,12 @@ const getMessages = async (conversationId, userId, cursor, limit = 50) => {
 
 const sendMessage = async ({ conversation_id: conversationId, sender_id: senderId, content, message_type: type, file_url: fileUrl }) => {
   await assertParticipant(conversationId, senderId);
+  // Existing chats stay readable after a block, but nobody can send new messages.
+  for (const other of await participantIds(conversationId)) {
+    if (other !== senderId && (await isBlockedEitherWay(senderId, other))) {
+      throw new ChatError("You can't send messages in this conversation.", 403, 'BLOCKED');
+    }
+  }
   const ins = await db.query(
     `INSERT INTO messages (conversation_id, sender_id, content, message_type, file_url) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
     [conversationId, senderId, content, type || 'text', fileUrl || null]

@@ -53,12 +53,24 @@ Sign in at the web URL; **Moderation** appears in the sidebar. You can promote o
 - Sign up with a real email address and confirm the code arrives.
 - Post an image, upload a PDF, upload a short video and generate a reel from the PDF (you'll get a notification when it's ready).
 - Open the site in two browsers and send a message to confirm live delivery.
+- Comment on a post from a second account: the author gets an email with an **Unsubscribe** link. Paste a post link into Slack or a messaging app to see its preview card.
 
 ## 5. Custom domain (optional)
 
 1. Add the domain to **researchreel-web** (Settings → Custom Domains) and follow the DNS instructions.
 2. Set the API's `FRONTEND_URL` to `https://yourdomain.com`. You can list several, comma separated.
 3. Optionally add `api.yourdomain.com` to **researchreel-api**, set `NEXT_PUBLIC_UPLOAD_URL` to it, and redeploy the web service.
+
+## Optional: malware scanning
+
+Uploads are checked by file signature always. To also scan them for malware, run a ClamAV daemon and set `CLAMAV_HOST` (and `CLAMAV_PORT` if it isn't 3310) on the API. Once set, infected files are rejected and uploads are refused while the scanner is unreachable, so keep it running. `/api/v1/health` reports `malware_scan`.
+
+- **Render**: create a Private Service from the `clamav/clamav:stable` Docker image (it needs about 2 GB of RAM, so the `standard` plan), then set `CLAMAV_HOST` to its internal host name.
+- **Docker Compose**: `docker compose --profile scan up -d` and `CLAMAV_HOST=clamav` in `.env`.
+
+## Email notifications
+
+With SMTP configured, users get emails for comments, replies and mentions, new followers, project invitations, lecture reminders (24 hours and 1 hour before, in their own time zone), cancellations and finished reels. Likes are off by default. Each person chooses categories under **Settings → Notifications**, and every email has an unsubscribe link plus one-click `List-Unsubscribe` headers that mail apps show. Bursts are throttled (for example, one email per hour for many comments on the same post). Emails are sent by the worker in the API process.
 
 ## Operations
 

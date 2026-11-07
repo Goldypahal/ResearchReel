@@ -31,6 +31,11 @@ router.post('/:id/bookmark', authMiddleware, c.bookmark);
 router.delete('/:id/bookmark', authMiddleware, c.unbookmark);
 router.get('/:id/comments', optionalAuth, c.getComments);
 router.post('/:id/comments', authMiddleware, rateLimiter(60, 600), validate(commentSchema), c.addComment);
+router.get('/:id/comments/:commentId/replies', optionalAuth, c.getReplies);
+router.patch('/:id/comments/:commentId', authMiddleware, rateLimiter(60, 600), validate(commentSchema), c.updateComment);
+router.delete('/:id/comments/:commentId', authMiddleware, c.deleteComment);
+router.post('/:id/comments/:commentId/like', authMiddleware, rateLimiter(300, 600), c.likeComment);
+router.delete('/:id/comments/:commentId/like', authMiddleware, c.likeComment);
 router.post('/:id/view', optionalAuth, c.viewPost);
 
 module.exports = router;

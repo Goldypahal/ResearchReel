@@ -2,10 +2,11 @@
 require('dotenv').config({ quiet: true });
 const worker = require('./workers/videoWorker');
 const ragWorker = require('./workers/ragWorker').start();
+const emailWorker = require('./workers/emailWorker').start();
 require('./services/reelScheduler').start();
 
 const stop = async () => {
-  await Promise.all([worker.close(), ragWorker ? ragWorker.close() : null]);
+  await Promise.all([worker.close(), emailWorker.close(), ragWorker ? ragWorker.close() : null]);
   process.exit(0);
 };
 process.on('SIGTERM', stop);

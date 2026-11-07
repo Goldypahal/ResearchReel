@@ -35,10 +35,25 @@ export const onSessionExpired = (fn: SessionListener) => {
 };
 
 let refreshing: Promise<boolean> | null = null;
+
+const doRefresh = async (): Promise<boolean> => {
+  const r = await fetch(`${API_BASE_URL}/auth/refresh`, { method: 'POST', credentials: 'include' });
+  if (r.ok) return true;
+  // Another tab may have just used the same refresh token and received new cookies.
+  // If those cookies work, the session is fine.
+  const me = await fetch(`${API_BASE_URL}/users/me`, { credentials: 'include' }).catch(() => null);
+  return Boolean(me?.ok);
+};
+
+/**
+ * Refreshes the session once, shared by every caller in this tab. Across tabs, the Web Locks API
+ * (where supported) makes refreshes take turns so they don't race for the same refresh token.
+ */
 export const refreshSession = (): Promise<boolean> => {
   if (!refreshing) {
-    refreshing = fetch(`${API_BASE_URL}/auth/refresh`, { method: 'POST', credentials: 'include' })
-      .then((r) => r.ok)
+    const locks = typeof navigator !== 'undefined' ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+    const run = locks ? locks.request('researchreel-session-refresh', doRefresh) : doRefresh();
+    refreshing = Promise.resolve(run)
       .catch(() => false)
       .finally(() => { setTimeout(() => { refreshing = null; }, 0); });
   }

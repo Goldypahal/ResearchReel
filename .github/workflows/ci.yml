@@ -47,6 +47,10 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Syntax check
         run: for f in $(find src -name '*.js'); do node --check "$f"; done
+      - name: Migrations apply, roll back and re-apply on an empty database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: npx node-pg-migrate up && npx node-pg-migrate down 6 && npx node-pg-migrate up
       - name: Integration tests
         run: npm test
 
@@ -93,6 +97,75 @@ jobs:
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: 1
+
+  e2e:
+    name: Browser tests (Playwright, real email via Mailpit)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: researchreel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+      mailpit:
+        image: axllent/mailpit:latest
+        ports: ["1025:1025", "8025:8025"]
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/researchreel
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-e2e-secret-not-for-production-0123456789
+      ENCRYPTION_KEY: ci-e2e-encryption-key-0123456789abcdef
+      FRONTEND_URL: http://localhost:3000
+      SMTP_HOST: localhost
+      SMTP_PORT: "1025"
+      EMAIL_FROM: '"ResearchReel" <no-reply@researchreel.test>'
+      BACKEND_URL: http://localhost:5000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Start the API
+        working-directory: backend
+        run: |
+          npm ci --no-fund
+          npx node-pg-migrate up
+          nohup node src/server.js > ../api.log 2>&1 &
+      - name: Build and start the web app
+        working-directory: frontend
+        run: |
+          npm ci --no-fund
+          npm run build
+          nohup npm start > ../web.log 2>&1 &
+      - name: Wait for both
+        run: |
+          for i in $(seq 1 60); do curl -sf localhost:5000/api/v1/health >/dev/null && curl -sf localhost:3000/support >/dev/null && exit 0; sleep 2; done
+          cat api.log web.log; exit 1
+      - name: Install Playwright
+        working-directory: e2e
+        run: npm ci --no-fund && npx playwright install --with-deps chromium
+      - name: Run browser tests
+        working-directory: e2e
+        run: npx playwright test
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+            api.log
+            web.log
 
   docker:
     name: Docker images build

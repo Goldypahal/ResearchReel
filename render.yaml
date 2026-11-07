@@ -65,6 +65,8 @@ services:
         sync: false # optional: enables AI answers, summaries, scripts and narration
       - key: CROSSREF_MAILTO
         sync: false # optional: contact email sent to Crossref for DOI lookups
+      - key: CLAMAV_HOST
+        sync: false # optional: host of a ClamAV daemon to scan uploads (see DEPLOYMENT.md)
       # Multi-paper search with cited answers and research tools (see the rag service below).
       - key: RAG_SERVICE_URL
         fromService:
@@ -128,3 +130,5 @@ services:
         sync: false # public URL of the API, e.g. https://researchreel-api.onrender.com (large uploads go there directly)
       - key: NEXT_PUBLIC_SUPPORT_EMAIL
         sync: false # optional, shown on the Help page
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false # optional: your custom domain (https://...). Link previews and the sitemap use the Render URL otherwise

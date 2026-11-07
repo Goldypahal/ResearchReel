@@ -7,6 +7,7 @@ import { Grid, PlaySquare, BookOpen, BarChart2, MessageCircle, Link as LinkIcon,
 import { usersApi, reelsApi, documentsApi, messagesApi, errorMessage, type Profile, type Reel, type Paper } from '@/lib/api';
 import { Avatar, VerifiedBadge, Spinner, ErrorState, EmptyState, secondaryBtn, primaryBtn } from '@/components/common';
 import FollowButton from '@/components/common/FollowButton';
+import ProfileMenu from '@/components/profile/ProfileMenu';
 import Feed from '@/components/feed/Feed';
 import PaperCard from '@/components/library/PaperCard';
 import FollowListModal from '@/components/profile/FollowListModal';
@@ -72,6 +73,23 @@ export default function ProfilePage() {
     catch (err) { toast({ title: 'Could not start conversation', description: errorMessage(err), variant: 'destructive' }); }
   };
 
+  if (profile.is_blocked) {
+    const unblock = async () => {
+      try { await usersApi.unblock(profile.username); load(); toast({ title: `Unblocked @${profile.username}` }); }
+      catch (err) { toast({ title: 'Could not unblock', description: errorMessage(err), variant: 'destructive' }); }
+    };
+    return (
+      <div className="max-w-md mx-auto text-center py-16 space-y-4">
+        <Avatar src={profile.avatar_url} name={profile.full_name} size={96} className="mx-auto opacity-60" />
+        <div>
+          <h1 className="text-xl font-semibold">@{profile.username}</h1>
+          <p className="text-sm text-zinc-500 mt-1">You blocked this account. You can’t see each other’s posts or message each other.</p>
+        </div>
+        <button onClick={unblock} className={secondaryBtn}>Unblock</button>
+      </div>
+    );
+  }
+
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: 'posts', label: 'Posts', icon: Grid },
     { id: 'reels', label: 'Reels', icon: PlaySquare },
@@ -95,6 +113,7 @@ export default function ProfilePage() {
               <>
                 <FollowButton username={profile.username} initial={profile.is_following} onChange={(f, n) => setProfile((p) => p && { ...p, is_following: f, followers_count: n ?? p.followers_count })} />
                 <button className={secondaryBtn} onClick={message}><MessageCircle size={15} /> Message</button>
+                <ProfileMenu profile={profile} onChange={(patch) => setProfile((p) => p && { ...p, ...patch })} />
               </>
             )}
           </div>

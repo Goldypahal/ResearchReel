@@ -136,8 +136,15 @@ exports.remove = async (req, res, next) => {
   try {
     const lecture = await loadOwned(req.params.id, req.user.id);
     if (!lecture) return sendError(res, 'Lecture not found.', 404, 'NOT_FOUND', req);
+    // Tell registered attendees if an upcoming lecture is called off.
+    const attendees = lecture.status === 'ended'
+      ? { rows: [] }
+      : await db.query('SELECT user_id FROM lecture_attendees WHERE lecture_id = $1 AND user_id <> $2', [lecture.id, req.user.id]);
     await db.query('DELETE FROM lectures WHERE id = $1', [lecture.id]);
-    return sendSuccess(res, { id: lecture.id }, 'Lecture deleted.');
+    for (const a of attendees.rows) {
+      await notify({ userId: a.user_id, actorId: req.user.id, type: 'lecture_cancelled', entityType: 'lecture', entityId: lecture.id, message: lecture.title });
+    }
+    return sendSuccess(res, { id: lecture.id }, attendees.rows.length ? 'Lecture cancelled. Attendees have been notified.' : 'Lecture deleted.');
   } catch (error) {
     next(error);
   }
@@ -187,6 +194,49 @@ exports.comment = async (req, res, next) => {
     );
     emitTo(`lecture:${req.params.id}`, 'lecture_comment', r.rows[0]);
     return sendSuccess(res, r.rows[0], 'Sent.', 201);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const icsEscape = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/([,;])/g, '\\$1');
+const icsDate = (d) => new Date(d).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+/** Folds lines longer than 75 octets, as RFC 5545 requires. */
+const fold = (line) => line.match(/.{1,73}/g).join('\r\n ');
+
+/** GET /lectures/:id/calendar.ics — add a scheduled lecture to your calendar. */
+exports.calendar = async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.id)) return sendError(res, 'Lecture not found.', 404, 'NOT_FOUND', req);
+    const r = await db.query(
+      `SELECT l.id, l.title, l.description, l.scheduled_at, l.status, u.full_name, u.username
+         FROM lectures l JOIN users u ON u.id = l.host_id WHERE l.id = $1`,
+      [req.params.id]
+    );
+    const l = r.rows[0];
+    if (!l || !l.scheduled_at) return sendError(res, 'This lecture has no scheduled time.', 404, 'NOT_FOUND', req);
+    const site = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',')[0].trim().replace(/\/$/, '');
+    const url = `${site}/lectures/${l.id}`;
+    const start = new Date(l.scheduled_at);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    const lines = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ResearchReel//Lectures//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:lecture-${l.id}@researchreel`,
+      `DTSTAMP:${icsDate(new Date())}`,
+      `DTSTART:${icsDate(start)}`,
+      `DTEND:${icsDate(end)}`,
+      `SUMMARY:${icsEscape(l.title)}`,
+      `DESCRIPTION:${icsEscape(`${l.description ? `${l.description}\n\n` : ''}Hosted by ${l.full_name || l.username} on ResearchReel. Join from the lecture page: ${url}`)}`,
+      `URL:${url}`,
+      `ORGANIZER;CN=${icsEscape(l.full_name || l.username)}:mailto:no-reply@researchreel.app`,
+      l.status === 'cancelled' ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Lecture starts in 15 minutes', 'TRIGGER:-PT15M', 'END:VALARM',
+      'END:VEVENT', 'END:VCALENDAR'
+    ].map(fold);
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="lecture-${l.id}.ics"`);
+    return res.send(lines.join('\r\n') + '\r\n');
   } catch (error) {
     next(error);
   }

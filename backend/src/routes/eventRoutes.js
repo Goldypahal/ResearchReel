@@ -7,6 +7,7 @@ const rateLimiter = require('../middleware/rateLimiter');
 const lectureRouter = express.Router();
 lectureRouter.get('/', optionalAuth, lectures.list);
 lectureRouter.post('/', authMiddleware, rateLimiter(20, 3600), lectures.create);
+lectureRouter.get('/:id/calendar.ics', lectures.calendar);
 lectureRouter.get('/:id', optionalAuth, lectures.get);
 lectureRouter.post('/:id/status', authMiddleware, lectures.setStatus);
 lectureRouter.delete('/:id', authMiddleware, lectures.remove);

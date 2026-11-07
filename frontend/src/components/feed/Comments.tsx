@@ -3,16 +3,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Avatar, Spinner, UserLink } from '@/components/common';
-import { postsApi, reelsApi, errorMessage, type Comment } from '@/lib/api';
+import { reelsApi, errorMessage, type Comment } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { timeAgo } from '@/lib/format';
 import { toast } from '@/components/ui/use-toast';
 import RichText from './RichText';
 
-/** Comment thread for a post or reel. */
-export default function Comments({ kind, id, ownerId, onCountChange }: { kind: 'post' | 'reel'; id: string; ownerId: string; onCountChange?: (delta: number) => void }) {
+/** Flat comment list for a reel. Posts use the threaded CommentThread. */
+export default function Comments({ id, ownerId, onCountChange }: { kind?: 'reel'; id: string; ownerId: string; onCountChange?: (delta: number) => void }) {
   const { user } = useAuth();
-  const api = kind === 'post' ? postsApi : reelsApi;
+  const api = reelsApi;
   const [comments, setComments] = useState<Comment[] | null>(null);
   const [error, setError] = useState('');
   const [text, setText] = useState('');
@@ -59,7 +59,7 @@ export default function Comments({ kind, id, ownerId, onCountChange }: { kind: '
             <div className="flex-1 min-w-0 text-sm">
               <UserLink username={c.username} fullName={c.full_name} status={c.verification_status} className="text-xs mr-1.5" />
               <span className="text-[11px] text-zinc-500">{timeAgo(c.created_at)}</span>
-              <p className="whitespace-pre-wrap break-words"><RichText text={c.content} /></p>
+              <p className="whitespace-pre-wrap break-words"><RichText text={c.content || ''} /></p>
             </div>
             {user && (user.id === c.author_id || user.id === ownerId || user.role !== 'user') && (
               <button onClick={() => remove(c)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-zinc-500 hover:text-red-400" aria-label="Delete comment"><Trash2 size={14} /></button>

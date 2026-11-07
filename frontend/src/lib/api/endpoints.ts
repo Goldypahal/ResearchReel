@@ -37,6 +37,11 @@ export const usersApi = {
   unfollow: (username: string) => fetchApi<{ is_following: boolean; followers_count: number }>(`/users/${encodeURIComponent(username)}/follow`, { method: 'DELETE' }),
   followers: (username: string, cursor?: string | null) => fetchApi<{ users: T.PublicUser[]; nextCursor: string | null }>(`/users/${encodeURIComponent(username)}/followers${qs({ cursor })}`),
   following: (username: string, cursor?: string | null) => fetchApi<{ users: T.PublicUser[]; nextCursor: string | null }>(`/users/${encodeURIComponent(username)}/following${qs({ cursor })}`),
+  block: (username: string) => fetchApi<{ is_blocked: boolean }>(`/users/${encodeURIComponent(username)}/block`, { method: 'POST' }),
+  unblock: (username: string) => fetchApi<{ is_blocked: boolean }>(`/users/${encodeURIComponent(username)}/block`, { method: 'DELETE' }),
+  mute: (username: string) => fetchApi<{ is_muted: boolean }>(`/users/${encodeURIComponent(username)}/mute`, { method: 'POST' }),
+  unmute: (username: string) => fetchApi<{ is_muted: boolean }>(`/users/${encodeURIComponent(username)}/mute`, { method: 'DELETE' }),
+  blocks: () => fetchApi<{ blocked: T.BlockedAccount[]; muted: T.BlockedAccount[] }>('/users/me/blocks'),
   suggestions: (limit = 8) => fetchApi<(T.PublicUser & { mutual_count: number })[]>(`/users/suggestions${qs({ limit })}`),
   analytics: () => fetchApi<{
     totals: { followers: number; views_30d: number; likes_30d: number; comments_30d: number; papers: number };
@@ -57,9 +62,21 @@ export const postsApi = {
   bookmark: (id: string) => fetchApi(`/posts/${id}/bookmark`, { method: 'POST' }),
   unbookmark: (id: string) => fetchApi(`/posts/${id}/bookmark`, { method: 'DELETE' }),
   saved: (cursor?: string | null) => fetchApi<{ posts: T.Post[]; nextCursor: string | null }>(`/posts/saved${qs({ cursor })}`),
-  comments: (id: string) => fetchApi<T.Comment[]>(`/posts/${id}/comments`),
-  addComment: (id: string, content: string) => fetchApi<T.Comment>(`/posts/${id}/comments`, { method: 'POST', body: { content } }),
-  deleteComment: (commentId: string) => fetchApi(`/posts/comments/${commentId}`, { method: 'DELETE' }),
+  getComments: async (id: string, sort: T.CommentSort = 'top', cursor?: string | null) => {
+    const r = await fetchApi<{ comments: T.Comment[]; nextCursor: string | null }>(`/posts/${id}/comments${qs({ sort, cursor })}`);
+    return { items: r.comments, nextCursor: r.nextCursor };
+  },
+  getReplies: async (id: string, commentId: string, cursor?: string | null) => {
+    const r = await fetchApi<{ comments: T.Comment[]; nextCursor: string | null }>(`/posts/${id}/comments/${commentId}/replies${qs({ cursor })}`);
+    return { items: r.comments, nextCursor: r.nextCursor };
+  },
+  addComment: (id: string, content: string, parentId?: string | null) =>
+    fetchApi<T.Comment>(`/posts/${id}/comments`, { method: 'POST', body: { content, parent_id: parentId || undefined } }),
+  editComment: (id: string, commentId: string, content: string) =>
+    fetchApi<T.Comment>(`/posts/${id}/comments/${commentId}`, { method: 'PATCH', body: { content } }),
+  likeComment: (id: string, commentId: string, liked: boolean) =>
+    fetchApi<{ id: string; like_count: number; viewer_liked: boolean }>(`/posts/${id}/comments/${commentId}/like`, { method: liked ? 'POST' : 'DELETE' }),
+  deleteComment: (id: string, commentId: string) => fetchApi(`/posts/${id}/comments/${commentId}`, { method: 'DELETE' }),
   view: (id: string) => fetchApi(`/posts/${id}/view`, { method: 'POST' }).catch(() => undefined),
 };
 
@@ -137,6 +154,10 @@ export const notificationsApi = {
   unreadCount: () => fetchApi<{ count: number }>('/notifications/unread-count'),
   markRead: (ids?: string[]) => fetchApi('/notifications/read', { method: 'POST', body: ids ? { ids } : {} }),
   remove: (id: string) => fetchApi(`/notifications/${id}`, { method: 'DELETE' }),
+  emailPreferences: () => fetchApi<T.EmailPreferences>('/notifications/email-preferences'),
+  updateEmailPreferences: (body: { categories?: Record<string, boolean>; timezone?: string }) =>
+    fetchApi<T.EmailPreferences>('/notifications/email-preferences', { method: 'PUT', body }),
+  unsubscribe: (token: string) => fetchApi<{ category: string; label: string }>(`/notifications/unsubscribe${qs({ token })}`, { method: 'POST' }),
 };
 
 export const storiesApi = {
@@ -200,6 +221,7 @@ export const lecturesApi = {
   attend: (id: string) => fetchApi(`/lectures/${id}/attend`, { method: 'POST' }),
   leave: (id: string) => fetchApi(`/lectures/${id}/attend`, { method: 'DELETE' }),
   comment: (id: string, content: string) => fetchApi<T.LectureComment>(`/lectures/${id}/comments`, { method: 'POST', body: { content } }),
+  calendarUrl: (id: string) => `/api/v1/lectures/${id}/calendar.ics`,
 };
 
 export const conferencesApi = {

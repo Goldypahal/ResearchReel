@@ -83,7 +83,8 @@ export default function LecturePage() {
               {l.status === 'scheduled' && <button className={primaryBtn} disabled={busy} onClick={() => act(() => lecturesApi.setStatus(l.id, 'start'), 'You are live')}><Play size={15} /> Go live</button>}
               {l.status === 'live' && <button className={dangerBtn} disabled={busy} onClick={() => act(() => lecturesApi.setStatus(l.id, 'end'), 'Lecture ended')}><Square size={15} /> End lecture</button>}
               {l.meeting_url && <a href={l.meeting_url} target="_blank" rel="noopener noreferrer" className={secondaryBtn}><Video size={15} /> Open meeting</a>}
-              <button className={secondaryBtn} onClick={() => setConfirmDelete(true)}><Trash2 size={15} className="text-red-400" /> Delete</button>
+              {l.status === 'scheduled' && l.scheduled_at && <a href={lecturesApi.calendarUrl(l.id)} download className={secondaryBtn}><Calendar size={15} /> Add to calendar</a>}
+              <button className={secondaryBtn} onClick={() => setConfirmDelete(true)}><Trash2 size={15} className="text-red-400" /> {l.status === 'scheduled' ? 'Cancel lecture' : 'Delete'}</button>
             </div>
           ) : l.status === 'ended' ? (
             <p className="text-sm text-zinc-500">This lecture has ended.</p>
@@ -92,7 +93,8 @@ export default function LecturePage() {
               {l.meeting_url ? (
                 <a href={l.meeting_url} target="_blank" rel="noopener noreferrer" className={primaryBtn}><Video size={15} /> {l.status === 'live' ? 'Join now' : 'Meeting link'}</a>
               ) : <span className="text-sm text-zinc-500">The host hasn&apos;t added a meeting link — follow along in the chat.</span>}
-              <span className="text-sm text-emerald-400">You&apos;re registered{l.status === 'scheduled' ? ' — we’ll notify you when it starts.' : '.'}</span>
+              <span className="text-sm text-emerald-400">You&apos;re registered{l.status === 'scheduled' ? ' — we’ll remind you a day and an hour before, and when it starts.' : '.'}</span>
+              {l.status === 'scheduled' && l.scheduled_at && <a href={lecturesApi.calendarUrl(l.id)} download className="text-sm text-indigo-400 hover:underline inline-flex items-center gap-1"><Calendar size={14} /> Add to calendar</a>}
               <button className="text-sm text-zinc-500 hover:text-zinc-300" onClick={() => act(() => lecturesApi.leave(l.id), 'Registration cancelled')}>Cancel registration</button>
             </div>
           ) : (
@@ -133,9 +135,9 @@ export default function LecturePage() {
         </form>
       </aside>
 
-      <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Delete lecture?">
+      <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={l.status === 'scheduled' ? 'Cancel lecture?' : 'Delete lecture?'}>
         <div className="p-5 space-y-4">
-          <p className="text-sm text-zinc-400">Registrations and chat will be removed.</p>
+          <p className="text-sm text-zinc-400">{l.status === 'scheduled' && l.attendee_count > 1 ? 'Everyone who registered will be told it was cancelled. ' : ''}Registrations and chat will be removed.</p>
           <div className="flex justify-end gap-2"><button className={secondaryBtn} onClick={() => setConfirmDelete(false)}>Cancel</button>
             <button className={dangerBtn} onClick={async () => { try { await lecturesApi.remove(l.id); router.replace('/lectures'); } catch (err) { toast({ title: 'Could not delete', description: errorMessage(err), variant: 'destructive' }); } }}>Delete</button></div>
         </div>

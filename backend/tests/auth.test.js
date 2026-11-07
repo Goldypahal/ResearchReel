@@ -22,6 +22,37 @@ describe('auth', () => {
     expect((await agent.get('/api/v1/users/me')).status).toBe(401);
   });
 
+  test('replaying an already-rotated refresh token ends the session it led to', async () => {
+    await createUser('replay');
+    const login = await request(app).post('/api/v1/auth/login').send({ email: 'replay@example.com', password: 'password123' });
+    const cookieOf = (res, name) => (res.headers['set-cookie'] || []).find((c) => c.startsWith(`${name}=`)).split(';')[0];
+    const stolen = cookieOf(login, 'refreshToken');
+
+    // The real user refreshes; the old token is now retired.
+    const first = await request(app).post('/api/v1/auth/refresh').set('Cookie', stolen);
+    expect(first.status).toBe(200);
+    const current = cookieOf(first, 'refreshToken');
+
+    // Within the grace window (two tabs at once) the old token just fails.
+    expect((await request(app).post('/api/v1/auth/refresh').set('Cookie', stolen)).status).toBe(401);
+    expect((await request(app).post('/api/v1/auth/refresh').set('Cookie', current)).status).toBe(200);
+    const latest = await db.query(
+      `SELECT refresh_token_hash FROM user_sessions s JOIN users u ON u.id = s.user_id
+        WHERE u.username = 'replay' AND s.revoked_at IS NULL ORDER BY s.created_at DESC LIMIT 1`
+    );
+    expect(latest.rows).toHaveLength(1);
+
+    // Later, an attacker replays the stolen token: the whole chain is revoked.
+    await db.query(`UPDATE user_sessions SET rotated_at = NOW() - interval '5 minutes'
+                     WHERE user_id = (SELECT id FROM users WHERE username = 'replay') AND rotated_at IS NOT NULL`);
+    expect((await request(app).post('/api/v1/auth/refresh').set('Cookie', stolen)).status).toBe(401);
+    const active = await db.query(
+      `SELECT count(*)::int AS n FROM user_sessions s JOIN users u ON u.id = s.user_id
+        WHERE u.username = 'replay' AND s.revoked_at IS NULL AND s.id <> (SELECT id FROM user_sessions WHERE user_id = u.id ORDER BY created_at ASC LIMIT 1)`
+    );
+    expect(active.rows[0].n).toBe(0);
+  });
+
   test('login never returns the password hash and rejects bad passwords', async () => {
     const ok = await request(app).post('/api/v1/auth/login').send({ email: 'alice@example.com', password: 'password123' });
     expect(ok.status).toBe(200);

@@ -6,8 +6,9 @@ const { buildConnection } = require('./connection');
  *  - media:      transcode uploaded reel videos
  *  - reel-render: render AI reel drafts into MP4s
  *  - rag-index:  index papers in (or remove them from) the Research RAG service
+ *  - email:      notification emails and the lecture-reminder sweep
  */
-const QUEUES = { MEDIA: 'media', REEL_RENDER: 'reel-render', RAG: 'rag-index' };
+const QUEUES = { MEDIA: 'media', REEL_RENDER: 'reel-render', RAG: 'rag-index', EMAIL: 'email' };
 const instances = {};
 
 const getQueue = (name) => {

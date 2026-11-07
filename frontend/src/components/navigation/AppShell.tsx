@@ -13,11 +13,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Avatar, Spinner } from '@/components/common';
 import { Search, Bell, Library, Plus, MessageCircle } from 'lucide-react';
 
-/** Pages that render without the app chrome and without requiring sign-in. */
-const STANDALONE = ['/', '/auth'];
-const PUBLIC_WITH_SHELL = ['/support'];
-
-const isStandalone = (p: string) => p === '/' || STANDALONE.some((r) => r !== '/' && p.startsWith(r));
+import { isStandaloneRoute, requiresAuth as routeRequiresAuth } from '@/lib/routes';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [isCreationOpen, setIsCreationOpen] = useState(false);
@@ -28,8 +24,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() || '/';
 
-  const standalone = isStandalone(pathname);
-  const requiresAuth = !standalone && !PUBLIC_WITH_SHELL.some((r) => pathname.startsWith(r));
+  const standalone = isStandaloneRoute(pathname);
+  const requiresAuth = routeRequiresAuth(pathname);
 
   useEffect(() => {
     if (!isLoading && !user && requiresAuth) {

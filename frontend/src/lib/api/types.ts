@@ -19,12 +19,18 @@ export interface PublicUser {
 
 export interface CurrentUser extends PublicUser {
   email: string;
+  /** IANA time zone used for times in reminder emails. */
+  timezone?: string | null;
   email_verified: boolean;
   role: Role;
   subscription_tier?: string;
 }
 
 export interface Profile extends PublicUser {
+  /** You blocked this account (the profile is reduced to the basics). */
+  is_blocked?: boolean;
+  /** You muted this account. */
+  is_muted?: boolean;
   followers_count: number;
   following_count: number;
   post_count: number;
@@ -62,7 +68,7 @@ export interface Post {
 
 export interface Comment {
   id: string;
-  content: string;
+  content: string | null;
   created_at: string;
   author_id: string;
   username: string;
@@ -70,7 +76,18 @@ export interface Comment {
   avatar_url: string | null;
   verification_status?: string;
   parent_id?: string | null;
+  /** Threaded post comments only. */
+  post_id?: string;
+  edited_at?: string | null;
+  is_deleted?: boolean;
+  reply_to_username?: string | null;
+  like_count: number;
+  reply_count: number;
+  viewer_liked: boolean;
+  is_post_author?: boolean;
 }
+
+export type CommentSort = 'top' | 'new';
 
 export interface Reel {
   id: string;
@@ -176,6 +193,8 @@ export interface Conversation {
   last_sender_id: string | null;
   unread_count: number;
   participants: Participant[];
+  /** Someone in the conversation blocked the other; it stays readable but no one can send. */
+  is_blocked?: boolean;
   created_at: string;
 }
 
@@ -408,3 +427,10 @@ export interface ResearchResult {
 export interface AiPaperRef { id: string; title: string; rag_status?: RagStatus | null }
 
 export interface Paged<T> { items: T[]; nextCursor: string | null }
+
+export interface BlockedAccount { id: string; username: string; full_name: string; avatar_url: string | null; verification_status: string; created_at: string }
+
+export interface EmailPreferences {
+  categories: { key: string; label: string; enabled: boolean }[];
+  timezone: string | null;
+}

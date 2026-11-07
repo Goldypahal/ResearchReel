@@ -6,6 +6,7 @@ const { isConfigured } = require('../services/ai/llm');
 const { isEmailConfigured } = require('../utils/emailService');
 const { useS3 } = require('../services/storageService');
 const ragClient = require('../services/rag/ragClient');
+const malwareScanner = require('../middleware/virusScan');
 
 // The RAG service is optional, so it never makes this probe fail; its result is cached for 30 s.
 let ragCache = { at: 0, value: null };
@@ -47,6 +48,8 @@ router.get('/health', async (req, res) => {
   checks.email = { status: isEmailConfigured() ? 'CONFIGURED' : 'NOT_CONFIGURED' };
   checks.storage = { status: useS3() ? 'S3' : 'LOCAL_DISK' };
   checks.paper_search = await ragCheck();
+  const clam = await malwareScanner.ping();
+  checks.malware_scan = { status: clam === null ? 'NOT_CONFIGURED' : clam ? 'UP' : 'DOWN' };
   res.status(ok ? 200 : 503).json({ status: ok ? 'UP' : 'DEGRADED', timestamp: new Date().toISOString(), uptime_seconds: Math.round(process.uptime()), services: checks });
 });
 

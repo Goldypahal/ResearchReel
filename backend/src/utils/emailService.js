@@ -40,7 +40,15 @@ const layout = (body) => `
     <p style="text-align: center; color: #9ca3af; font-size: 12px;">You received this email because of activity on your ResearchReel account.</p>
   </div>`;
 
-const deliver = async ({ to, subject, html, devLog }) => {
+/** In tests, emails are collected here instead of being sent. */
+const outbox = [];
+exports.outbox = outbox;
+
+const deliver = async ({ to, subject, html, text, headers, devLog }) => {
+  if (process.env.NODE_ENV === 'test') {
+    outbox.push({ to, subject, html, text, headers: headers || {} });
+    return true;
+  }
   const t = getTransporter();
   if (!t) {
     if (process.env.NODE_ENV !== 'production') {
@@ -51,7 +59,7 @@ const deliver = async ({ to, subject, html, devLog }) => {
     return false;
   }
   try {
-    await t.sendMail({ from: fromAddress(), to, subject, html });
+    await t.sendMail({ from: fromAddress(), to, subject, html, text, headers });
     return true;
   } catch (error) {
     logger.error(`[email] Failed to send "${subject}" to ${to}: ${error.message}`);
@@ -83,4 +91,27 @@ exports.sendPasswordReset = async (email, token) => {
       <p style="text-align:center;margin:28px 0;"><a href="${escapeHtml(link)}" style="background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Reset password</a></p>
       <p style="color:#6b7280;font-size:14px;">If you didn't request this, you can ignore this email — your password won't change.</p>`)
   });
+};
+
+/**
+ * Notification email (comments, follows, lecture reminders…). `unsubscribeUrl` is the footer
+ * link; `oneClickUrl` feeds the RFC 8058 List-Unsubscribe headers mail apps use.
+ */
+exports.sendNotificationEmail = ({ to, subject, heading, body, quote, ctaLabel, ctaUrl, reason, unsubscribeUrl, oneClickUrl }) => {
+  const html = `
+  <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:auto;border:1px solid #e5e7eb;border-radius:12px;padding:28px;color:#111827;">
+    <p style="color:#4f46e5;font-weight:700;margin:0 0 18px;">ResearchReel</p>
+    <p style="font-size:17px;font-weight:600;margin:0 0 10px;">${escapeHtml(heading)}</p>
+    ${body ? `<p style="color:#374151;margin:0 0 16px;line-height:1.5;">${escapeHtml(body)}</p>` : ''}
+    ${quote ? `<blockquote style="margin:0 0 18px;padding:10px 14px;border-left:3px solid #c7d2fe;background:#f5f5ff;color:#374151;border-radius:4px;">${escapeHtml(quote)}</blockquote>` : ''}
+    ${ctaUrl ? `<a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">${escapeHtml(ctaLabel || 'Open ResearchReel')}</a>` : ''}
+    <p style="margin-top:28px;color:#6b7280;font-size:12px;line-height:1.5;">
+      ${escapeHtml(reason || 'You received this because of your notification settings.')}
+      ${unsubscribeUrl ? `<br><a href="${escapeHtml(unsubscribeUrl)}" style="color:#6b7280;">Unsubscribe from these emails</a>` : ''}
+    </p>
+  </div>`;
+  const text = [heading, body, quote && `"${quote}"`, ctaUrl && `${ctaLabel || 'Open'}: ${ctaUrl}`, '', reason, unsubscribeUrl && `Unsubscribe: ${unsubscribeUrl}`]
+    .filter((x) => x !== null && x !== undefined && x !== false).join('\n');
+  const headers = oneClickUrl ? { 'List-Unsubscribe': `<${oneClickUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } : undefined;
+  return deliver({ to, subject, html, text, headers, devLog: `${subject}\n${text}` });
 };

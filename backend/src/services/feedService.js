@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { notBlocked, notMuted } = require('./blockService');
 
 /**
  * Builds the SELECT for posts with author info, counts and viewer state.
@@ -26,7 +27,9 @@ const POST_SELECT = `
  */
 const getFeed = async ({ viewerId = null, scope = 'all', author = null, tag = null, cursor = null, limit = 20 }) => {
   const params = [viewerId];
-  const where = ['p.deleted_at IS NULL'];
+  const where = ['p.deleted_at IS NULL', notBlocked('$1::uuid', 'p.author_id')];
+  // Muted accounts leave the feeds, but their own profile still shows their posts.
+  if (!author) where.push(notMuted('$1::uuid', 'p.author_id'));
 
   if (scope === 'following' && viewerId) {
     where.push('(p.author_id = $1::uuid OR p.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1::uuid))');
@@ -53,7 +56,10 @@ const getFeed = async ({ viewerId = null, scope = 'all', author = null, tag = nu
 };
 
 const getPost = async (postId, viewerId = null) => {
-  const r = await db.query(`${POST_SELECT} WHERE p.id = $2 AND p.deleted_at IS NULL`, [viewerId, postId]);
+  const r = await db.query(
+    `${POST_SELECT} WHERE p.id = $2 AND p.deleted_at IS NULL AND ${notBlocked('$1::uuid', 'p.author_id')}`,
+    [viewerId, postId]
+  );
   return r.rows[0] || null;
 };
 

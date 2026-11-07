@@ -61,7 +61,7 @@ describe('posts', () => {
   test('users cannot delete each other\'s posts or comments', async () => {
     expect((await bob.agent.delete(`/api/v1/posts/${postId}`)).status).toBe(404);
     const comments = await request(app).get(`/api/v1/posts/${postId}/comments`);
-    const commentId = comments.body.data[0].id;
+    const commentId = comments.body.data.comments[0].id;
     const other = await createUser('carol');
     expect((await other.agent.delete(`/api/v1/posts/comments/${commentId}`)).status).toBe(404);
     // Post author can moderate comments on their own post.

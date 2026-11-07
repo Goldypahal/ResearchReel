@@ -98,6 +98,7 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
             return (
               <button
                 key={item.name}
+                aria-label={item.name}
                 onClick={() => onOpenCreate && onOpenCreate()}
                 className={`w-full flex items-center gap-4 px-3 py-2.5 rounded-lg hover:bg-[var(--foreground)]/5 transition-all group ${
                   isExpanded ? 'justify-start' : 'justify-center'
@@ -121,6 +122,8 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
             <Link
               key={item.name}
               href={item.href}
+              aria-label={item.name}
+              aria-current={isActive ? 'page' : undefined}
               className={`flex items-center gap-4 px-3 py-2.5 rounded-lg hover:bg-[var(--foreground)]/5 transition-all group ${
                 isExpanded ? 'justify-start' : 'justify-center'
               }`}
@@ -211,6 +214,8 @@ export default function Sidebar({ onOpenCreate }: SidebarProps) {
         
         <button 
           onClick={() => setIsMoreOpen(!isMoreOpen)}
+          aria-label="More"
+          aria-expanded={isMoreOpen}
           className={`w-full flex items-center gap-4 px-3 py-3 rounded-xl hover:bg-[var(--foreground)]/5 transition-all group ${isMoreOpen ? 'bg-[var(--foreground)]/5' : ''} ${
             isExpanded ? 'justify-start' : 'justify-center'
           }`}

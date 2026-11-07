@@ -4,7 +4,16 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { useRouter } from 'next/navigation';
 import { initAnalytics, identifyUser, resetAnalytics, trackEvent } from '@/lib/analytics';
 import { initSentry } from '@/lib/sentry';
-import { authApi, usersApi, onSessionExpired, refreshSession, ApiError, type CurrentUser } from '@/lib/api';
+import { requiresAuth } from '@/lib/routes';
+import { authApi, usersApi, notificationsApi, onSessionExpired, refreshSession, ApiError, type CurrentUser } from '@/lib/api';
+
+/** Fills in the account's time zone (used in reminder emails) from the browser; never overrides one the user chose. */
+const syncTimezone = (me: CurrentUser) => {
+  if (me.timezone) return;
+  let zone: string | undefined;
+  try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return; }
+  if (zone) notificationsApi.updateEmailPreferences({ timezone: zone }).catch(() => undefined);
+};
 
 interface AuthContextType {
   user: CurrentUser | null;
@@ -35,6 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setUser(me);
       identifyUser(me.id, me.email, { username: me.username, role: me.role });
+      syncTimezone(me);
     } catch {
       setUser(null);
     } finally {
@@ -53,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => onSessionExpired(() => {
     setUser(null);
     const path = window.location.pathname;
-    if (path !== '/' && !path.startsWith('/auth')) {
+    if (requiresAuth(path)) {
       router.replace(`/auth/login?next=${encodeURIComponent(path + window.location.search)}`);
     }
   }), [router]);
@@ -62,6 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u);
     identifyUser(u.id, u.email, { username: u.username, role: u.role });
     trackEvent('login', { userId: u.id });
+    syncTimezone(u);
   }, []);
 
   const logout = useCallback(async () => {

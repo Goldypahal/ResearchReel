@@ -1,4 +1,5 @@
 const multer = require('multer');
+const { scanUploads } = require('./virusScan');
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const DOCUMENT_TYPES = ['application/pdf'];
@@ -30,7 +31,7 @@ const sniff = (buffer, mimetype) => {
 };
 
 /** Rejects uploads whose content does not match the declared type. */
-const verifyFileSignatures = (req, res, next) => {
+const checkSignatures = (req, res, next) => {
   const files = req.files ? (Array.isArray(req.files) ? req.files : Object.values(req.files).flat()) : (req.file ? [req.file] : []);
   for (const f of files) {
     if (!sniff(f.buffer, f.mimetype)) {
@@ -43,6 +44,9 @@ const verifyFileSignatures = (req, res, next) => {
   }
   next();
 };
+
+/** Signature check, then malware scan (when ClamAV is configured). */
+const verifyFileSignatures = (req, res, next) => checkSignatures(req, res, (err) => (err ? next(err) : scanUploads(req, res, next)));
 
 module.exports = {
   imageUpload: memoryUpload({ allowed: IMAGE_TYPES, maxMb: 10 }),

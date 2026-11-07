@@ -19,7 +19,10 @@ class UserRepository {
         CASE WHEN $2::uuid IS NULL THEN FALSE
              ELSE EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $2::uuid AND f.following_id = u.id) END AS is_following,
         CASE WHEN $2::uuid IS NULL THEN FALSE
-             ELSE EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = u.id AND f.following_id = $2::uuid) END AS follows_you
+             ELSE EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = u.id AND f.following_id = $2::uuid) END AS follows_you,
+        EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2::uuid AND b.blocked_id = u.id) AS is_blocked,
+        EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $2::uuid) AS blocked_viewer,
+        EXISTS (SELECT 1 FROM user_mutes m WHERE m.muter_id = $2::uuid AND m.muted_id = u.id) AS is_muted
        FROM users u
        WHERE LOWER(u.username) = LOWER($1) AND u.is_deleted IS NOT TRUE`,
       [username, viewerId]
@@ -29,7 +32,7 @@ class UserRepository {
 
   async findById(userId) {
     const result = await db.query(
-      `SELECT ${PUBLIC_USER}, u.email, u.email_verified, u.subscription_tier
+      `SELECT ${PUBLIC_USER}, u.email, u.email_verified, u.subscription_tier, u.timezone
          FROM users u WHERE u.id = $1 AND u.is_deleted IS NOT TRUE`,
       [userId]
     );

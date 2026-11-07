@@ -25,11 +25,13 @@ socketService.init(server);
 
 let worker = null;
 let ragWorker = null;
+let emailWorker = null;
 server.listen(PORT, () => {
   console.log(`ResearchReel API listening on port ${PORT}`);
   if (process.env.START_WORKER !== 'false') {
     worker = require('./workers/videoWorker');
     ragWorker = require('./workers/ragWorker').start();
+    emailWorker = require('./workers/emailWorker').start();
     require('./services/reelScheduler').start();
   }
 });
@@ -40,6 +42,7 @@ const shutdown = (signal) => {
     try {
       if (worker) await worker.close();
       if (ragWorker) await ragWorker.close();
+      if (emailWorker) await emailWorker.close();
       await db.pool.end();
     } finally {
       process.exit(0);

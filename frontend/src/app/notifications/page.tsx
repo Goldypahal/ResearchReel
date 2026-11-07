@@ -15,10 +15,13 @@ const describe = (n: Notification): { text: string; href: string | null } => {
     case 'follow': return { text: 'started following you.', href: `/profile/${n.actor_username}` };
     case 'like': return { text: n.entity_type === 'video' ? 'liked your reel.' : 'liked your post.', href: target };
     case 'comment': return { text: `commented: “${n.message || ''}”`, href: target };
-    case 'mention': return { text: 'mentioned you in a post.', href: target };
+    case 'mention': return { text: n.message ? `mentioned you: “${n.message}”` : 'mentioned you in a post.', href: target };
+    case 'reply': return { text: `replied to your comment: “${n.message || ''}”`, href: target };
     case 'project_invite': return { text: `added you to the project “${n.message || ''}”.`, href: `/projects/${n.entity_id}` };
     case 'task_assigned': return { text: `assigned you a task${n.message ? `: “${n.message}”` : ''}.`, href: `/projects/${n.entity_id}` };
     case 'lecture_live': return { text: `is live now: ${n.message || 'lecture'}`, href: `/lectures/${n.entity_id}` };
+    case 'lecture_reminder': return { text: n.message === '1h' ? 'Your lecture starts in about an hour.' : 'Reminder: a lecture you registered for is coming up.', href: `/lectures/${n.entity_id}` };
+    case 'lecture_cancelled': return { text: `cancelled the lecture “${n.message || ''}”.`, href: '/lectures' };
     case 'lecture_rsvp': return { text: `registered for your lecture “${n.message || ''}”.`, href: `/lectures/${n.entity_id}` };
     case 'reel_ready': return { text: n.message || 'Your reel is live.', href: target };
     case 'reel_failed': return { text: n.message || 'A reel failed to process.', href: '/reels/generator' };

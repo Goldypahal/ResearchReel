@@ -3,6 +3,7 @@ const reelService = require('../services/reelGeneratorService');
 const analyticsService = require('../services/analyticsService');
 const storageService = require('../services/storageService');
 const { notify, retract } = require('../services/notificationService');
+const { notBlocked, notMuted } = require('../services/blockService');
 const { moderateText } = require('../utils/moderator');
 const { sendSuccess, sendError } = require('../utils/response');
 const { parsePage, nextCursorOf, isUuid } = require('../utils/pagination');
@@ -78,8 +79,9 @@ exports.REEL_SELECT = REEL_SELECT;
 exports.listReels = handle(async (req, res) => {
   const { limit, cursor } = parsePage(req.query, 10, 30);
   const params = [req.user?.id || null];
-  const where = [`v.deleted_at IS NULL`, `v.status = 'published'`, `(v.visibility = 'public' OR v.author_id = $1::uuid)`];
+  const where = [`v.deleted_at IS NULL`, `v.status = 'published'`, `(v.visibility = 'public' OR v.author_id = $1::uuid)`, notBlocked('$1::uuid', 'v.author_id')];
   if (req.query.author) { params.push(String(req.query.author)); where.push(`LOWER(u.username) = LOWER($${params.length})`); }
+  else where.push(notMuted('$1::uuid', 'v.author_id'));
   if (req.query.paper && isUuid(req.query.paper)) { params.push(req.query.paper); where.push(`v.linked_paper_id = $${params.length}`); }
   if (req.query.scope === 'following' && req.user) {
     where.push('(v.author_id = $1::uuid OR v.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1::uuid))');
@@ -94,7 +96,7 @@ exports.getSavedReels = handle(async (req, res) => {
   const r = await db.query(
     `${REEL_SELECT.replace('SELECT v.id,', 'SELECT s.created_at AS saved_at, v.id,')}
        JOIN video_saves s ON s.video_id = v.id AND s.user_id = $1::uuid
-      WHERE v.deleted_at IS NULL ORDER BY s.created_at DESC LIMIT 100`,
+      WHERE v.deleted_at IS NULL AND ${notBlocked('$1::uuid', 'v.author_id')} ORDER BY s.created_at DESC LIMIT 100`,
     [req.user.id]
   );
   return sendSuccess(res, r.rows, 'Saved reels.');
@@ -102,19 +104,29 @@ exports.getSavedReels = handle(async (req, res) => {
 
 exports.getReel = handle(async (req, res) => {
   if (!isUuid(req.params.id)) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
-  const r = await db.query(`${REEL_SELECT} WHERE v.id = $2 AND v.deleted_at IS NULL AND (v.visibility = 'public' OR v.author_id = $1::uuid)`, [req.user?.id || null, req.params.id]);
+  const r = await db.query(
+    `${REEL_SELECT} WHERE v.id = $2 AND v.deleted_at IS NULL AND (v.visibility = 'public' OR v.author_id = $1::uuid) AND ${notBlocked('$1::uuid', 'v.author_id')}`,
+    [req.user?.id || null, req.params.id]
+  );
   if (!r.rows[0]) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   return sendSuccess(res, r.rows[0], 'Reel.');
 });
 
-const loadReel = async (id) => {
+/** A reel the viewer may see: public (or their own) and not from an account they are blocked with. */
+const loadReel = async (id, viewerId = null, { includeHidden = false } = {}) => {
   if (!isUuid(id)) return null;
-  const r = await db.query(`SELECT id, author_id, video_url, thumbnail_url FROM videos WHERE id = $1 AND deleted_at IS NULL`, [id]);
+  const r = await db.query(
+    `SELECT id, author_id, video_url, thumbnail_url FROM videos v
+      WHERE id = $1 AND deleted_at IS NULL
+        AND ($3::boolean OR visibility = 'public' OR author_id = $2::uuid)
+        AND ($3::boolean OR ${notBlocked('$2::uuid', 'v.author_id')})`,
+    [id, viewerId, includeHidden]
+  );
   return r.rows[0] || null;
 };
 
 exports.deleteReel = handle(async (req, res) => {
-  const reel = await loadReel(req.params.id);
+  const reel = await loadReel(req.params.id, req.user.id, { includeHidden: true });
   const isStaff = ['admin', 'moderator'].includes(req.user.role);
   if (!reel || (reel.author_id !== req.user.id && !isStaff)) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   await db.query('UPDATE videos SET deleted_at = NOW() WHERE id = $1', [reel.id]);
@@ -135,7 +147,7 @@ const counts = async (id) => {
 };
 
 exports.like = handle(async (req, res) => {
-  const reel = await loadReel(req.params.id);
+  const reel = await loadReel(req.params.id, req.user.id);
   if (!reel) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   const ins = await db.query('INSERT INTO video_likes (video_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING 1', [reel.id, req.user.id]);
   if (ins.rows.length) await notify({ userId: reel.author_id, actorId: req.user.id, type: 'like', entityType: 'video', entityId: reel.id });
@@ -143,7 +155,7 @@ exports.like = handle(async (req, res) => {
 });
 
 exports.unlike = handle(async (req, res) => {
-  const reel = await loadReel(req.params.id);
+  const reel = await loadReel(req.params.id, req.user.id);
   if (!reel) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   await db.query('DELETE FROM video_likes WHERE video_id = $1 AND user_id = $2', [reel.id, req.user.id]);
   await retract({ userId: reel.author_id, actorId: req.user.id, type: 'like', entityId: reel.id });
@@ -151,32 +163,32 @@ exports.unlike = handle(async (req, res) => {
 });
 
 exports.save = handle(async (req, res) => {
-  const reel = await loadReel(req.params.id);
+  const reel = await loadReel(req.params.id, req.user.id);
   if (!reel) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   await db.query('INSERT INTO video_saves (video_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [reel.id, req.user.id]);
   return sendSuccess(res, { is_saved: true }, 'Saved.');
 });
 
 exports.unsave = handle(async (req, res) => {
-  const reel = await loadReel(req.params.id);
+  const reel = await loadReel(req.params.id, req.user.id);
   if (!reel) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   await db.query('DELETE FROM video_saves WHERE video_id = $1 AND user_id = $2', [reel.id, req.user.id]);
   return sendSuccess(res, { is_saved: false }, 'Removed from saved.');
 });
 
 exports.getComments = handle(async (req, res) => {
-  if (!isUuid(req.params.id)) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
+  if (!(await loadReel(req.params.id, req.user?.id || null))) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   const r = await db.query(
     `SELECT c.id, c.video_id, c.content, c.created_at, c.author_id, u.username, u.full_name, u.profile_picture_url AS avatar_url
        FROM video_comments c JOIN users u ON u.id = c.author_id
-      WHERE c.video_id = $1 AND c.deleted_at IS NULL ORDER BY c.created_at ASC LIMIT 500`,
-    [req.params.id]
+      WHERE c.video_id = $1 AND c.deleted_at IS NULL AND ${notBlocked('$2::uuid', 'c.author_id')} ORDER BY c.created_at ASC LIMIT 500`,
+    [req.params.id, req.user?.id || null]
   );
   return sendSuccess(res, r.rows, 'Comments.');
 });
 
 exports.addComment = handle(async (req, res) => {
-  const reel = await loadReel(req.params.id);
+  const reel = await loadReel(req.params.id, req.user.id);
   if (!reel) return sendError(res, 'Reel not found.', 404, 'NOT_FOUND', req);
   if (!moderateText(req.body.content).clean) return sendError(res, 'Your comment was blocked by our spam filter.', 400, 'CONTENT_REJECTED', req);
   const ins = await db.query('INSERT INTO video_comments (video_id, author_id, content) VALUES ($1, $2, $3) RETURNING id', [reel.id, req.user.id, req.body.content]);
