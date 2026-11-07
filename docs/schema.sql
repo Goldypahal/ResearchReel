@@ -53,6 +53,11 @@ CREATE TABLE public.bookmarks (
     post_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now()
 );
+CREATE TABLE public.comment_likes (
+    comment_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
 CREATE TABLE public.comments (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
     post_id uuid NOT NULL,
@@ -60,7 +65,9 @@ CREATE TABLE public.comments (
     parent_id uuid,
     content text NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    reply_to_user_id uuid,
+    edited_at timestamp with time zone
 );
 CREATE TABLE public.content_reports (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -420,6 +427,8 @@ ALTER TABLE ONLY public.billing_invoices
     ADD CONSTRAINT billing_invoices_stripe_invoice_id_key UNIQUE (stripe_invoice_id);
 ALTER TABLE ONLY public.bookmarks
     ADD CONSTRAINT bookmarks_pkey PRIMARY KEY (user_id, post_id);
+ALTER TABLE ONLY public.comment_likes
+    ADD CONSTRAINT comment_likes_pkey PRIMARY KEY (comment_id, user_id);
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.content_reports
@@ -497,6 +506,7 @@ ALTER TABLE ONLY public.workspaces
 CREATE INDEX idx_analytics_events_entity ON public.analytics_events USING btree (entity_id, entity_type);
 CREATE INDEX idx_analytics_events_type ON public.analytics_events USING btree (event_type);
 CREATE INDEX idx_bookmarks_user ON public.bookmarks USING btree (user_id, created_at DESC);
+CREATE INDEX idx_comments_parent ON public.comments USING btree (parent_id, created_at) WHERE (parent_id IS NOT NULL);
 CREATE INDEX idx_comments_post ON public.comments USING btree (post_id, created_at);
 CREATE INDEX idx_documents_created ON public.documents USING btree (created_at);
 CREATE INDEX idx_documents_owner ON public.documents USING btree (uploader_id);
@@ -546,12 +556,18 @@ ALTER TABLE ONLY public.bookmarks
     ADD CONSTRAINT bookmarks_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id);
 ALTER TABLE ONLY public.bookmarks
     ADD CONSTRAINT bookmarks_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+ALTER TABLE ONLY public.comment_likes
+    ADD CONSTRAINT comment_likes_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comments(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comment_likes
+    ADD CONSTRAINT comment_likes_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.users(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.comments(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comments
     ADD CONSTRAINT comments_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comments
+    ADD CONSTRAINT comments_reply_to_user_id_fkey FOREIGN KEY (reply_to_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.content_reports
     ADD CONSTRAINT content_reports_post_id_fkey FOREIGN KEY (post_id) REFERENCES public.posts(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.content_reports

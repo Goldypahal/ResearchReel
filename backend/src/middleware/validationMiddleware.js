@@ -2,7 +2,10 @@ const { z } = require('zod');
 
 const validate = (schema) => async (req, res, next) => {
   try {
-    await schema.parseAsync(req.body);
+    // Keep normalised values (trimmed, lower-cased emails); fields the schema
+    // doesn't describe pass through untouched.
+    const parsed = await schema.parseAsync(req.body);
+    req.body = { ...req.body, ...parsed };
     next();
   } catch (error) {
     const errorsList = error.errors || error.issues;

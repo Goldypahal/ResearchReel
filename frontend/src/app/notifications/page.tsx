@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Bell, BookOpen, CheckCheck, FolderKanban, Heart, MessageSquare, UserPlus } from 'lucide-react';
+import { AtSign, Bell, BookOpen, CheckCheck, FolderKanban, Heart, MessageSquare, UserPlus } from 'lucide-react';
 import { useSocial } from '@/context/SocialContext';
 import { errorMessage, notificationsApi, REACTIONS, type Notification } from '@/lib/api';
 import { cn, displayName, timeAgo } from '@/lib/utils';
@@ -11,7 +11,7 @@ import Avatar from '@/components/common/Avatar';
 import FollowButton from '@/components/common/FollowButton';
 
 const ICON: Record<string, React.ElementType> = {
-  follow: UserPlus, reaction: Heart, comment: MessageSquare, project_invite: FolderKanban,
+  follow: UserPlus, reaction: Heart, comment: MessageSquare, reply: MessageSquare, mention: AtSign, project_invite: FolderKanban,
   lecture_registration: BookOpen, lecture_question: BookOpen, lecture_cancelled: BookOpen, lecture_reminder: BookOpen,
 };
 
@@ -30,6 +30,10 @@ function describe(n: Notification): { text: React.ReactNode; href: string } {
       return { text: 'added you to a project.', href: n.entity_id ? `/projects/${n.entity_id}` : '/projects' };
     case 'comment':
       return { text: <>commented: <span className="opacity-80">“{n.message}”</span></>, href: postHref };
+    case 'reply':
+      return { text: <>replied to your comment: <span className="opacity-80">“{n.message}”</span></>, href: postHref };
+    case 'mention':
+      return { text: <>mentioned you: <span className="opacity-80">“{n.message}”</span></>, href: postHref };
     case 'lecture_registration':
       return { text: <>registered for your lecture <span className="font-medium">{n.message}</span>.</>, href: lectureHref };
     case 'lecture_question':

@@ -6,10 +6,11 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
   MoreHorizontal, MessageCircle, Bookmark, Share2, BookOpen, FileText, Sparkles,
-  AlertTriangle, Copy, Trash2, Send, X,
+  AlertTriangle, Copy, Trash2, X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { postsApi, REACTIONS, errorMessage, type Comment, type Post, type ReactionType } from '@/lib/api';
+import { postsApi, REACTIONS, errorMessage, type Post, type ReactionType } from '@/lib/api';
+import CommentThread from '@/components/comments/CommentThread';
 import { cn, displayName, formatCount, timeAgo } from '@/lib/utils';
 import { toast } from '@/components/ui/use-toast';
 import Avatar from '@/components/common/Avatar';
@@ -48,11 +49,7 @@ export default function PostCard({ post, onDeleted, onUnsaved, defaultCommentsOp
   const [saved, setSaved] = useState(post.is_bookmarked);
 
   const [commentsOpen, setCommentsOpen] = useState(defaultCommentsOpen);
-  const [comments, setComments] = useState<Comment[] | null>(null);
   const [commentCount, setCommentCount] = useState(post.comment_count);
-  const [commentsError, setCommentsError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
-  const [posting, setPosting] = useState(false);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
@@ -118,56 +115,7 @@ export default function PostCard({ post, onDeleted, onUnsaved, defaultCommentsOp
     return () => { obs.disconnect(); if (timer) window.clearTimeout(timer); };
   }, [post.id]);
 
-  const loadComments = async () => {
-    setCommentsError(null);
-    try {
-      const rows = await postsApi.getComments(post.id);
-      setComments(rows);
-      setCommentCount(rows.length);
-    } catch (err) {
-      setCommentsError(errorMessage(err, 'Could not load the discussion.'));
-    }
-  };
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads data / resets state when its inputs change
-    if (defaultCommentsOpen) loadComments();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const toggleComments = () => {
-    const next = !commentsOpen;
-    setCommentsOpen(next);
-    if (next && comments === null) loadComments();
-  };
-
-  const submitComment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const text = draft.trim();
-    if (!text || !requireAuth()) return;
-    setPosting(true);
-    try {
-      const created = await postsApi.addComment(post.id, text);
-      setComments((prev) => [...(prev || []), created]);
-      setCommentCount((c) => c + 1);
-      setDraft('');
-      setCommentsOpen(true);
-    } catch (err) {
-      toast({ title: 'Comment not posted', description: errorMessage(err), variant: 'destructive' });
-    } finally {
-      setPosting(false);
-    }
-  };
-
-  const removeComment = async (id: string) => {
-    try {
-      await postsApi.deleteComment(post.id, id);
-      setComments((prev) => (prev || []).filter((c) => c.id !== id));
-      setCommentCount((c) => Math.max(0, c - 1));
-    } catch (err) {
-      toast({ title: 'Could not delete comment', description: errorMessage(err), variant: 'destructive' });
-    }
-  };
+  const toggleComments = () => setCommentsOpen((open) => !open);
 
   const postUrl = () => `${window.location.origin}/post/${post.id}`;
 
@@ -387,59 +335,7 @@ export default function PostCard({ post, onDeleted, onUnsaved, defaultCommentsOp
 
       {/* Discussion */}
       {commentsOpen && (
-        <div className="mt-3 space-y-3 border-l-2 border-[var(--border)] pl-4">
-          {comments === null && !commentsError && <Spinner size={16} />}
-          {commentsError && (
-            <p className="text-xs text-red-400">
-              {commentsError} <button onClick={loadComments} className="underline">Retry</button>
-            </p>
-          )}
-          {comments?.length === 0 && <p className="text-xs text-muted-foreground">No comments yet. Start the discussion.</p>}
-          {comments?.map((c) => (
-            <div key={c.id} className="group flex gap-2.5">
-              <Avatar src={c.avatar_url} name={displayName(c)} size="xs" className="mt-0.5" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1 text-xs">
-                  <Link href={`/profile/${c.username}`} className="font-semibold hover:underline">{displayName(c)}</Link>
-                  <VerifiedBadge status={c.verification_status} size={11} />
-                  <span className="text-muted-foreground">· {timeAgo(c.created_at)}</span>
-                  {(user?.id === c.author_id || isOwn) && (
-                    <button
-                      onClick={() => removeComment(c.id)}
-                      className="ml-auto text-muted-foreground opacity-0 hover:text-red-400 group-hover:opacity-100"
-                      aria-label="Delete comment"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-                <p className="mt-0.5 whitespace-pre-wrap text-sm">{c.content}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {user && (
-        <form onSubmit={submitComment} className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-3">
-          <Avatar src={user.avatar_url} name={displayName(user)} size="xs" />
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onFocus={() => { if (!commentsOpen) toggleComments(); }}
-            placeholder="Add to the discussion…"
-            maxLength={2000}
-            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-          />
-          <button
-            type="submit"
-            disabled={!draft.trim() || posting}
-            className="text-indigo-400 disabled:opacity-40"
-            aria-label="Post comment"
-          >
-            {posting ? <Spinner size={14} /> : <Send size={16} />}
-          </button>
-        </form>
+        <CommentThread postId={post.id} postAuthorId={post.author_id} onCountChange={(d) => setCommentCount((c) => Math.max(0, c + d))} />
       )}
 
       {/* Options sheet */}

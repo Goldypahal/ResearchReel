@@ -12,6 +12,7 @@ import Avatar from '@/components/common/Avatar';
 import VerifiedBadge from '@/components/common/VerifiedBadge';
 import FollowButton from '@/components/common/FollowButton';
 import FollowModal from './FollowModal';
+import ProfileMenu from './ProfileMenu';
 
 const STATUS_LABEL: Record<string, string> = {
   scholar: 'Verified scholar',
@@ -24,9 +25,11 @@ interface ProfileHeaderProps {
   profile: Profile;
   onFollowChange?: (following: boolean) => void;
   onImportPapers?: () => void;
+  /** Block / mute changes from the profile menu. */
+  onProfileChange?: (patch: Partial<Profile>) => void;
 }
 
-export default function ProfileHeader({ profile, onFollowChange, onImportPapers }: ProfileHeaderProps) {
+export default function ProfileHeader({ profile, onFollowChange, onImportPapers, onProfileChange }: ProfileHeaderProps) {
   const { user } = useAuth();
   const router = useRouter();
   const [listType, setListType] = useState<'followers' | 'following' | null>(null);
@@ -93,10 +96,15 @@ export default function ProfileHeader({ profile, onFollowChange, onImportPapers 
                     </button>
                   )}
                 </>
+              ) : profile.is_blocked ? (
+                <>
+                  <span className="text-xs font-semibold text-muted-foreground">You blocked this account</span>
+                  {onProfileChange && <ProfileMenu profile={profile} onChange={onProfileChange} />}
+                </>
               ) : (
                 <>
                   {user ? (
-                    <FollowButton username={profile.username} initialFollowing={profile.is_following} onChange={onFollowChange} className="h-8" />
+                    <FollowButton key={String(profile.is_following)} username={profile.username} initialFollowing={profile.is_following} onChange={onFollowChange} className="h-8" />
                   ) : (
                     <Link href={`/auth/login?next=${encodeURIComponent(`/profile/${profile.username}`)}`} className="inline-flex h-8 items-center rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-500">
                       Follow
@@ -109,6 +117,7 @@ export default function ProfileHeader({ profile, onFollowChange, onImportPapers 
                   >
                     <MessageCircle size={13} /> Message
                   </button>
+                  {user && onProfileChange && <ProfileMenu profile={profile} onChange={onProfileChange} />}
                 </>
               )}
             </div>

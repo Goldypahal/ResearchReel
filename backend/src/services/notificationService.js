@@ -9,6 +9,11 @@ const { CATEGORY_FOR_TYPE } = require('./emailPreferences');
 const notify = async ({ userId, actorId, type, entityType = null, entityId = null, message = null }) => {
   if (!userId || userId === actorId) return null;
   try {
+    // Nobody hears from an account they blocked, or that blocked them.
+    if (actorId) {
+      const { isBlockedEitherWay } = require('./blockService');
+      if (await isBlockedEitherWay(userId, actorId)) return null;
+    }
     const result = await db.query(
       `INSERT INTO notifications (user_id, actor_id, type, entity_type, entity_id, message)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,

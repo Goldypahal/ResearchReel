@@ -6,7 +6,7 @@ const db = require('../config/db');
  * that produce an email in that category.
  */
 const CATEGORIES = [
-  { key: 'comments', label: 'Comments on your posts', defaultOn: true, types: ['comment'] },
+  { key: 'comments', label: 'Comments, replies and mentions', defaultOn: true, types: ['comment', 'reply', 'mention'] },
   { key: 'follows', label: 'New followers', defaultOn: true, types: ['follow'] },
   { key: 'projects', label: 'Project invitations', defaultOn: true, types: ['project_invite'] },
   { key: 'lecture_reminders', label: 'Reminders and changes for lectures you registered for', defaultOn: true, types: ['lecture_reminder', 'lecture_cancelled'] },

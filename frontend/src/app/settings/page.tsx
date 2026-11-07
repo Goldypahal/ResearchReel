@@ -2,11 +2,12 @@
 
 import React, { Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Bell, Check, Palette, Shield, Sparkles, User as UserIcon, BadgeCheck } from 'lucide-react';
+import { Ban, Bell, Check, Palette, Shield, Sparkles, User as UserIcon, BadgeCheck } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 import ProfileSettings from '@/components/settings/ProfileSettings';
 import VerificationSettings from '@/components/settings/VerificationSettings';
 import SecuritySettings from '@/components/settings/SecuritySettings';
+import PrivacySettings from '@/components/settings/PrivacySettings';
 import NotificationSettings from '@/components/settings/NotificationSettings';
 import AiSettings from '@/components/settings/AiSettings';
 import PlanSettings from '@/components/settings/PlanSettings';
@@ -20,6 +21,7 @@ const TABS = [
   { key: 'verification', label: 'Verification', icon: BadgeCheck },
   { key: 'notifications', label: 'Notifications', icon: Bell },
   { key: 'security', label: 'Security', icon: Shield },
+  { key: 'privacy', label: 'Blocked & muted', icon: Ban },
   { key: 'ai', label: 'AI & reels', icon: Sparkles },
   { key: 'appearance', label: 'Appearance', icon: Palette },
 ] as const;
@@ -57,7 +59,7 @@ function SettingsInner() {
     <div className="mx-auto max-w-3xl space-y-6 pb-12">
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight md:text-3xl">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Your profile, verification, notifications, security and AI preferences.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Your profile, verification, notifications, security, privacy and AI preferences.</p>
       </div>
 
       <div role="tablist" className="no-scrollbar flex items-center gap-1 overflow-x-auto border-b border-[var(--border)]">
@@ -78,6 +80,7 @@ function SettingsInner() {
       {tab === 'verification' && <VerificationSettings orcidResult={orcid} />}
       {tab === 'notifications' && <NotificationSettings />}
       {tab === 'security' && (<><SecuritySettings /><DangerZone /></>)}
+      {tab === 'privacy' && <PrivacySettings />}
       {tab === 'ai' && <AiSettings />}
       {tab === 'appearance' && <Appearance />}
     </div>

@@ -7,9 +7,12 @@ const validate = require('../middleware/validationMiddleware');
 const { registerSchema, loginSchema, otpSchema, emailOnlySchema, resetPasswordSchema } = require('../utils/validators');
 
 // Specific Rate Limiters
-const registerLimiter = rateLimiter(5, 3600); // 5 per hour
-const loginLimiter = rateLimiter(10, 900); // 10 per 15 mins
-const otpLimiter = rateLimiter(5, 300); // 5 per 5 mins
+const byEmail = (req) => (req.body && typeof req.body.email === 'string' ? req.body.email.trim() : null);
+// Per IP, and per email address so one account can't be hammered from many IPs.
+const registerLimiter = rateLimiter.action('register', { ip: 5, key: byEmail, window: 3600 });
+const loginLimiter = rateLimiter.action('login', { ip: 10, key: byEmail, window: 900 });
+const otpLimiter = rateLimiter.action('email-code', { ip: 5, key: byEmail, window: 300 });
+const accountLimiter = rateLimiter.action('account-change', { ip: 10, user: 5, window: 900 });
 
 /**
  * @swagger
@@ -184,6 +187,6 @@ const account = require('../controllers/accountController');
 router.get('/sessions', authMiddleware, account.listSessions);
 router.delete('/sessions/:id', authMiddleware, account.revokeSession);
 router.post('/sessions/revoke-others', authMiddleware, account.revokeOtherSessions);
-router.put('/password', authMiddleware, loginLimiter, account.changePassword);
+router.put('/password', authMiddleware, accountLimiter, account.changePassword);
 
 module.exports = router;

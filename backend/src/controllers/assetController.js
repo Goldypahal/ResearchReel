@@ -5,6 +5,9 @@ const documentRepository = require('../repositories/documentRepository');
 const { processDocument, uploadsRoot } = require('../services/documentProcessor');
 const { canAccessDocument } = require('../authorization/documentAuthorization');
 const { sendSuccess, sendError } = require('../utils/response');
+const searchService = require('../services/searchService');
+
+const syncSearch = (id) => searchService.syncDocument(id).catch((err) => console.warn(`[search] sync failed for ${id}: ${err.message}`));
 
 const ALLOWED = {
   '.pdf': 'application/pdf',
@@ -93,6 +96,7 @@ exports.updateAsset = async (req, res, next) => {
       visibility,
     });
     if (!doc) return sendError(res, 'Document not found.', 404, 'NOT_FOUND', req);
+    await syncSearch(doc.id);
     return sendSuccess(res, doc, 'Document updated.');
   } catch (error) {
     next(error);
@@ -106,6 +110,7 @@ exports.softDeleteAsset = async (req, res, next) => {
     if (!success) {
       return sendError(res, 'Document not found or unauthorized.', 404, 'NOT_FOUND', req);
     }
+    await syncSearch(req.params.id);
     return sendSuccess(res, { id: req.params.id }, 'Document deleted.');
   } catch (error) {
     next(error);

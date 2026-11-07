@@ -57,7 +57,8 @@ const { processDocument } = require('../src/services/documentProcessor');
 const app = require('../src/app');
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
-const token = jwt.sign({ id: USER_ID, verification_status: 'verified', typ: 'access' }, process.env.JWT_SECRET || 'testsecret');
+const token = jwt.sign(
+      { sid: 'test-session', id: USER_ID, verification_status: 'verified', typ: 'access' }, process.env.JWT_SECRET || 'testsecret');
 
 describe('Document upload', () => {
   let pdfPath;

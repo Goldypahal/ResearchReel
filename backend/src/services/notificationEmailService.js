@@ -8,7 +8,7 @@ const FRONTEND_URL = () => (process.env.FRONTEND_URL || 'http://localhost:3000')
 const API_ORIGIN = () => (process.env.PUBLIC_API_ORIGIN || process.env.API_URL || 'http://localhost:5000').replace(/\/$/, '');
 
 /** At most one email per recipient for bursts of the same activity. */
-const THROTTLE_SECONDS = { comment: 3600, reaction: 3600, lecture_question: 3600, lecture_registration: 3600, follow: 600 };
+const THROTTLE_SECONDS = { comment: 3600, reply: 1800, mention: 1800, reaction: 3600, lecture_question: 3600, lecture_registration: 3600, follow: 600 };
 
 const throttleKey = (n) =>
   n.type === 'follow' ? `emailthrottle:${n.user_id}:follow` : `emailthrottle:${n.user_id}:${n.type}:${n.entity_id || 'none'}`;
@@ -82,6 +82,10 @@ const compose = (n, e) => {
   switch (n.type) {
     case 'comment':
       return { subject: `${actor} commented on your post`, heading: `${actor} commented on “${e.title || 'your post'}”`, quote: clip(n.message, 300), ctaLabel: 'Reply', ctaUrl: postUrl };
+    case 'reply':
+      return { subject: `${actor} replied to you`, heading: `${actor} replied to your comment on “${e.title || 'a post'}”`, quote: clip(n.message, 300), ctaLabel: 'Reply', ctaUrl: postUrl };
+    case 'mention':
+      return { subject: `${actor} mentioned you`, heading: `${actor} mentioned you in a comment on “${e.title || 'a post'}”`, quote: clip(n.message, 300), ctaLabel: 'View comment', ctaUrl: postUrl };
     case 'reaction':
       return { subject: `${actor} reacted to your post`, heading: `${actor} reacted to “${e.title || 'your post'}”`, ctaLabel: 'View post', ctaUrl: postUrl };
     case 'follow':

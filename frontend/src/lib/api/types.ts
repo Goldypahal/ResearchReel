@@ -39,6 +39,18 @@ export interface Profile extends UserCard {
   reel_count: number;
   reactions_received: number;
   is_self: boolean;
+  /** The viewer blocked / muted this account. */
+  is_blocked?: boolean;
+  is_muted?: boolean;
+}
+
+export interface BlockedAccount {
+  id: string;
+  username: string;
+  full_name?: string | null;
+  verification_status: VerificationStatus;
+  avatar_url?: string | null;
+  created_at: string;
 }
 
 export interface Post {
@@ -71,15 +83,27 @@ export interface Post {
 export interface Comment {
   id: string;
   post_id: string;
-  parent_id?: string | null;
-  content: string;
+  /** Top-level comment this reply belongs to; null for top-level comments. */
+  parent_id: string | null;
+  /** Null when the comment was deleted but is kept for its replies. */
+  content: string | null;
   created_at: string;
-  author_id: string;
-  username: string;
+  edited_at: string | null;
+  is_deleted: boolean;
+  author_id: string | null;
+  username: string | null;
   full_name?: string | null;
-  verification_status: VerificationStatus;
+  verification_status: VerificationStatus | null;
   avatar_url?: string | null;
+  /** Who this reply answered (shown as "replying to @…"). */
+  reply_to_username: string | null;
+  like_count: number;
+  reply_count: number;
+  viewer_liked: boolean;
+  is_post_author: boolean;
 }
+
+export type CommentSort = 'top' | 'new';
 
 export interface Notification {
   id: string;

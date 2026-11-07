@@ -242,7 +242,7 @@ describe('Backend Smoke Tests', () => {
 
     it('should allow access to private routes if a valid token is provided', async () => {
       const token = jwt.sign(
-        { id: 1, verification_status: 'verified' },
+      { sid: 'test-session', id: 1, verification_status: 'verified' },
         process.env.JWT_SECRET || 'testsecret'
       );
 
@@ -257,7 +257,8 @@ describe('Backend Smoke Tests', () => {
     });
 
     it('rejects student verification with a non-academic email', async () => {
-      const token = jwt.sign({ id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
+      const token = jwt.sign(
+      { sid: 'test-session', id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
       const response = await request(app)
         .post('/api/v1/auth/verify/student')
         .set('Authorization', `Bearer ${token}`)
@@ -267,7 +268,8 @@ describe('Backend Smoke Tests', () => {
     });
 
     it('does not let a client choose its own ORCID iD', async () => {
-      const token = jwt.sign({ id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
+      const token = jwt.sign(
+      { sid: 'test-session', id: 1, verification_status: 'verified' }, process.env.JWT_SECRET || 'testsecret');
       const response = await request(app)
         .post('/api/v1/auth/verify/orcid')
         .set('Authorization', `Bearer ${token}`)

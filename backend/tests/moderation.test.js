@@ -61,11 +61,11 @@ describe('Integration Tests: Content Moderation & Reporting', () => {
 
   beforeAll(() => {
     userToken = jwt.sign(
-      { id: 'user-id-123', verification_status: 'verified', role: 'user' },
+      { sid: 'test-session', id: 'user-id-123', verification_status: 'verified', role: 'user' },
       process.env.JWT_SECRET || 'testsecret'
     );
     adminToken = jwt.sign(
-      { id: 'admin-id-123', verification_status: 'verified', role: 'admin' },
+      { sid: 'test-session', id: 'admin-id-123', verification_status: 'verified', role: 'admin' },
       process.env.JWT_SECRET || 'testsecret'
     );
   });
