@@ -31,6 +31,7 @@ exports.getMessages = async (req, res, next) => {
     const conversationId = req.params.conversationId || req.params.conversation_id;
     const { cursor, limit } = req.query;
 
+    if (!isUuid(conversationId)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
     const result = await chatService.getMessages(conversationId, req.user.id, cursor, parseInt(limit) || 50);
     return sendSuccess(res, { messages: result.messages, nextCursor: result.nextCursor }, 'Messages retrieved.');
   } catch (error) {
@@ -38,23 +39,34 @@ exports.getMessages = async (req, res, next) => {
   }
 };
 
-// Send Message (Section 28 / 29 - sender_id ALWAYS derived from req.user.id)
+const MAX_MESSAGE_LENGTH = 4000;
+const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ''));
+
+// Send Message: sender is always the caller. Only text messages exist today, so
+// client-supplied attachment URLs and message types are refused rather than stored.
 exports.sendMessage = async (req, res, next) => {
   try {
-    const { conversation_id, conversationId, content, message_type, file_url } = req.body;
+    const { conversation_id, conversationId, content, message_type, file_url } = req.body || {};
     const targetConversationId = conversationId || conversation_id;
-    const sender_id = req.user.id; // Enforce server-side sender identity
+    const text = typeof content === 'string' ? content.trim() : '';
 
-    if (!targetConversationId || !content) {
-      return sendError(res, 'conversationId and content are required.', 400, 'VALIDATION_ERROR', req);
+    if (!isUuid(targetConversationId)) {
+      return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
+    }
+    if (!text) return sendError(res, 'Write a message first.', 400, 'VALIDATION_ERROR', req);
+    if (text.length > MAX_MESSAGE_LENGTH) {
+      return sendError(res, `Messages are limited to ${MAX_MESSAGE_LENGTH} characters.`, 400, 'VALIDATION_ERROR', req);
+    }
+    if ((message_type && message_type !== 'text') || file_url) {
+      return sendError(res, 'Only text messages are supported.', 400, 'VALIDATION_ERROR', req);
     }
 
     const message = await chatService.sendMessage({
       conversation_id: targetConversationId,
-      sender_id,
-      content: content || '',
-      message_type: message_type || 'text',
-      file_url: file_url || null
+      sender_id: req.user.id,
+      content: text,
+      message_type: 'text',
+      file_url: null
     });
 
     return sendSuccess(res, message, 'Message sent successfully.', 201);
@@ -69,6 +81,7 @@ exports.markAsRead = async (req, res, next) => {
     const { conversation_id, conversationId } = req.body;
     const targetConversationId = conversationId || conversation_id;
     const user_id = req.user.id;
+    if (!isUuid(targetConversationId)) return sendError(res, 'Conversation not found.', 404, 'NOT_FOUND', req);
 
     await chatService.markAsRead({ conversation_id: targetConversationId, user_id });
     return sendSuccess(res, {}, 'Messages marked as read.');

@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const moderationController = require('../controllers/moderationController');
 const { authMiddleware, checkRole } = require('../middleware/authMiddleware');
+const rateLimiter = require('../middleware/rateLimiter');
 
 // Report a Post (Available to any authenticated user)
-router.post('/report', authMiddleware, moderationController.createReport);
+router.post('/report', authMiddleware, rateLimiter.action('report', { ip: 40, user: 20, window: 3600 }), moderationController.createReport);
 
 // Admin / Moderator Only routes
 router.get('/reports', authMiddleware, checkRole(['admin', 'moderator']), moderationController.listReports);

@@ -39,6 +39,18 @@ export interface Profile extends UserCard {
   reel_count: number;
   reactions_received: number;
   is_self: boolean;
+  /** The viewer blocked / muted this account. */
+  is_blocked?: boolean;
+  is_muted?: boolean;
+}
+
+export interface BlockedAccount {
+  id: string;
+  username: string;
+  full_name?: string | null;
+  verification_status: VerificationStatus;
+  avatar_url?: string | null;
+  created_at: string;
 }
 
 export interface Post {

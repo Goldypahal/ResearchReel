@@ -2,6 +2,7 @@ const socialService = require('../services/socialService');
 const feedService = require('../services/feedService');
 const notificationService = require('../services/notificationService');
 const storyService = require('../services/storyService');
+const blockService = require('../services/blockService');
 const { sendSuccess, sendError } = require('../utils/response');
 
 const viewer = (req) => (req.user ? req.user.id : null);
@@ -104,3 +105,10 @@ exports.deleteStory = wrap(async (req, res) => {
   if (!ok) return sendError(res, 'Story not found.', 404, 'NOT_FOUND', req);
   return sendSuccess(res, {}, 'Story deleted.');
 });
+
+// ---- Blocking and muting --------------------------------------------------
+exports.listBlocked = wrap(async (req, res) => sendSuccess(res, await blockService.list(req.user.id), 'Blocked and muted accounts.'));
+exports.block = wrap(async (req, res) => sendSuccess(res, await blockService.block(req.user.id, req.params.username), 'Blocked.'));
+exports.unblock = wrap(async (req, res) => sendSuccess(res, await blockService.unblock(req.user.id, req.params.username), 'Unblocked.'));
+exports.mute = wrap(async (req, res) => sendSuccess(res, await blockService.mute(req.user.id, req.params.username), 'Muted.'));
+exports.unmute = wrap(async (req, res) => sendSuccess(res, await blockService.unmute(req.user.id, req.params.username), 'Unmuted.'));

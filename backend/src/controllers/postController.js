@@ -73,6 +73,7 @@ exports.deletePost = async (req, res, next) => {
       [req.params.id, req.user.id]
     );
     if (!result.rowCount) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
+    await require('../services/searchService').removeEntity('posts', req.params.id).catch(() => {});
     return sendSuccess(res, { id: req.params.id }, 'Post deleted.');
   } catch (error) {
     next(error);
@@ -149,7 +150,7 @@ exports.likeComment = async (req, res, next) => {
 
 exports.bookmark = async (req, res, next) => {
   try {
-    const post = await feedService.getPostById(req.params.id, null);
+    const post = await feedService.getPostById(req.params.id, req.user.id);
     if (!post) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
     return sendSuccess(res, await feedService.setBookmark(req.user.id, post.id, true), 'Saved.');
   } catch (error) {
@@ -218,7 +219,7 @@ exports.reactToPost = async (req, res, next) => {
   try {
     const { post_id, reaction_type } = req.body;
     const user_id = req.user.id;
-    const post = isUuid(post_id) ? await feedService.getPostById(post_id, null) : null;
+    const post = isUuid(post_id) ? await feedService.getPostById(post_id, user_id) : null;
     if (!post) return sendError(res, 'Post not found.', 404, 'NOT_FOUND', req);
 
     const applied = await feedService.reactToPost({ post_id, user_id, reaction_type: reaction_type || null });
