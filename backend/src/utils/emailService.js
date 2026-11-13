@@ -2,10 +2,16 @@ const nodemailer = require('nodemailer');
 const logger = require('./logger');
 
 /**
- * Email delivery. Configure any SMTP provider (Resend, SendGrid, Brevo, Mailgun, Gmail app password):
- *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM
- * Legacy Gmail config (EMAIL_USER / EMAIL_PASS) is still supported.
+ * Email delivery, in order of preference:
+ *   1. Resend over HTTPS: RESEND_API_KEY (works on hosts that block SMTP ports)
+ *   2. Any SMTP provider: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+ *   3. Legacy Gmail: EMAIL_USER / EMAIL_PASS
+ * EMAIL_FROM sets the sender, e.g. "ResearchReel <no-reply@yourdomain.com>". With Resend the
+ * domain must be verified there; until then only Resend's test sender works, and it can only
+ * deliver to the email address of the Resend account itself.
  */
+const RESEND_TEST_SENDER = 'ResearchReel <onboarding@resend.dev>';
+const useResend = () => Boolean(process.env.RESEND_API_KEY);
 let transporter = null;
 const getTransporter = () => {
   if (transporter) return transporter;
@@ -26,9 +32,26 @@ const getTransporter = () => {
   return transporter;
 };
 
-const isEmailConfigured = () => Boolean(process.env.SMTP_HOST || (process.env.EMAIL_USER && process.env.EMAIL_PASS));
+const isEmailConfigured = () => Boolean(useResend() || process.env.SMTP_HOST || (process.env.EMAIL_USER && process.env.EMAIL_PASS));
 
-const fromAddress = () => process.env.EMAIL_FROM || `"ResearchReel" <${process.env.SMTP_USER || process.env.EMAIL_USER || 'no-reply@researchreel.app'}>`;
+const fromAddress = () => process.env.EMAIL_FROM
+  || (useResend() ? RESEND_TEST_SENDER : `"ResearchReel" <${process.env.SMTP_USER || process.env.EMAIL_USER || 'no-reply@researchreel.app'}>`);
+
+/** Sends through Resend's REST API (https://resend.com/docs/api-reference/emails/send-email). */
+const sendWithResend = async ({ to, subject, html, text, headers }) => {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: fromAddress(), to: [to], subject, html, text, headers }),
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { const body = await res.json(); detail = body.message || body.name || ''; } catch (e) { /* not JSON */ }
+    throw new Error(`Resend ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
+  return true;
+};
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -49,12 +72,20 @@ const deliver = async ({ to, subject, html, text, headers, devLog }) => {
     outbox.push({ to, subject, html, text, headers: headers || {} });
     return true;
   }
+  if (useResend()) {
+    try {
+      return await sendWithResend({ to, subject, html, text, headers });
+    } catch (error) {
+      logger.error(`[email] Failed to send "${subject}" to ${to}: ${error.message}`);
+      return false;
+    }
+  }
   const t = getTransporter();
   if (!t) {
     if (process.env.NODE_ENV !== 'production') {
       console.log(`\n========== [DEV EMAIL] to ${to} ==========\n${devLog}\n===========================================\n`);
     } else {
-      logger.warn(`[email] SMTP is not configured; could not send "${subject}" to ${to}. Set SMTP_HOST/SMTP_USER/SMTP_PASS or REQUIRE_EMAIL_VERIFICATION=false.`);
+      logger.warn(`[email] SMTP is not configured; could not send "${subject}" to ${to}. Set RESEND_API_KEY (or SMTP_HOST/SMTP_USER/SMTP_PASS), or REQUIRE_EMAIL_VERIFICATION=false.`);
     }
     return false;
   }

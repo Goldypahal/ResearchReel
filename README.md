@@ -64,7 +64,7 @@ RAG_API_KEY=dev-key GEMINI_API_KEY=... uvicorn app.main:app --port 8000
 # then in backend/.env: RAG_SERVICE_URL=http://localhost:8000 and RAG_API_KEY=dev-key
 ```
 
-Open http://localhost:3000 and create an account. Without SMTP configured, the verification code is printed in the backend console. To skip email verification locally, set `REQUIRE_EMAIL_VERIFICATION=false` in `backend/.env`.
+Open http://localhost:3000 and create an account. Without email configured, the verification code is printed in the backend console. To skip email verification locally, set `REQUIRE_EMAIL_VERIFICATION=false` in `backend/.env`.
 
 Create an admin account (for the moderation console):
 
@@ -104,7 +104,7 @@ All backend settings are documented in [`backend/.env.example`](backend/.env.exa
 |---|---|---|
 | `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET` | API | Required |
 | `FRONTEND_URL` | API | Public URL of the web app (CORS, email links) |
-| `SMTP_*`, `EMAIL_FROM` | API | Sending verification codes and reset links |
+| `RESEND_API_KEY` (or `SMTP_*`), `EMAIL_FROM` | API | Sending verification codes, reset links and notifications |
 | `REQUIRE_EMAIL_VERIFICATION` | API | Set `false` to allow sign-up without email |
 | `GEMINI_API_KEY` | API, RAG | Turns on AI features (optional) |
 | `RAG_SERVICE_URL`, `RAG_API_KEY` | API | Connects the Research RAG service (optional) |

@@ -16,7 +16,7 @@ Paid instance types are needed because the API uses a persistent disk and the se
 
 Have these ready (all optional except where noted):
 
-- **SMTP credentials** for sending verification codes. Any provider works: Resend, SendGrid, Brevo, Mailgun, or a Gmail app password. If you don't have one yet, deploy with `REQUIRE_EMAIL_VERIFICATION=false` and turn it on later.
+- **Email sending**: a [Resend](https://resend.com) API key plus a domain you've verified in Resend (Domains → Add domain, then add the DNS records it shows). Without a verified domain Resend only delivers to your own account's address, so other people would never get their sign-up code. Any SMTP provider works instead. If you have neither yet, deploy with `REQUIRE_EMAIL_VERIFICATION=false` and turn it on later.
 - **Gemini API key** (https://aistudio.google.com/) to enable AI answers, summaries, AI-written reel scripts and narration. Without it, everything else works and the AI pages say AI isn't enabled.
 - A **custom domain** (optional).
 
@@ -26,7 +26,7 @@ Have these ready (all optional except where noted):
 2. Render reads `render.yaml` and asks for the `sync: false` values. Enter:
    - `FRONTEND_URL`: `https://researchreel-web.onrender.com` (the web service's URL; adjust if Render gives it a different name, or use your custom domain)
    - `NEXT_PUBLIC_UPLOAD_URL`: `https://researchreel-api.onrender.com` (the API's public URL; lets large uploads skip the web server)
-   - `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`: your email provider's details (leave blank if you set `REQUIRE_EMAIL_VERIFICATION=false`)
+   - `RESEND_API_KEY` and `EMAIL_FROM` (for example `ResearchReel <no-reply@yourdomain.com>`, on your verified domain). Leave the `SMTP_*` values blank. Paste the key only into Render, never into the repo.
    - `GEMINI_API_KEY`: optional for the API; **required for `researchreel-rag`** (enter the same key for both). The RAG service also uses it for embeddings
    - `COHERE_API_KEY` (RAG service): optional, improves which passages are picked
    - `CROSSREF_MAILTO`, `NEXT_PUBLIC_SUPPORT_EMAIL`: optional, your contact email
@@ -70,7 +70,7 @@ Uploads are checked by file signature always. To also scan them for malware, run
 
 ## Email notifications
 
-With SMTP configured, users get emails for comments, replies and mentions, new followers, project invitations, lecture reminders (24 hours and 1 hour before, in their own time zone), cancellations and finished reels. Likes are off by default. Each person chooses categories under **Settings → Notifications**, and every email has an unsubscribe link plus one-click `List-Unsubscribe` headers that mail apps show. Bursts are throttled (for example, one email per hour for many comments on the same post). Emails are sent by the worker in the API process.
+With email configured, users get emails for comments, replies and mentions, new followers, project invitations, lecture reminders (24 hours and 1 hour before, in their own time zone), cancellations and finished reels. Likes are off by default. Each person chooses categories under **Settings → Notifications**, and every email has an unsubscribe link plus one-click `List-Unsubscribe` headers that mail apps show. Bursts are throttled (for example, one email per hour for many comments on the same post). Emails are sent by the worker in the API process.
 
 ## Operations
 
