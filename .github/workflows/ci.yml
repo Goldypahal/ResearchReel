@@ -142,6 +142,9 @@ jobs:
       EMAIL_FROM: '"ResearchReel" <no-reply@researchreel.test>'
       BACKEND_URL: http://localhost:5000
       NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      # The browser tests sign up and sign in many accounts from one IP, which the (now working)
+      # auth rate limits rightly block. Limits are covered by backend/tests/rateLimit.test.js.
+      DISABLE_RATE_LIMIT: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
