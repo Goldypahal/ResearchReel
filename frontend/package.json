@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
-    "@react-three/drei": "^10.7.7",
+    "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.5.0",
     "@sentry/nextjs": "^10.78.0",
     "@types/three": "^0.183.1",
