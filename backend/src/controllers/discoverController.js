@@ -24,7 +24,7 @@ exports.explore = async (req, res, next) => {
     );
     const reels = await db.query(
       `${REEL_SELECT}
-        WHERE v.deleted_at IS NULL AND v.status = 'published' AND v.visibility = 'public' AND v.created_at > NOW() - INTERVAL '90 days'
+        WHERE v.deleted_at IS NULL AND v.source_type = 'upload' AND v.status = 'published' AND v.visibility = 'public' AND v.created_at > NOW() - INTERVAL '90 days'
           AND ${notBlocked('$1::uuid', 'v.author_id')} AND ${notMuted('$1::uuid', 'v.author_id')}
         ORDER BY ((SELECT COUNT(*) FROM video_likes l WHERE l.video_id = v.id) * 2 + 1)
                  / POWER(EXTRACT(EPOCH FROM (NOW() - v.created_at)) / 3600 + 2, 1.2) DESC
@@ -68,7 +68,7 @@ exports.discover = async (req, res, next) => {
               CASE WHEN $1::uuid IS NULL THEN FALSE
                    ELSE EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1::uuid AND f.following_id = u.id) END AS is_following
          FROM users u
-        WHERE u.is_deleted IS NOT TRUE AND u.email_verified IS TRUE AND ($1::uuid IS NULL OR u.id <> $1::uuid)
+        WHERE u.is_deleted IS NOT TRUE AND u.is_system IS NOT TRUE AND u.email_verified IS TRUE AND ($1::uuid IS NULL OR u.id <> $1::uuid)
           AND ${notBlocked('$1::uuid', 'u.id')}
         ORDER BY new_followers DESC, followers_count DESC, u.created_at DESC
         LIMIT 12`,

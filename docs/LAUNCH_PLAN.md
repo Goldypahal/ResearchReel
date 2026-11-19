@@ -41,8 +41,8 @@ Goal: by Wednesday nothing exploitable is left, and rate limiting is proven to w
 **Day 3 (Mon 23 Nov): real client IP behind the proxy**
 
 - [ ] Log `req.ip` and the raw `X-Forwarded-For` on a test endpoint, deploy to a throwaway Render service, then call it from two different networks (Wi-Fi and phone data).
-- [x] If both show the same IP, set `TRUST_PROXY_HOPS` to match the number of hops (probably 2). Document it in `DEPLOYMENT.md` and `render.yaml`.
-- [x] Socket.io: check that its connection rate limit uses the same client IP.
+- [ ] Measure from two networks and confirm hop count. If the API is a public web service, someone calling `onrender.com` directly can spoof IP if 2 hops are trusted; either keep API as a private service (`type: pserv`) reached only via the Next.js proxy, or measure and adjust.
+- [x] Socket.io: enforce connection handshake rate limiting by client IP (max 30/min in Redis) and event throttling (max 20 events/sec).
 
 **Day 4 (Tue 24 Nov): dependencies and CI**
 
@@ -68,18 +68,20 @@ Goal: a staging copy of production runs on Render, stores files in object storag
 **Day 6 (Thu 26 Nov): object storage**
 
 - [ ] Create a Cloudflare R2 bucket (free egress) with a public custom domain such as `media.yourdomain.com`.
-- [ ] Set the `S3_*` variables. Upload a post image, a PDF and a video, and check that all three load from R2.
-- [ ] Remove the 10 GB `uploads` disk from the API in `render.yaml`. With no disk, the API can run more than one instance.
+- [ ] Set the `S3_*` variables in Render before syncing Blueprint (API and worker run in separate containers without local uploads disk). If an existing deploy has files on disk, copy them off first.
+- [x] Remove the 10 GB `uploads` disk from the API in `render.yaml` and configure S3/R2 storage settings.
 
 **Day 7 (Fri 27 Nov): split the worker out**
 
 - [x] Add a Render Background Worker in `render.yaml` that runs `node src/worker.js`, and set `START_WORKER=false` on the API.
-- [x] Give the worker at least 2 GB RAM, since FFmpeg renders reels there. Leave the API on starter, or standard if memory gets tight.
+- [x] Give the worker at least 2 GB RAM, since FFmpeg renders reels there.
+- [x] Provide worker with required RAG and email environment variables in `render.yaml`.
 - [ ] Render a 3-minute reel and watch memory in Render's metrics. Lower the BullMQ worker concurrency to 1 if it climbs above 80%.
 
 **Day 8 (Mon 30 Nov): error monitoring and uptime**
 
-- [ ] Create a Sentry project. Set `NEXT_PUBLIC_SENTRY_DSN` on the web service, and add `@sentry/node` to the API and worker.
+- [x] Add `@sentry/node` to backend API and worker, and configure Sentry initialization in `server.js`, `app.js` and `worker.js`.
+- [ ] Create a Sentry project in Sentry dashboard, and populate `SENTRY_DSN` and `NEXT_PUBLIC_SENTRY_DSN` in Render.
 - [ ] Set up uptime checks (Better Stack or UptimeRobot, free tier) on `/api/v1/health` and the home page, with alerts to your phone.
 - [ ] Make sure logs show request IDs, and that they never contain passwords, sign-up codes or tokens.
 
@@ -199,9 +201,9 @@ Launch on 15 Dec only if every **Must** item is checked. If a **Should** item is
 
 **Should**
 
-- [x] Files are stored in R2 and the worker runs as its own service (Blueprint configured)
+- [ ] Files are stored in R2 and the worker runs as its own service (Blueprint configured; create R2 bucket and set S3_* credentials before deploy)
 - [ ] The load test meets its targets (feed p95 under 500 ms, error rate under 1%)
-- [x] `AI_DAILY_LIMIT` is set and a Gemini billing alert is active
+- [ ] `AI_DAILY_LIMIT` is set in Blueprint and a Gemini billing alert is active in Google Cloud Console
 - [x] Accounts lock after 10 failed logins
 - [x] The runbook exists in `docs/RUNBOOK.md`
 - [ ] Link previews look right in WhatsApp, X and LinkedIn

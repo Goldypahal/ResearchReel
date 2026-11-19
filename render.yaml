@@ -20,13 +20,14 @@ services:
     ipAllowList: [] # private network only
 
   # API server (Express + Socket.io). Runs migrations on every start.
-  - type: web
+  # Configured as a private service so only the Next.js frontend and background
+  # worker can reach it over Render's private network. Prevents IP spoofing on onrender.com.
+  - type: pserv
     name: researchreel-api
     runtime: docker
     dockerContext: ./backend
     dockerfilePath: ./backend/Dockerfile
     plan: starter
-    healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -120,12 +121,12 @@ services:
           property: connectionString
       - key: JWT_SECRET
         fromService:
-          type: web
+          type: pserv
           name: researchreel-api
           envVarKey: JWT_SECRET
       - key: ENCRYPTION_KEY
         fromService:
-          type: web
+          type: pserv
           name: researchreel-api
           envVarKey: ENCRYPTION_KEY
       - key: FRONTEND_URL
@@ -146,6 +147,30 @@ services:
         sync: false
       - key: S3_PUBLIC_URL
         sync: false
+      # Email settings for notification jobs
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      # RAG service access for document indexing jobs
+      - key: RAG_SERVICE_URL
+        fromService:
+          type: pserv
+          name: researchreel-rag
+          property: hostport
+      - key: RAG_API_KEY
+        fromService:
+          type: pserv
+          name: researchreel-rag
+          envVarKey: RAG_API_KEY
 
   # Research RAG service (Python/FastAPI): indexes every uploaded PDF and answers
   # questions across several papers with page citations. Private: only the API can reach it.
@@ -190,7 +215,7 @@ services:
         value: "1"
       - key: BACKEND_HOSTPORT
         fromService:
-          type: web
+          type: pserv
           name: researchreel-api
           property: hostport
       - key: NEXT_PUBLIC_UPLOAD_URL

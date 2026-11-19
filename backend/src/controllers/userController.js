@@ -209,7 +209,7 @@ exports.getSuggestions = async (req, res, next) => {
                    SELECT unnest(me.research_interests))), 0) END)::int AS shared_interests
          FROM users u
          LEFT JOIN users me ON me.id = $1::uuid
-        WHERE u.is_deleted IS NOT TRUE AND u.email_verified IS TRUE
+        WHERE u.is_deleted IS NOT TRUE AND u.is_system IS NOT TRUE AND u.email_verified IS TRUE
           AND ($1::uuid IS NULL OR u.id <> $1::uuid)
           AND ($1::uuid IS NULL OR NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1::uuid AND f.following_id = u.id))
           AND ${notBlocked('$1::uuid', 'u.id')}

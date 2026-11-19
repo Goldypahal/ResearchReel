@@ -8,7 +8,7 @@ A social platform for research. People share findings as posts, papers and short
 - **Feed**: posts with text, images or a PDF paper; likes, bookmarks, #tags and @mentions; "Following" and "Everyone" feeds; 24-hour stories
 - **Discussions**: threaded comments with replies, @mention suggestions, likes, edits and Top/Newest sorting
 - **Safety**: block (both accounts disappear for each other) and mute (quietly hide someone from your feeds); ClamAV malware scanning of uploads (optional)
-- **Reels**: vertical video feed; upload your own video, or generate an explainer reel from a paper (script → editable scenes → rendered MP4 with optional AI narration)
+- **Reels**: vertical video feed; upload your own video, or generate an explainer reel from a paper (script → editable scenes → rendered MP4 with optional AI narration); a **Research Picks** feed of ~6,000 curated talks and lectures embedded from YouTube (`npm run import:picks`), shown as 60-second previews with a full-length player at `/watch/<id>`
 - **Library**: upload PDFs (text is extracted for search and AI), or import publications by DOI or ORCID via Crossref
 - **AI assistant** (optional, Gemini): ask questions about up to ten papers at once, with answers that cite the page each point comes from; summaries; conversation history
 - **Research tools** (with the Research RAG service): compare papers, draft a literature review, find research gaps and contradictions, build a timeline

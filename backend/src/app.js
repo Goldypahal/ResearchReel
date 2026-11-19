@@ -100,6 +100,12 @@ app.use((err, req, res, next) => {
   const statusCode = Number.isInteger(err.statusCode) ? err.statusCode : 500;
   if (statusCode >= 500) {
     logger.error(`[${req.id}] ${req.method} ${req.originalUrl}: ${err.stack || err.message}`);
+    if (process.env.SENTRY_DSN) {
+      try {
+        const Sentry = require('@sentry/node');
+        Sentry.captureException(err);
+      } catch (_) {}
+    }
     const expose = err.code === 'AI_UNAVAILABLE' || err.code === 'QUEUE_UNAVAILABLE' || err.code === 'EXTERNAL_SERVICE_ERROR';
     return sendError(res, expose ? err.message : 'Something went wrong on our side. Please try again.', statusCode, expose ? err.code : 'INTERNAL_SERVER_ERROR', req);
   }

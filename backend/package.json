@@ -12,7 +12,8 @@
     "migrate:create": "node-pg-migrate create",
     "seed": "node src/scripts/seed.js",
     "lint": "node --check src/server.js",
-    "rag:reindex": "node src/scripts/ragReindex.js"
+    "rag:reindex": "node src/scripts/ragReindex.js",
+    "import:picks": "node src/scripts/importYoutubePicks.js"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +21,7 @@
   "type": "commonjs",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1163.0",
+    "@sentry/node": "^10.78.0",
     "argon2": "^0.44.0",
     "axios": "^1.18.1",
     "bullmq": "^5.78.1",

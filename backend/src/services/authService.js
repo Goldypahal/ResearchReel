@@ -22,7 +22,7 @@ class AuthError extends Error {
 const USER_PUBLIC_COLUMNS = `
   id, email, username, full_name, bio, profile_picture_url, verification_status,
   role, subscription_tier, email_verified, institution, website, research_interests,
-  orcid_id, timezone, created_at
+  orcid_id, timezone, terms_accepted_at, created_at
 `;
 
 /** Strips secrets and normalises a user row for API responses. */
@@ -127,8 +127,8 @@ const register = async ({ email, username, password, full_name, reqInfo }) => {
 
   if (!emailVerificationRequired()) {
     const created = await db.query(
-      `INSERT INTO users (email, username, full_name, password_hash, verification_status, email_verified)
-       VALUES ($1, $2, $3, $4, 'verified', TRUE) RETURNING ${USER_PUBLIC_COLUMNS}`,
+      `INSERT INTO users (email, username, full_name, password_hash, verification_status, email_verified, terms_accepted_at)
+       VALUES ($1, $2, $3, $4, 'verified', TRUE, NOW()) RETURNING ${USER_PUBLIC_COLUMNS}`,
       [email, username, full_name, passwordHash]
     );
     const user = created.rows[0];
@@ -137,8 +137,8 @@ const register = async ({ email, username, password, full_name, reqInfo }) => {
   }
 
   const newUser = await db.query(
-    `INSERT INTO users (email, username, full_name, password_hash, verification_status, email_verified)
-     VALUES ($1, $2, $3, $4, 'unverified', FALSE) RETURNING id, email, username`,
+    `INSERT INTO users (email, username, full_name, password_hash, verification_status, email_verified, terms_accepted_at)
+     VALUES ($1, $2, $3, $4, 'unverified', FALSE, NOW()) RETURNING id, email, username, terms_accepted_at`,
     [email, username, full_name, passwordHash]
   );
 

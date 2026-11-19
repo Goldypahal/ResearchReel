@@ -7,7 +7,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        allow: ['/', '/explore', '/reels', '/lectures', '/post/', '/profile/', '/support'],
+        allow: ['/', '/explore', '/reels', '/watch/', '/lectures', '/post/', '/profile/', '/support'],
         disallow: [
           '/auth/', '/home', '/settings', '/messages', '/notifications', '/library', '/saved', '/projects', '/workspace',
           '/ai', '/create', '/reels/create', '/reels/generator', '/lectures/host', '/mod', '/search', '/achievements',

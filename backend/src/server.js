@@ -3,6 +3,19 @@ const dotenv = require('dotenv');
 
 dotenv.config({ quiet: true });
 
+if (process.env.SENTRY_DSN) {
+  try {
+    const Sentry = require('@sentry/node');
+    Sentry.init({
+      dsn: process.env.SENTRY_DSN,
+      environment: process.env.NODE_ENV || 'development',
+      tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+    });
+  } catch (err) {
+    console.error('Failed to initialize Sentry:', err.message);
+  }
+}
+
 // Fail fast on missing critical configuration in production.
 const required = ['DATABASE_URL', 'REDIS_URL', 'JWT_SECRET'];
 const missing = required.filter((k) => !process.env[k]);

@@ -111,6 +111,15 @@ export interface Reel {
   is_liked: boolean;
   is_saved: boolean;
   is_following_author: boolean;
+  /** 'upload' = our own video file; 'youtube_embed' = plays from YouTube (Research Picks). */
+  source_type?: 'upload' | 'youtube_embed';
+  external_id?: string | null;
+  source_url?: string | null;
+  source_channel?: string | null;
+  source_license?: string | null;
+  source_attribution?: string | null;
+  source_dataset?: string | null;
+  pick_rank?: number | null;
 }
 
 export interface Scene {

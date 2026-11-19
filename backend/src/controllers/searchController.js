@@ -92,7 +92,7 @@ exports.trendingTags = async (req, res, next) => {
       `SELECT lower(t) AS tag, COUNT(*)::int AS count FROM (
          SELECT unnest(tags) AS t FROM posts WHERE deleted_at IS NULL AND created_at > NOW() - INTERVAL '14 days'
          UNION ALL
-         SELECT unnest(tags) FROM videos WHERE deleted_at IS NULL AND created_at > NOW() - INTERVAL '14 days'
+         SELECT unnest(tags) FROM videos WHERE deleted_at IS NULL AND source_type = 'upload' AND created_at > NOW() - INTERVAL '14 days'
        ) x WHERE t IS NOT NULL AND t <> '' GROUP BY lower(t) ORDER BY count DESC LIMIT 15`
     );
     return sendSuccess(res, r.rows, 'Trending tags.');

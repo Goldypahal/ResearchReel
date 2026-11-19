@@ -4,11 +4,12 @@ The repo includes a Render Blueprint (`render.yaml`) that creates everything in 
 
 | Resource | Render type | Plan in blueprint | Notes |
 |---|---|---|---|
-| `researchreel-db` | PostgreSQL 16 | basic-256mb | Data |
+| `researchreel-db` | PostgreSQL 16 | basic-1gb | Data with point-in-time recovery (PITR) |
 | `researchreel-redis` | Key Value | starter | Sessions, rate limits, job queue (`noeviction`) |
-| `researchreel-api` | Web service (Docker) | starter + 10 GB disk | API, websockets, reel worker, FFmpeg; runs migrations on start |
-| `researchreel-rag` | Private service (Docker) | standard + 5 GB disk | Research RAG: indexes PDFs, answers across papers with citations, research tools. Only the API can reach it |
-| `researchreel-web` | Web service (Node) | starter | Next.js app; proxies `/api`, `/uploads`, `/socket.io` to the API privately |
+| `researchreel-api` | Private service (Docker) | starter | Express API, Socket.io; private network only, runs migrations on start |
+| `researchreel-worker` | Background worker (Docker) | standard (2 GB) | FFmpeg video rendering, narration synthesis, BullMQ queues |
+| `researchreel-rag` | Private service (Docker) | standard + 5 GB disk | Research RAG: indexes PDFs, answers across papers with citations. Private network only |
+| `researchreel-web` | Web service (Node) | starter | Next.js app; public web entry point; proxies `/api`, `/uploads`, `/socket.io` to the API privately |
 
 Paid instance types are needed because the API uses a persistent disk and the services talk over Render's private network. At the time of writing this costs about $7/month per starter service plus the database and Key Value plans; the RAG service uses the larger `standard` plan (2 GB RAM, about $25/month) because the vector index and PDF parsing need more than 512 MB. Check Render's pricing page. If you don't want multi-paper search yet, delete the `researchreel-rag` service and the two `RAG_*` variables from `render.yaml` before creating the Blueprint; everything else works without it.
 
@@ -45,6 +46,16 @@ ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-unique-password' ADMIN_USERNA
 ```
 
 Sign in at the web URL; **Moderation** appears in the sidebar. You can promote other users to moderator from there.
+
+## 3b. Load Research Picks (optional)
+
+In the API's **Shell**, run:
+
+```bash
+npm run import:picks
+```
+
+This adds about 6,000 research talks and lectures to **Reels → Research Picks**, and mixes some into **For you**. They play from YouTube through the privacy-enhanced embed, so they use no storage. In the feed each one plays as a 60-second preview. Longer videos skip roughly the first 10%, the usual intro, and loop that minute. **Watch full video** opens `/watch/<id>` with YouTube's normal controls, starting where the preview was. They belong to the house account `@researchreel_picks`, which can't sign in, gets no notifications and isn't on the leaderboard. Running it again updates the list in place, and `-- --prune` hides videos that are no longer in it. Credit for the HackerTube list (ODC-By 1.0) is shown on each pick and on the Help page.
 
 ## 4. Check it works
 

@@ -67,6 +67,21 @@ const init = (server) => {
       const forwarded = socket.handshake.headers['x-forwarded-for'];
       const ip = forwarded ? forwarded.split(',')[0].trim() : socket.handshake.address;
 
+      // Rate limit socket connections per IP (default 30 connections/minute)
+      if (process.env.DISABLE_RATE_LIMIT !== 'true') {
+        const client = redisClient.client;
+        if (client && client.isReady) {
+          const key = `ratelimit:socket_conn:${ip}`;
+          const multi = client.multi();
+          multi.incr(key);
+          multi.expire(key, 60, 'NX');
+          const [count] = await multi.exec();
+          if (count > (Number(process.env.SOCKET_CONNECTION_RATE_LIMIT) || 30)) {
+            return next(new Error('rate_limited'));
+          }
+        }
+      }
+
       const token = socket.handshake.auth?.token;
       if (!token) return next(new Error('unauthorized'));
       const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
@@ -76,11 +91,27 @@ const init = (server) => {
       socket.data.clientIp = ip;
       next();
     } catch (err) {
-      next(new Error('unauthorized'));
+      next(new Error(err.message === 'rate_limited' ? 'rate_limited' : 'unauthorized'));
     }
   });
 
   io.on('connection', (socket) => {
+    // Rate limit client incoming events per socket (max 20 events/sec)
+    let eventCount = 0;
+    let eventWindowStart = Date.now();
+    socket.use(([event, ...args], next) => {
+      const now = Date.now();
+      if (now - eventWindowStart > 1000) {
+        eventCount = 0;
+        eventWindowStart = now;
+      }
+      eventCount += 1;
+      if (eventCount > (Number(process.env.SOCKET_EVENT_RATE_LIMIT) || 20)) {
+        return next(new Error('rate_limited'));
+      }
+      next();
+    });
+
     const userId = socket.data.userId;
     socket.join(`user:${userId}`);
 

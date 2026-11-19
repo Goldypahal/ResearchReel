@@ -11,6 +11,13 @@ describe('Rate Limiter Middleware', () => {
     // Explicitly enable rate limiting for this test suite
     process.env.DISABLE_RATE_LIMIT = 'false';
 
+    // Wait for real Redis connection if Redis is configured (e.g. in CI)
+    if (process.env.REDIS_URL || process.env.TEST_REDIS_URL) {
+      for (let i = 0; i < 50 && !redisClient.client.isReady; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+
     // If real Redis is not connected, provide an in-memory mock for client.multi
     if (!redisClient.client.isReady) {
       redisClient.client.isReady = true;
@@ -37,8 +44,13 @@ describe('Rate Limiter Middleware', () => {
     }
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     inMemoryStore.clear();
+    if (redisClient.client.isReady && typeof redisClient.client.flushDb === 'function') {
+      try {
+        await redisClient.client.flushDb();
+      } catch (e) { /* ignore */ }
+    }
     app = express();
     app.use(express.json());
   });

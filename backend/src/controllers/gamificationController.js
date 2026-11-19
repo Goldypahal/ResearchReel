@@ -29,7 +29,7 @@ exports.leaderboard = async (req, res, next) => {
       `SELECT * FROM (
          SELECT u.id, u.username, u.full_name, u.profile_picture_url AS avatar_url, u.verification_status, u.institution,
                 u.research_interests, (${SCORE_SQL(periodFilter(period))})::int AS score
-           FROM users u WHERE u.is_deleted IS NOT TRUE AND u.email_verified IS TRUE AND ${notBlocked('$1::uuid', 'u.id')} ${fieldSql}
+           FROM users u WHERE u.is_deleted IS NOT TRUE AND u.is_system IS NOT TRUE AND u.email_verified IS TRUE AND ${notBlocked('$1::uuid', 'u.id')} ${fieldSql}
        ) s WHERE s.score > 0 ORDER BY s.score DESC, s.username ASC LIMIT 50`,
       params
     );

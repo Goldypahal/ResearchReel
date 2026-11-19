@@ -81,7 +81,7 @@ export const postsApi = {
 };
 
 export const reelsApi = {
-  list: (p: { author?: string; paper?: string; scope?: 'following'; cursor?: string | null; limit?: number } = {}) =>
+  list: (p: { author?: string; paper?: string; scope?: 'following'; source?: 'community' | 'picks'; cursor?: string | null; limit?: number } = {}) =>
     fetchApi<{ reels: T.Reel[]; nextCursor: string | null }>(`/reels${qs(p)}`),
   get: (id: string) => fetchApi<T.Reel>(`/reels/${id}`),
   saved: () => fetchApi<T.Reel[]>('/reels/saved'),

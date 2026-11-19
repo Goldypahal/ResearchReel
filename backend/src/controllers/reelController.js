@@ -62,6 +62,7 @@ exports.getDocuments = handle(async (req, res) => sendSuccess(res, await reelSer
 const REEL_SELECT = `
   SELECT v.id, v.author_id, v.title, v.description, v.video_url, v.thumbnail_url, v.duration_seconds,
          v.linked_paper_id, v.tags, v.timestamps AS captions, v.created_at,
+         v.source_type, v.external_id, v.source_url, v.source_channel, v.source_license, v.source_attribution, v.source_dataset, v.pick_rank,
          u.username, u.full_name, u.profile_picture_url AS avatar_url, u.verification_status,
          COALESCE(d.title, d.file_name) AS paper_title,
          (SELECT COUNT(*)::int FROM video_likes l WHERE l.video_id = v.id) AS like_count,
@@ -76,12 +77,20 @@ const REEL_SELECT = `
 `;
 exports.REEL_SELECT = REEL_SELECT;
 
+/**
+ * GET /reels
+ *   ?source=picks      the "Research Picks" feed: embedded YouTube videos in curated order
+ *                      (cursor = the last item's pick_rank)
+ *   ?source=community  (default) reels people uploaded or generated, newest first
+ *   ?author=<username> one person's reels, whatever their source
+ */
 exports.listReels = handle(async (req, res) => {
+  if (req.query.source === 'picks') return listPicks(req, res);
   const { limit, cursor } = parsePage(req.query, 10, 30);
   const params = [req.user?.id || null];
   const where = [`v.deleted_at IS NULL`, `v.status = 'published'`, `(v.visibility = 'public' OR v.author_id = $1::uuid)`, notBlocked('$1::uuid', 'v.author_id')];
   if (req.query.author) { params.push(String(req.query.author)); where.push(`LOWER(u.username) = LOWER($${params.length})`); }
-  else where.push(notMuted('$1::uuid', 'v.author_id'));
+  else { where.push(notMuted('$1::uuid', 'v.author_id')); where.push(`v.source_type = 'upload'`); }
   if (req.query.paper && isUuid(req.query.paper)) { params.push(req.query.paper); where.push(`v.linked_paper_id = $${params.length}`); }
   if (req.query.scope === 'following' && req.user) {
     where.push('(v.author_id = $1::uuid OR v.author_id IN (SELECT following_id FROM follows WHERE follower_id = $1::uuid))');
@@ -91,6 +100,21 @@ exports.listReels = handle(async (req, res) => {
   const r = await db.query(`${REEL_SELECT} WHERE ${where.join(' AND ')} ORDER BY v.created_at DESC LIMIT $${params.length}`, params);
   return sendSuccess(res, { reels: r.rows, nextCursor: nextCursorOf(r.rows, limit) }, 'Reels.');
 });
+
+const listPicks = async (req, res) => {
+  const { limit } = parsePage(req.query, 10, 30);
+  const after = Number.parseInt(req.query.cursor, 10);
+  const params = [req.user?.id || null, Number.isFinite(after) ? after : -1, limit];
+  const r = await db.query(
+    `${REEL_SELECT}
+      WHERE v.source_type = 'youtube_embed' AND v.deleted_at IS NULL AND v.status = 'published' AND v.visibility = 'public'
+        AND v.pick_rank > $2 AND ${notBlocked('$1::uuid', 'v.author_id')} AND ${notMuted('$1::uuid', 'v.author_id')}
+      ORDER BY v.pick_rank ASC LIMIT $3`,
+    params
+  );
+  const last = r.rows[r.rows.length - 1];
+  return sendSuccess(res, { reels: r.rows, nextCursor: r.rows.length === limit && last ? String(last.pick_rank) : null }, 'Research picks.');
+};
 
 exports.getSavedReels = handle(async (req, res) => {
   const r = await db.query(

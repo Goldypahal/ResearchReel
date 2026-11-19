@@ -13,11 +13,13 @@ const notify = async ({ userId, actorId, type, entityType = null, entityId = nul
   try {
     if (actorId && (await require('./blockService').isBlockedEitherWay(userId, actorId))) return null;
     const res = await db.query(
+      // House accounts (users.is_system, e.g. @researchreel_picks) are never notified.
       `INSERT INTO notifications (user_id, actor_id, type, entity_type, entity_id, message)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+       SELECT $1::uuid, $2::uuid, $3::varchar, $4::varchar, $5::uuid, $6::text FROM users WHERE id = $1::uuid AND is_system IS NOT TRUE RETURNING *`,
       [userId, actorId || null, type, entityType, entityId, message]
     );
     const row = res.rows[0];
+    if (!row) return null;
     let actor = null;
     if (actorId) {
       const a = await db.query('SELECT username, full_name, profile_picture_url FROM users WHERE id = $1', [actorId]);

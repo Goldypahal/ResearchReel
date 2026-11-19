@@ -75,17 +75,30 @@ export default function NotificationsPage() {
     const { text, href } = describe(n);
     const body = (
       <p className="text-sm">
-        {n.actor_username && <Link href={`/profile/${n.actor_username}`} className="font-semibold hover:underline mr-1">{n.actor_username}</Link>}
-        <span>{text}</span> <span className="text-zinc-500 text-xs">{timeAgo(n.created_at)}</span>
+        {n.actor_username && (
+          <Link href={`/profile/${n.actor_username}`} className="font-semibold hover:underline mr-1">
+            {n.actor_username}
+          </Link>
+        )}
+        {href ? (
+          <Link href={href} className="hover:underline">
+            {text}
+          </Link>
+        ) : (
+          <span>{text}</span>
+        )}{' '}
+        <span className="text-zinc-500 text-xs">{timeAgo(n.created_at)}</span>
       </p>
     );
     return (
       <li key={n.id} className={`flex items-center gap-3 px-3 py-3 rounded-xl group ${n.is_read ? '' : 'bg-indigo-500/[0.06]'}`}>
         {n.actor_username ? <Link href={`/profile/${n.actor_username}`}><Avatar src={n.actor_avatar_url} name={n.actor_full_name} size={44} /></Link> : <SystemIcon type={n.type} />}
-        <div className="flex-1 min-w-0">{href ? <Link href={href} className="block">{body}</Link> : body}</div>
+        <div className="flex-1 min-w-0">{body}</div>
         {n.type === 'follow' && n.actor_username && <FollowButton username={n.actor_username} initial={Boolean(n.following_actor)} size="sm" />}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        {n.preview_url && !n.preview_url.endsWith('.mp4') && <img src={n.preview_url} alt="" className="w-11 h-11 rounded-lg object-cover" />}
+        {n.preview_url && !n.preview_url.endsWith('.mp4') && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={n.preview_url} alt="Notification preview" className="w-11 h-11 rounded-lg object-cover" />
+        )}
         <button onClick={() => remove(n.id)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-zinc-500 hover:text-red-400" aria-label="Remove notification"><Trash2 size={14} /></button>
       </li>
     );

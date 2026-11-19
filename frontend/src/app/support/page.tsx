@@ -59,6 +59,22 @@ export default function SupportPage() {
         </div>
       </section>
 
+      <section id="credits" className="space-y-3">
+        <h2 className="text-xl font-bold">Credits</h2>
+        <div className="text-sm text-zinc-300 space-y-3 leading-relaxed">
+          <p>
+            Research Picks are talks, lectures and explainers that play from YouTube through its privacy-enhanced player. Each video belongs to its
+            channel, and every pick links back to it. ResearchReel doesn&apos;t copy or store these videos.
+          </p>
+          <p>
+            Many picks come from the list of videos recommended on Hacker News compiled by{' '}
+            <a href="https://hackertube.org" target="_blank" rel="noopener noreferrer" className="text-indigo-400">HackerTube</a>, used under the{' '}
+            <a href="https://opendatacommons.org/licenses/by/1-0/" target="_blank" rel="noopener noreferrer" className="text-indigo-400">Open Data Commons Attribution License (ODC-By 1.0)</a>.
+            Creators who want a video removed can use the Report option on the reel{SUPPORT_EMAIL ? <> or email <a href={`mailto:${SUPPORT_EMAIL}`} className="text-indigo-400">{SUPPORT_EMAIL}</a></> : null}.
+          </p>
+        </div>
+      </section>
+
       <section id="privacy" className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold">Privacy</h2>
@@ -66,6 +82,7 @@ export default function SupportPage() {
         </div>
         <div className="text-sm text-zinc-300 space-y-3 leading-relaxed">
           <p>We store the information you give us (name, email, profile details, posts, papers, messages) to run the service. Your email address is never shown publicly. Passwords are stored as one-way hashes.</p>
+          <p>Research Picks play through YouTube&apos;s privacy-enhanced player (youtube-nocookie.com). When one plays, YouTube receives your IP address and the video request under <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="text-indigo-400">Google&apos;s privacy policy</a>.</p>
           <p>When you use AI features, the text of the relevant paper and your question are sent to our AI provider to generate a response. We record basic usage events (such as views) to show creators how their content performs.</p>
           <p>You can edit your profile at any time and delete your account from Settings. {SUPPORT_EMAIL ? <>For other requests, contact <a href={`mailto:${SUPPORT_EMAIL}`} className="text-indigo-400">{SUPPORT_EMAIL}</a>.</> : null}</p>
           <p><Link href="/privacy" className="text-indigo-400 underline">Read full DPDP Act 2023 &amp; GDPR Privacy Policy.</Link></p>

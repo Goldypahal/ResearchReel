@@ -6,7 +6,7 @@ export const isStandaloneRoute = (path: string) =>
 
 /** Pages a signed-out visitor can open (shared links); everything else asks them to sign in. */
 export const isPublicAppRoute = (path: string) =>
-  path.startsWith('/post/') || path.startsWith('/profile/') || path === '/explore' || path === '/reels' ||
+  path.startsWith('/post/') || path.startsWith('/profile/') || path === '/explore' || path === '/reels' || path.startsWith('/watch/') ||
   path === '/support' || path === '/lectures' || (path.startsWith('/lectures/') && path !== '/lectures/host');
 
 export const requiresAuth = (path: string) => !isStandaloneRoute(path) && !isPublicAppRoute(path);
