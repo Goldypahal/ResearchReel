@@ -26,7 +26,7 @@ Have these ready (all optional except where noted):
 1. In Render: **New → Blueprint**, connect the `ResearchReel` GitHub repo, branch `main`.
 2. Render reads `render.yaml` and asks for the `sync: false` values. Enter:
    - `FRONTEND_URL`: `https://researchreel-web.onrender.com` (the web service's URL; adjust if Render gives it a different name, or use your custom domain)
-   - `NEXT_PUBLIC_UPLOAD_URL`: `https://researchreel-api.onrender.com` (the API's public URL; lets large uploads skip the web server)
+   - `NEXT_PUBLIC_UPLOAD_URL`: leave empty. The API is a private service, so uploads go through the web app (up to 210 MB per file)
    - `RESEND_API_KEY` and `EMAIL_FROM` (for example `ResearchReel <no-reply@yourdomain.com>`, on your verified domain). Leave the `SMTP_*` values blank. Paste the key only into Render, never into the repo.
    - `GEMINI_API_KEY`: optional for the API; **required for `researchreel-rag`** (enter the same key for both). The RAG service also uses it for embeddings
    - `COHERE_API_KEY` (RAG service): optional, improves which passages are picked
@@ -35,7 +35,7 @@ Have these ready (all optional except where noted):
 
 `JWT_SECRET` and `ENCRYPTION_KEY` are generated automatically. Never change `ENCRYPTION_KEY` after launch, or users' saved API keys become unreadable.
 
-> **If Render named a service differently** (e.g. `researchreel-web-abcd`), update `FRONTEND_URL` and `NEXT_PUBLIC_UPLOAD_URL` to the real URLs. Then redeploy the web service, because `NEXT_PUBLIC_*` values are baked in at build time.
+> **If Render named a service differently** (e.g. `researchreel-web-abcd`), update `FRONTEND_URL` to the real URL. Then redeploy the web service, because `NEXT_PUBLIC_*` values are baked in at build time.
 
 ## 3. Create your admin account
 
@@ -70,7 +70,6 @@ This adds about 6,000 research talks and lectures to **Reels → Research Picks*
 
 1. Add the domain to **researchreel-web** (Settings → Custom Domains) and follow the DNS instructions.
 2. Set the API's `FRONTEND_URL` to `https://yourdomain.com`. You can list several, comma separated.
-3. Optionally add `api.yourdomain.com` to **researchreel-api**, set `NEXT_PUBLIC_UPLOAD_URL` to it, and redeploy the web service.
 
 ## Optional: malware scanning
 

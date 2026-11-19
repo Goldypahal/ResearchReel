@@ -69,9 +69,15 @@ jobs:
           cache-dependency-path: backend/research_rag/requirements*.txt
       - run: pip install -r requirements-dev.txt
       - name: Security audit
-        # Ignore 4 chromadb server-mode advisories without upstream fix yet;
-        # this service uses Chroma as an in-process library, not its HTTP server.
-        run: pip install pip-audit && pip-audit -r requirements.txt --ignore-vuln GHSA-m8cx-prvv-vch4 --ignore-vuln GHSA-3r49-7c8p-v4h8 --ignore-vuln GHSA-95v9-wcvw-h387 --ignore-vuln GHSA-4852-525m-2wjh
+        # Ignored: chromadb 1.5.9 advisories that affect Chroma's own HTTP server (/api/v2, server auth),
+        # which this service doesn't run (Chroma is used in-process via LangChain). No fixed release yet;
+        # remove the ignores when one ships. IDs as pip-audit reports them (GHSA aliases in brackets):
+        # PYSEC-2026-311 [GHSA-f4j7-r4q5-qw2c], PYSEC-2026-3813 [GHSA-2wm9-hf6c-p5cr],
+        # PYSEC-2026-3814 [GHSA-36p7-vc44-83pf], PYSEC-2026-3815 [GHSA-xph7-9rjv-w5fr]
+        run: >-
+          pip install pip-audit && pip-audit -r requirements.txt
+          --ignore-vuln PYSEC-2026-311 --ignore-vuln PYSEC-2026-3813
+          --ignore-vuln PYSEC-2026-3814 --ignore-vuln PYSEC-2026-3815
       - name: Unit tests
         run: python -m pytest -q tests/unit tests/integration
         env:
