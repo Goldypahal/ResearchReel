@@ -22,7 +22,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1163.0",
     "@sentry/node": "^10.78.0",
-    "argon2": "^0.44.0",
+    "argon2": "^0.45.2",
     "axios": "^1.18.1",
     "bullmq": "^5.78.1",
     "cookie-parser": "^1.4.7",
