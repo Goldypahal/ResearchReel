@@ -179,21 +179,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Build API image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build RAG image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/research_rag
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build web image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           push: false
