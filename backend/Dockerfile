@@ -1,5 +1,5 @@
 # ---- deps: install production dependencies (native modules compiled here) ----
-FROM node:20-bookworm-slim AS deps
+FROM node:26-bookworm-slim AS deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -7,7 +7,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
 # ---- runtime ----
-FROM node:20-bookworm-slim
+FROM node:26-bookworm-slim
 WORKDIR /app
 # ffmpeg renders/transcodes reels; DejaVu provides the font used for on-screen text.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core ca-certificates tini \
