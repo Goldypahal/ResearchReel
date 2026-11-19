@@ -48,19 +48,27 @@ export default function SupportPage() {
       </section>
 
       <section id="terms" className="space-y-3">
-        <h2 className="text-xl font-bold">Terms of use</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">Terms of use</h2>
+          <Link href="/terms" className="text-xs text-indigo-400 hover:underline">Read full Terms &rarr;</Link>
+        </div>
         <div className="text-sm text-zinc-300 space-y-3 leading-relaxed">
           <p>By using ResearchReel you agree to follow the community guidelines and to be responsible for the content you post. You keep ownership of what you upload and grant ResearchReel a licence to host, display and distribute it on the platform so it can be shown to other users.</p>
           <p>We may remove content or suspend accounts that violate these terms. The service is provided “as is”; AI-generated summaries and answers are provided for convenience and may contain errors.</p>
+          <p><Link href="/terms" className="text-indigo-400 underline">View complete Terms of Service, DMCA takedown contact, and embedded media terms.</Link></p>
         </div>
       </section>
 
       <section id="privacy" className="space-y-3">
-        <h2 className="text-xl font-bold">Privacy</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">Privacy</h2>
+          <Link href="/privacy" className="text-xs text-indigo-400 hover:underline">Read full Policy &rarr;</Link>
+        </div>
         <div className="text-sm text-zinc-300 space-y-3 leading-relaxed">
           <p>We store the information you give us (name, email, profile details, posts, papers, messages) to run the service. Your email address is never shown publicly. Passwords are stored as one-way hashes.</p>
           <p>When you use AI features, the text of the relevant paper and your question are sent to our AI provider to generate a response. We record basic usage events (such as views) to show creators how their content performs.</p>
           <p>You can edit your profile at any time and delete your account from Settings. {SUPPORT_EMAIL ? <>For other requests, contact <a href={`mailto:${SUPPORT_EMAIL}`} className="text-indigo-400">{SUPPORT_EMAIL}</a>.</> : null}</p>
+          <p><Link href="/privacy" className="text-indigo-400 underline">Read full DPDP Act 2023 &amp; GDPR Privacy Policy.</Link></p>
         </div>
       </section>
 

@@ -68,6 +68,8 @@ jobs:
           cache: pip
           cache-dependency-path: backend/research_rag/requirements*.txt
       - run: pip install -r requirements-dev.txt
+      - name: Security audit
+        run: pip install pip-audit && pip-audit -r requirements.txt
       - name: Unit tests
         run: python -m pytest -q tests/unit tests/integration
         env:
@@ -92,6 +94,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-fund
+      - name: Security audit (high/critical)
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm run build

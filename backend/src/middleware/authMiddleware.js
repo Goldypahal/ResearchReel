@@ -12,7 +12,7 @@ const extractToken = (req) => {
  * Returns the decoded payload or throws.
  */
 const verifyAccessToken = async (token, allowedTypes = ['access']) => {
-  const verified = jwt.verify(token, process.env.JWT_SECRET);
+  const verified = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   if (!allowedTypes.includes(verified.type || 'access')) {
     throw new Error('This token cannot be used for this request');
   }

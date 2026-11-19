@@ -61,14 +61,19 @@ const init = (server) => {
   }
 
   // Every socket must present a short-lived socket token from GET /auth/socket-token.
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     try {
+      // Resolve client IP respecting reverse proxy headers
+      const forwarded = socket.handshake.headers['x-forwarded-for'];
+      const ip = forwarded ? forwarded.split(',')[0].trim() : socket.handshake.address;
+
       const token = socket.handshake.auth?.token;
       if (!token) return next(new Error('unauthorized'));
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       if (decoded.type !== 'socket') return next(new Error('unauthorized'));
       socket.data.userId = decoded.id;
       socket.data.username = decoded.username;
+      socket.data.clientIp = ip;
       next();
     } catch (err) {
       next(new Error('unauthorized'));

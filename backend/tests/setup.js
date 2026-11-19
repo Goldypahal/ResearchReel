@@ -4,6 +4,7 @@ process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgresql://postgr
 process.env.REDIS_URL = process.env.TEST_REDIS_URL || 'redis://localhost:6379/1';
 process.env.UPLOAD_DIR = require('path').join(require('os').tmpdir(), `rr-test-uploads-${process.pid}`);
 process.env.REQUIRE_EMAIL_VERIFICATION = 'true';
+process.env.DISABLE_RATE_LIMIT = 'true';
 delete process.env.GEMINI_API_KEY;
 delete process.env.SMTP_HOST;
 delete process.env.EMAIL_USER;

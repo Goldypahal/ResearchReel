@@ -21,8 +21,8 @@ export default function LandingPage() {
       </main>
       <footer className="w-full py-6 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-zinc-500 px-4">
         <Link href="/support" className="hover:underline">Help</Link>
-        <Link href="/support#terms" className="hover:underline">Terms</Link>
-        <Link href="/support#privacy" className="hover:underline">Privacy</Link>
+        <Link href="/terms" className="hover:underline">Terms</Link>
+        <Link href="/privacy" className="hover:underline">Privacy</Link>
         <Link href="/support#guidelines" className="hover:underline">Community guidelines</Link>
         <span>© {new Date().getFullYear()} ResearchReel</span>
       </footer>

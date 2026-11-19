@@ -15,8 +15,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       </main>
       <footer className="py-6 text-center text-xs text-zinc-600 space-x-4">
         <Link href="/support" className="hover:text-zinc-400">Help</Link>
-        <Link href="/support#terms" className="hover:text-zinc-400">Terms</Link>
-        <Link href="/support#privacy" className="hover:text-zinc-400">Privacy</Link>
+        <Link href="/terms" className="hover:text-zinc-400">Terms</Link>
+        <Link href="/privacy" className="hover:text-zinc-400">Privacy</Link>
       </footer>
     </div>
   );

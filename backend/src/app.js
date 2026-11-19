@@ -17,8 +17,9 @@ const { UPLOAD_DIR, ensureUploadDir } = require('./services/storageService');
 
 const app = express();
 
-// Render/Fly/Heroku-style proxies: trust the first hop so req.ip and secure cookies work.
-app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+// Render/reverse proxies: trust proxy hops so req.ip and secure cookies work.
+// On Render behind Next.js frontend rewrite/proxy, 2 hops are standard.
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 2));
 app.disable('x-powered-by');
 
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',').map((s) => s.trim()).filter(Boolean);

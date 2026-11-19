@@ -1,14 +1,14 @@
 # Render Blueprint — deploy with "New > Blueprint" in the Render dashboard.
-# Creates: PostgreSQL, Key Value (Redis), the API (Docker, with a persistent disk
-# for uploads), the Research RAG service (private, with a disk for its index)
-# and the Next.js web app. Values marked `sync: false` are asked for
-# when you create the Blueprint. See DEPLOYMENT.md for the step-by-step guide.
+# Creates: PostgreSQL (with point-in-time recovery), Key Value (Redis),
+# the API server (Docker, stateless), a Background Worker (Docker standard 2GB for FFmpeg),
+# the Research RAG service (private, persistent vector store) and the Next.js web app.
+# See DEPLOYMENT.md and docs/RUNBOOK.md for the step-by-step guide.
 
 databases:
   - name: researchreel-db
     databaseName: researchreel
     user: researchreel
-    plan: basic-256mb
+    plan: basic-1gb # Supports automated daily backups & point-in-time recovery (PITR)
     postgresMajorVersion: "16"
 
 services:
@@ -19,7 +19,7 @@ services:
     maxmemoryPolicy: noeviction # required by the job queue
     ipAllowList: [] # private network only
 
-  # API server (Express + Socket.io + media worker). Runs migrations on every start.
+  # API server (Express + Socket.io). Runs migrations on every start.
   - type: web
     name: researchreel-api
     runtime: docker
@@ -27,10 +27,6 @@ services:
     dockerfilePath: ./backend/Dockerfile
     plan: starter
     healthCheckPath: /api/v1/health
-    disk:
-      name: uploads
-      mountPath: /app/public/uploads
-      sizeGB: 10
     envVars:
       - key: NODE_ENV
         value: production
@@ -47,6 +43,10 @@ services:
         generateValue: true
       - key: ENCRYPTION_KEY
         generateValue: true
+      - key: TRUST_PROXY_HOPS
+        value: "2" # Accounts for Render edge + Next.js rewrite hops
+      - key: START_WORKER
+        value: "false" # Offload video rendering & queue processing to dedicated worker
       - key: FRONTEND_URL
         sync: false # e.g. https://researchreel-web.onrender.com (or your custom domain)
       - key: REQUIRE_EMAIL_VERIFICATION
@@ -54,7 +54,7 @@ services:
       - key: RESEND_API_KEY
         sync: false # email via Resend (recommended); leave the SMTP_* values blank when set
       - key: EMAIL_FROM
-        sync: false # e.g. "ResearchReel <no-reply@yourdomain.com>"; the domain must be verified in Resend
+        sync: false # e.g. "ResearchReel <no-reply@yourdomain.com>"; domain must be verified in Resend
       - key: SMTP_HOST
         sync: false # only if you use another provider over SMTP instead of Resend
       - key: SMTP_PORT
@@ -64,11 +64,28 @@ services:
       - key: SMTP_PASS
         sync: false
       - key: GEMINI_API_KEY
-        sync: false # optional: enables AI answers, summaries, scripts and narration
+        sync: false # enables AI answers, summaries, scripts and narration
+      - key: AI_DAILY_LIMIT
+        value: "100" # budget protection per active user/day
+      - key: SENTRY_DSN
+        sync: false # optional: production error tracking
       - key: CROSSREF_MAILTO
         sync: false # optional: contact email sent to Crossref for DOI lookups
       - key: CLAMAV_HOST
         sync: false # optional: host of a ClamAV daemon to scan uploads (see DEPLOYMENT.md)
+      # Cloudflare R2 / S3 Object Storage (recommended for multi-instance scaling & fast CDN)
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_ENDPOINT
+        sync: false # e.g. https://<account_id>.r2.cloudflarestorage.com
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_PUBLIC_URL
+        sync: false # e.g. https://media.yourdomain.com
       # Multi-paper search with cited answers and research tools (see the rag service below).
       - key: RAG_SERVICE_URL
         fromService:
@@ -81,15 +98,63 @@ services:
           name: researchreel-rag
           envVarKey: RAG_API_KEY
 
+  # Render Background Worker for FFmpeg rendering, narration synthesis & BullMQ queues
+  - type: worker
+    name: researchreel-worker
+    runtime: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    dockerCommand: node src/worker.js
+    plan: standard # 2 GB RAM minimum; FFmpeg reel rendering requires memory headroom
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: researchreel-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: researchreel-redis
+          property: connectionString
+      - key: JWT_SECRET
+        fromService:
+          type: web
+          name: researchreel-api
+          envVarKey: JWT_SECRET
+      - key: ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: researchreel-api
+          envVarKey: ENCRYPTION_KEY
+      - key: FRONTEND_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_PUBLIC_URL
+        sync: false
+
   # Research RAG service (Python/FastAPI): indexes every uploaded PDF and answers
   # questions across several papers with page citations. Private: only the API can reach it.
-  # Needs a Gemini key; without one it starts but cannot index or answer.
   - type: pserv
     name: researchreel-rag
     runtime: docker
     dockerContext: ./backend/research_rag
     dockerfilePath: ./backend/research_rag/Dockerfile
-    plan: standard # 2 GB RAM; the vector index and PDF parsing need more than 512 MB
+    plan: standard # 2 GB RAM; vector index and PDF parsing need more than 512 MB
     disk:
       name: rag-data
       mountPath: /app/data
@@ -100,13 +165,13 @@ services:
       - key: LLM_PROVIDER
         value: gemini
       - key: GEMINI_API_KEY
-        sync: false # the same Gemini key as the API
+        sync: false # same Gemini key as the API
       - key: GEMINI_MODEL
         value: gemini-flash-latest
       - key: GEMINI_EMBEDDING_MODEL
-        value: gemini-embedding-001 # changing this needs a full re-index (npm run rag:reindex -- --all)
+        value: gemini-embedding-001
       - key: COHERE_API_KEY
-        sync: false # optional: better passage ranking
+        sync: false
 
   # Next.js web app. Proxies /api, /uploads and websockets to the API over the
   # private network, so the browser only ever talks to this domain.
@@ -133,4 +198,6 @@ services:
       - key: NEXT_PUBLIC_SUPPORT_EMAIL
         sync: false # optional, shown on the Help page
       - key: NEXT_PUBLIC_SITE_URL
-        sync: false # optional: your custom domain (https://...). Link previews and the sitemap use the Render URL otherwise
+        sync: false # optional: your custom domain (https://...). Link previews and sitemap use Render URL otherwise
+      - key: NEXT_PUBLIC_SENTRY_DSN
+        sync: false # optional: client-side error monitoring

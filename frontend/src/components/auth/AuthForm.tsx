@@ -169,6 +169,19 @@ export default function AuthForm({ initialMode = 'login', initialEmail = '', com
         {info && <p className="text-xs text-emerald-400" role="status">{info}</p>}
         {error && <p className="text-xs text-red-400" role="alert">{error}</p>}
 
+        {mode === 'register' && (
+          <p className="text-xs text-zinc-400 text-center leading-relaxed">
+            By signing up, you agree to our{' '}
+            <Link href="/terms" className="text-indigo-400 underline hover:text-indigo-300" target="_blank">
+              Terms of Service
+            </Link>{' '}
+            and{' '}
+            <Link href="/privacy" className="text-indigo-400 underline hover:text-indigo-300" target="_blank">
+              Privacy Policy
+            </Link>.
+          </p>
+        )}
+
         <button type="submit" disabled={!canSubmit} className="w-full py-3 rounded-xl font-semibold text-sm bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
           {busy && <Loader2 size={16} className="animate-spin" />}
           {mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create account' : 'Verify email'}

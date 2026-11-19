@@ -70,6 +70,9 @@ const wants = (storedPrefs, type) => {
 // what mail providers expect of List-Unsubscribe links.
 
 const secret = () => {
+  if (process.env.NODE_ENV === 'production' && !process.env.ENCRYPTION_KEY) {
+    throw new Error('ENCRYPTION_KEY environment variable is required in production.');
+  }
   const s = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET;
   if (!s) throw new Error('ENCRYPTION_KEY or JWT_SECRET must be set to sign unsubscribe links.');
   return crypto.createHash('sha256').update(`unsubscribe:${s}`).digest();

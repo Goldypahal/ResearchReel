@@ -3,7 +3,7 @@ const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const redisClient = require('../config/redisClient');
-const { sendOTP, sendPasswordReset } = require('../utils/emailService');
+const { sendOTP, sendPasswordReset, sendAccountLockedEmail } = require('../utils/emailService');
 const sessionRepository = require('../repositories/sessionRepository');
 
 const OTP_TTL_SECONDS = Number(process.env.OTP_TTL_SECONDS || 600);
@@ -190,8 +190,19 @@ const verifyOTP = async ({ email, otp, reqInfo }) => {
   return { user: sanitizeUser(user), accessToken, refreshToken };
 };
 
+const FAILED_LOGIN_LIMIT = 10;
+const LOCKOUT_WINDOW_SECONDS = 900; // 15 minutes
+
 const login = async ({ email, password, reqInfo }) => {
   email = normalizeEmail(email);
+
+  // Check if account is temporarily locked due to repeated failed logins
+  const lockKey = `login_locked:${email}`;
+  const isLocked = await redisClient.get(lockKey);
+  if (isLocked) {
+    throw new AuthError('Account temporarily locked due to repeated failed login attempts. Please try again after 15 minutes or reset your password.', 429, 'ACCOUNT_LOCKED');
+  }
+
   const userRes = await db.query(
     `SELECT ${USER_PUBLIC_COLUMNS}, password_hash, is_suspended, is_deleted FROM users WHERE email = $1`,
     [email]
@@ -203,8 +214,35 @@ const login = async ({ email, password, reqInfo }) => {
 
   const isValidPassword = await argon2.verify(user.password_hash, password);
   if (!isValidPassword) {
+    const failKey = `login_fails:${email}`;
+    let failedCount = 1;
+    try {
+      if (redisClient.client && redisClient.client.isReady) {
+        const results = await redisClient.client.multi()
+          .incr(failKey)
+          .expire(failKey, LOCKOUT_WINDOW_SECONDS, 'NX')
+          .exec();
+        failedCount = Number(results[0]);
+      }
+    } catch (e) {
+      try {
+        failedCount = await redisClient.client.incr(failKey);
+        await redisClient.client.expire(failKey, LOCKOUT_WINDOW_SECONDS);
+      } catch (err2) { /* fallback */ }
+    }
+
+    if (failedCount >= FAILED_LOGIN_LIMIT) {
+      await redisClient.set(lockKey, '1', { EX: LOCKOUT_WINDOW_SECONDS });
+      await redisClient.del(failKey);
+      sendAccountLockedEmail(email).catch((err) => console.error('[auth] Failed to send lockout email:', err.message));
+      throw new AuthError('Account temporarily locked due to repeated failed login attempts. An alert email has been sent. Please try again after 15 minutes.', 429, 'ACCOUNT_LOCKED');
+    }
+
     throw new AuthError('Incorrect email or password.', 401, 'INVALID_CREDENTIALS');
   }
+
+  // Clear failed login counter on successful password verification
+  await redisClient.del(`login_fails:${email}`);
 
   if (user.is_suspended) {
     throw new AuthError('This account has been suspended. Contact support.', 403, 'ACCOUNT_SUSPENDED');
@@ -229,7 +267,7 @@ const refreshTokens = async (token, reqInfo) => {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET);
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch (err) {
     throw new AuthError('Session expired. Please sign in again.', 401, 'AUTHENTICATION_ERROR');
   }

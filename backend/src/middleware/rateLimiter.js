@@ -1,4 +1,5 @@
 const redisClient = require('../config/redisClient');
+const logger = require('../utils/logger');
 
 /**
  * Redis-based Rate Limiter middleware
@@ -7,31 +8,45 @@ const redisClient = require('../config/redisClient');
  */
 const rateLimiter = (limit = 100, windowSecs = 60) => {
   return async (req, res, next) => {
-    // Skip rate limiting during testing to prevent tests from failing
-    if (process.env.NODE_ENV === 'test') {
+    // Skip rate limiting when explicitly disabled (e.g. standard integration test suites)
+    if (process.env.DISABLE_RATE_LIMIT === 'true') {
       return next();
     }
 
     // Per user when signed in (route limiters run after auth), otherwise per IP.
     // Use the full path so routers that each define POST "/" don't share a counter.
-    const who = req.user?.id ? `u:${req.user.id}` : `ip:${req.ip || req.socket.remoteAddress}`;
-    const key = `rate:${who}:${req.method}:${req.baseUrl}${req.path}`;
+    const who = req.user?.id ? `u:${req.user.id}` : `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+    const key = `rate:${who}:${req.method}:${req.baseUrl || ''}${req.path || ''}`;
 
     try {
       const client = redisClient.client;
-      // Atomically increment the request count for this IP & Path
-      const current = await client.incr(key);
-
-      if (current === 1) {
-        // First request in this window, set expiration
-        await client.expire(key, windowSecs);
+      if (!client || !client.isReady) {
+        // Fail open if Redis is not connected
+        return next();
       }
+
+      // Execute INCR + EXPIRE atomically in a MULTI transaction so a crash cannot leave an unexpiring key
+      let results;
+      try {
+        results = await client.multi()
+          .incr(key)
+          .expire(key, windowSecs, 'NX')
+          .exec();
+      } catch (nxErr) {
+        // Fallback if Redis server does not support 'NX' flag on EXPIRE
+        results = await client.multi()
+          .incr(key)
+          .expire(key, windowSecs)
+          .exec();
+      }
+
+      const current = Array.isArray(results) ? Number(results[0]) : 1;
 
       res.setHeader('X-RateLimit-Limit', limit);
       res.setHeader('X-RateLimit-Remaining', Math.max(0, limit - current));
 
       if (current > limit) {
-        console.warn(`[Rate Limit Exceeded] IP: ${ip}, Path: ${req.path}`);
+        logger.warn(`[Rate Limit Exceeded] Who: ${who}, Path: ${req.path}`);
         return res.status(429).json({
           success: false,
           message: 'Too many requests. Please try again later.'
@@ -40,7 +55,7 @@ const rateLimiter = (limit = 100, windowSecs = 60) => {
 
       next();
     } catch (err) {
-      console.error('[RateLimiter Error]', err);
+      logger.error('[RateLimiter Error]', err);
       // Fail open under Redis connectivity dropouts to preserve user experience
       next();
     }

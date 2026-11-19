@@ -124,6 +124,22 @@ exports.sendPasswordReset = async (email, token) => {
   });
 };
 
+exports.sendAccountLockedEmail = async (email) => {
+  const base = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const resetLink = `${base}/auth/forget-password`;
+  return deliver({
+    to: email,
+    subject: 'Security Alert: Your ResearchReel account has been temporarily locked',
+    devLog: `Security Alert: Account ${email} temporarily locked after repeated failed login attempts.`,
+    html: layout(`
+      <p>We detected multiple consecutive failed login attempts on your ResearchReel account.</p>
+      <p>To protect your account, sign-in has been temporarily locked for 15 minutes.</p>
+      <p>If this was not you, someone may be trying to access your account. We strongly recommend resetting your password once the lockout expires:</p>
+      <p style="text-align:center;margin:28px 0;"><a href="${escapeHtml(resetLink)}" style="background:#4f46e5;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Reset Password</a></p>
+      <p style="color:#6b7280;font-size:14px;">If you made these attempts, you can try logging in again after 15 minutes.</p>`)
+  });
+};
+
 /**
  * Notification email (comments, follows, lecture reminders…). `unsubscribeUrl` is the footer
  * link; `oneClickUrl` feeds the RFC 8058 List-Unsubscribe headers mail apps use.

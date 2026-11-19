@@ -3,8 +3,11 @@ const dotenv = require('dotenv');
 
 dotenv.config({ quiet: true });
 
-// ENCRYPTION_KEY (preferred) or JWT_SECRET is hashed into the 32-byte AES key.
+// ENCRYPTION_KEY (required in production) or JWT_SECRET is hashed into the 32-byte AES key.
 // Set ENCRYPTION_KEY separately so rotating JWT_SECRET doesn't invalidate stored API keys.
+if (process.env.NODE_ENV === 'production' && !process.env.ENCRYPTION_KEY) {
+  throw new Error('ENCRYPTION_KEY environment variable is required in production.');
+}
 const SECRET = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || 'dev-only-insecure-secret';
 const ENCRYPTION_KEY = crypto.createHash('sha256').update(SECRET).digest();
 const IV_LENGTH = 16;
