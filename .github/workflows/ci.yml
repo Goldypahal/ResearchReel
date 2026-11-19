@@ -112,7 +112,8 @@ jobs:
 
   e2e:
     name: Browser tests (Playwright, real email via Mailpit)
-    runs-on: ubuntu-latest
+    # Pinned: on ubuntu-latest (26.04) Playwright's --with-deps font packages fail to download.
+    runs-on: ubuntu-24.04
     needs: [backend, frontend]
     services:
       postgres:
@@ -164,7 +165,14 @@ jobs:
           cat api.log web.log; exit 1
       - name: Install Playwright
         working-directory: e2e
-        run: npm ci --no-fund && npx playwright install --with-deps chromium
+        # Retry: the apt mirrors behind --with-deps occasionally time out.
+        run: |
+          npm ci --no-fund
+          for i in 1 2 3; do
+            npx playwright install --with-deps chromium && exit 0
+            echo "Playwright install failed (attempt $i), retrying in 30s"; sleep 30; sudo apt-get update || true
+          done
+          exit 1
       - name: Run browser tests
         working-directory: e2e
         run: npx playwright test
