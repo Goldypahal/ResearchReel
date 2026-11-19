@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
@@ -11,7 +11,7 @@ ARG NEXT_PUBLIC_SUPPORT_EMAIL=
 ENV BACKEND_URL=$BACKEND_URL NEXT_PUBLIC_UPLOAD_URL=$NEXT_PUBLIC_UPLOAD_URL NEXT_PUBLIC_SUPPORT_EMAIL=$NEXT_PUBLIC_SUPPORT_EMAIL NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-bookworm-slim
+FROM node:26-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000
 COPY --from=build /app/package*.json ./
