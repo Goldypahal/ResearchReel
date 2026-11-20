@@ -38,6 +38,8 @@ const SystemIcon = ({ type }: { type: string }) => {
 export default function NotificationsPage() {
   const { setUnreadNotifications, on } = useRealtime();
   const [items, setItems] = useState<Notification[] | null>(null);
+  // "Today" vs "Earlier" is decided once per visit, so rendering stays pure (react-hooks/purity).
+  const [now] = useState(() => Date.now());
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loadingMore, setLoadingMore] = useState(false);
@@ -68,8 +70,8 @@ export default function NotificationsPage() {
     notificationsApi.remove(id).catch(() => {});
   };
 
-  const today = (items || []).filter((n) => Date.now() - new Date(n.created_at).getTime() < 86400000);
-  const earlier = (items || []).filter((n) => Date.now() - new Date(n.created_at).getTime() >= 86400000);
+  const today = (items || []).filter((n) => now - new Date(n.created_at).getTime() < 86400000);
+  const earlier = (items || []).filter((n) => now - new Date(n.created_at).getTime() >= 86400000);
 
   const render = (n: Notification) => {
     const { text, href } = describe(n);

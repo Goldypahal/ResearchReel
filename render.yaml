@@ -219,7 +219,7 @@ services:
           name: researchreel-api
           property: hostport
       - key: NEXT_PUBLIC_UPLOAD_URL
-        sync: false # public URL of the API, e.g. https://researchreel-api.onrender.com (large uploads go there directly)
+        sync: false # leave EMPTY: the API is a private service now, so uploads go through the web app's proxy (up to 210 MB)
       - key: NEXT_PUBLIC_SUPPORT_EMAIL
         sync: false # optional, shown on the Help page
       - key: NEXT_PUBLIC_SITE_URL

@@ -64,8 +64,11 @@ const init = (server) => {
   io.use(async (socket, next) => {
     try {
       // Resolve client IP respecting reverse proxy headers
-      const forwarded = socket.handshake.headers['x-forwarded-for'];
-      const ip = forwarded ? forwarded.split(',')[0].trim() : socket.handshake.address;
+      // Same rule as Express's `trust proxy` (TRUST_PROXY_HOPS): skip the trusted proxies at the
+      // right of X-Forwarded-For. The leftmost entry is whatever the client sent, so it can't be trusted.
+      const hops = Number(process.env.TRUST_PROXY_HOPS || 2);
+      const chain = String(socket.handshake.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+      const ip = chain.length ? chain[Math.max(0, chain.length - hops)] : socket.handshake.address;
 
       // Rate limit socket connections per IP (default 30 connections/minute)
       if (process.env.DISABLE_RATE_LIMIT !== 'true') {
