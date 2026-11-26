@@ -9,7 +9,7 @@ langchain-chroma==1.1.0
 langchain-google-genai==4.4.3
 langchain-ollama==1.1.0
 chromadb==1.5.9
-cohere==5.21.1
+cohere==7.3.2
 google-genai==3.0.0
 rank-bm25==0.2.2
 pymupdf==2.1
